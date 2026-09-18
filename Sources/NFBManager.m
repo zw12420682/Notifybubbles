@@ -2,6 +2,10 @@
 #import "NFBPrivate.h"
 #import "NFBStore.h"
 #import "NFBGeometry.h"
+#import "NFBSwitcher.h"
+
+static const NSTimeInterval NFBMotion = 0.6;
+static const NSTimeInterval NFBHold = 2.0;
 #import <QuartzCore/QuartzCore.h>
 
 static CFStringRef const NFBDomain = CFSTR("local.notifybubbles");
@@ -45,6 +49,8 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, strong) UIImageView *imageView;
 @property(nonatomic, strong) UILabel *badge;
 @property(nonatomic) BOOL opening;
+@property(nonatomic) BOOL swiping;
+@property(nonatomic) CGFloat swipeStart;
 @end
 @implementation NFBBubble
 - (instancetype)initWithFrame:(CGRect)frame {
@@ -74,7 +80,7 @@ static double NFBNumber(NSString *key, double fallback) {
 }
 @end
 
-@interface NFBManager ()
+@interface NFBManager () <UIGestureRecognizerDelegate>
 @property(nonatomic, strong) NFBStore *store;
 @property(nonatomic, strong) NFBWindow *window;
 @property(nonatomic, strong) UIScrollView *rail;
@@ -83,6 +89,14 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *expandedUntil;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, UIImage *> *icons;
 @property(nonatomic, strong) NSMutableSet<NSString *> *burstApps;
+@property(nonatomic, strong) NSArray<NSString *> *lastSwitcher;
+@property(nonatomic, strong) NSMutableSet<NSString *> *dismissedSwitcher;
+@property(nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *generations;
+@property(nonatomic, strong) NSMutableSet<NSString *> *needsReveal;
+@property(nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *lastBadges;
+@property(nonatomic, strong) NFBRecord *pendingRecord;
+@property(nonatomic) NSTimeInterval pendingUntil;
+@property(nonatomic) NSUInteger emptyReads;
 @property(nonatomic) CGFloat iconSize;
 @property(nonatomic) CGFloat iconOpacity;
 @property(nonatomic) BOOL enabled;
@@ -91,7 +105,13 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic) BOOL showApps;
 - (void)refresh;
 - (void)burstBubble:(NFBBubble *)button;
-- (void)executeRecord:(NFBRecord *)record;
+- (BOOL)executeRecord:(NFBRecord *)record;
+- (void)tick;
+- (void)startTimer;
+- (void)extendApp:(NSString *)app;
+- (void)closeAppsInOrder:(NSArray<NSString *> *)apps;
+- (void)openApp:(NSString *)app;
+- (BOOL)isLocked;
 @end
 
 @implementation NFBManager
@@ -108,6 +128,10 @@ static double NFBNumber(NSString *key, double fallback) {
         _expandedUntil = [NSMutableDictionary dictionary];
         _icons = [NSMutableDictionary dictionary];
         _burstApps = [NSMutableSet set];
+        _dismissedSwitcher = [NSMutableSet set];
+        _generations = [NSMutableDictionary dictionary];
+        _needsReveal = [NSMutableSet set];
+        _lastBadges = [NSMutableDictionary dictionary];
         [self reloadPreferences];
     }
     return self;
@@ -121,33 +145,23 @@ static double NFBNumber(NSString *key, double fallback) {
     self.showLock = NFBPreference(@"ShowOnLock", YES);
     self.showHome = NFBPreference(@"ShowOnHome", YES);
     self.showApps = NFBPreference(@"ShowInApps", YES);
-    if (!self.enabled) [self clear];
-    else [self refresh];
+    if (!self.enabled) {
+        [self.timer invalidate]; self.timer = nil; [self clear];
+    } else { [self startTimer]; [self tick]; }
 }
 - (void)receiveRequest:(id)request destination:(id)destination {
     if (!self.enabled) return;
     NSString *appID = NFBString(NFBGet(request, @"sectionIdentifier"));
     NSString *notificationID = NFBString(NFBGet(request, @"notificationIdentifier"));
     if (!appID.length || !notificationID.length || !NFBGet(request, @"defaultAction")) return;
-    BOOL firstAppearance = ![self.store.appIDs containsObject:appID];
-    [self.store putApp:appID notification:notificationID request:request destination:destination];
+    if (![self.store putApp:appID notification:notificationID request:request destination:destination]) return;
+    self.generations[appID] = @([self.generations[appID] unsignedIntegerValue] + 1);
+    [self.dismissedSwitcher removeObject:appID];
     id image = NFBGet(NFBGet(request, @"content"), @"icon");
     if ([image isKindOfClass:UIImage.class]) self.icons[appID] = image;
-    // Each app owns its own deadline. A newer message replaces the old deadline.
-    NSTimeInterval hold = firstAppearance ? 4.2 : 3.6;
-    NSNumber *deadline = @(CACurrentMediaTime() + hold);
-    self.expandedUntil[appID] = deadline;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(hold * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        if ([self.expandedUntil[appID] isEqual:deadline]) [self refresh];
-    });
-    if (!self.timer) {
-        __weak NFBManager *weakSelf = self;
-        self.timer = [NSTimer timerWithTimeInterval:0.75 repeats:YES block:^(__unused NSTimer *timer) {
-            [weakSelf refresh];
-        }];
-        self.timer.tolerance = 0.15;
-        [NSRunLoop.mainRunLoop addTimer:self.timer forMode:NSRunLoopCommonModes];
-    }
+    if ([self shouldShow]) [self extendApp:appID];
+    else [self.needsReveal addObject:appID];
+    [self startTimer];
     [self refresh];
     NFBBubble *updated = self.buttons[appID];
     if (!self.window.hidden && updated) {
@@ -165,7 +179,81 @@ static double NFBNumber(NSString *key, double fallback) {
     [self.store removeApp:section]; [self refresh];
 }
 - (void)clear {
-    [self.store clear]; [self.expandedUntil removeAllObjects]; [self.icons removeAllObjects]; [self refresh];
+    [self.dismissedSwitcher addObjectsFromArray:self.lastSwitcher ?: @[]];
+    [self closeAppsInOrder:self.store.appIDs];
+}
+- (BOOL)isLocked {
+    id lock = NFBSingleton(@"SBLockScreenManager");
+    return ![lock respondsToSelector:@selector(isUILocked)] || [lock isUILocked];
+}
+- (void)startTimer {
+    if (self.timer || !self.enabled) return;
+    __weak NFBManager *weakSelf = self;
+    self.timer = [NSTimer timerWithTimeInterval:0.5 repeats:YES block:^(__unused NSTimer *t) { [weakSelf tick]; }];
+    self.timer.tolerance = 0.1;
+    [NSRunLoop.mainRunLoop addTimer:self.timer forMode:NSRunLoopCommonModes];
+}
+- (void)extendApp:(NSString *)app {
+    NSTimeInterval duration = UIAccessibilityIsReduceMotionEnabled() ? 0 : NFBMotion;
+    NSNumber *until = @(CACurrentMediaTime() + duration + NFBHold);
+    self.expandedUntil[app] = until;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((duration + NFBHold) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if ([self.expandedUntil[app] isEqual:until]) [self refresh];
+    });
+}
+- (void)tick {
+    if (!self.enabled) return;
+    if (self.pendingRecord) {
+        NSString *front = NFBString(NFBGet(NFBGet(UIApplication.sharedApplication, @"_accessibilityFrontMostApplication"), @"bundleIdentifier"));
+        if (![self isLocked] && [front isEqual:self.pendingRecord.appID]) {
+            [self.store consumeRecord:self.pendingRecord]; self.pendingRecord = nil;
+        } else if (CACurrentMediaTime() > self.pendingUntil) self.pendingRecord = nil;
+    }
+    // Do not interpret a temporarily inaccessible switcher on the lock screen as empty.
+    if (![self isLocked]) {
+        NSArray *current = NFBReadSwitcherApps();
+        if (current) {
+            NSSet *set = [NSSet setWithArray:current];
+            [self.dismissedSwitcher intersectSet:set];
+            if (current.count == 0 && self.lastSwitcher.count > 0) {
+                // Require two consecutive empty reads to reject intermediate snapshots.
+                if (++self.emptyReads >= 2) {
+                    [self closeAppsInOrder:self.store.appIDs];
+                    self.lastSwitcher = current; self.emptyReads = 0;
+                }
+            } else {
+                self.emptyReads = 0;
+                NSSet *oldSet = [NSSet setWithArray:self.lastSwitcher ?: @[]];
+                NSMutableArray *removed = [NSMutableArray array];
+                for (NSString *app in self.store.appIDs)
+                    if ([oldSet containsObject:app] && ![set containsObject:app]) [removed addObject:app];
+                if (removed.count) [self closeAppsInOrder:removed];
+                for (NSString *app in current) {
+                    if (![oldSet containsObject:app])
+                        self.generations[app] = @([self.generations[app] unsignedIntegerValue] + 1);
+                    if (![self.dismissedSwitcher containsObject:app] && ![self.store.appIDs containsObject:app]) {
+                        [self.store pinApp:app];
+                        self.generations[app] = @([self.generations[app] unsignedIntegerValue] + 1);
+                    }
+                }
+                self.lastSwitcher = current;
+            }
+        }
+    }
+    [self refresh];
+}
+- (void)closeAppsInOrder:(NSArray<NSString *> *)apps {
+    NSDictionary *versions = [self.generations copy];
+    [apps enumerateObjectsUsingBlock:^(NSString *app, NSUInteger index, __unused BOOL *stop) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(index * 0.16 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            // A notification or reopened switcher card received after this snapshot survives.
+            if (![self.generations[app] isEqual:versions[app]]) return;
+            [self.burstApps addObject:app];
+            [self.store closeApp:app]; [self.needsReveal removeObject:app];
+            if ([self.pendingRecord.appID isEqual:app]) self.pendingRecord = nil;
+            [self refresh];
+        });
+    }];
 }
 - (BOOL)shouldShow {
     id lock = NFBSingleton(@"SBLockScreenManager");
@@ -219,8 +307,21 @@ static double NFBNumber(NSString *key, double fallback) {
     button.badge.frame = CGRectMake(0, 0, width, 20);
     NSString *name = NFBString(NFBGet(icon, @"displayName")) ?: button.appID;
     button.accessibilityLabel = [NSString stringWithFormat:@"%@，%@", name, text ?: (record ? @"有通知" : @"暂无新通知")];
-    button.accessibilityHint = @"点击打开本应用通知，长按关闭此气泡";
+    button.accessibilityHint = @"点击依次打开通知或应用，向右划关闭图标";
+    NSNumber *previous = self.lastBadges[button.appID];
+    if (previous.doubleValue > 0 && (!text.length || [text isEqualToString:@"0"]))
+        [self.store removeApp:button.appID];
+    if ([badge isKindOfClass:NSNumber.class]) self.lastBadges[button.appID] = badge;
+    else if (!text.length) self.lastBadges[button.appID] = @0;
     id image = self.icons[button.appID];
+    if (!image) {
+        SEL sel = NSSelectorFromString(@"_applicationIconImageForBundleIdentifier:format:scale:");
+        if ([UIImage respondsToSelector:sel]) {
+            @try { image = ((id (*)(id, SEL, id, int, CGFloat))objc_msgSend)(UIImage.class, sel, button.appID, 2, UIScreen.mainScreen.scale); }
+            @catch (__unused NSException *error) {}
+        }
+        if ([image isKindOfClass:UIImage.class]) self.icons[button.appID] = image;
+    }
     button.imageView.image = [image isKindOfClass:UIImage.class] ? image : [UIImage systemImageNamed:@"bell.fill"];
 }
 - (void)refresh {
@@ -244,7 +345,6 @@ static double NFBNumber(NSString *key, double fallback) {
         } completion:^(__unused BOOL done) { [button removeFromSuperview]; }];
     }
     if (!apps.count || !self.enabled) {
-        [self.timer invalidate]; self.timer = nil;
         // Delay hiding until the removal animation completes; recheck new arrivals.
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.65 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             if (!self.store.appIDs.count || !self.enabled) self.window.hidden = YES;
@@ -254,6 +354,10 @@ static double NFBNumber(NSString *key, double fallback) {
     if (![self shouldShow]) { self.window.hidden = YES; return; }
     [self ensureWindow];
     self.window.hidden = NO;
+    for (NSString *app in [self.needsReveal copy]) {
+        if ([self.store.appIDs containsObject:app]) [self extendApp:app];
+        [self.needsReveal removeObject:app];
+    }
     UIView *root = self.window.rootViewController.view;
     CGRect bounds = root.bounds;
     UIEdgeInsets safe = root.safeAreaInsets;
@@ -264,7 +368,13 @@ static double NFBNumber(NSString *key, double fallback) {
     CGFloat available = MAX(side, bounds.size.height - top - MAX(safe.bottom, 20) - 20);
     CGFloat height = MIN(available, apps.count * step);
     // Use the actual screen edge, not safeArea.right, for exactly half exposure.
-    self.rail.frame = CGRectMake(bounds.size.width - side, top + (available - height) * 0.42, side, height);
+    CGRect railFrame = CGRectMake(bounds.size.width - side, top + (available - height) * 0.42, side, height);
+    if (!CGRectEqualToRect(self.rail.frame, railFrame)) {
+        if (CGRectIsEmpty(self.rail.frame)) self.rail.frame = railFrame;
+        else [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : NFBMotion delay:0
+            options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
+            animations:^{ self.rail.frame = railFrame; } completion:nil];
+    }
     self.rail.contentSize = CGSizeMake(side, apps.count * step);
     CGFloat maxOffset = MAX(0, self.rail.contentSize.height - height);
     if (self.rail.contentOffset.y > maxOffset) self.rail.contentOffset = CGPointMake(0, maxOffset);
@@ -275,14 +385,14 @@ static double NFBNumber(NSString *key, double fallback) {
             button = [[NFBBubble alloc] initWithFrame:CGRectZero];
             button.appID = appID;
             [button addTarget:self action:@selector(tapped:) forControlEvents:UIControlEventTouchUpInside];
-            UILongPressGestureRecognizer *press = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(longPressed:)];
-            press.minimumPressDuration = 0.55;
-            press.cancelsTouchesInView = YES;
-            [button addGestureRecognizer:press];
+            UIPanGestureRecognizer *swipe = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(swiped:)];
+            swipe.delegate = self; swipe.cancelsTouchesInView = YES;
+            [button addGestureRecognizer:swipe];
             self.buttons[appID] = button;
             [self.rail addSubview:button];
         }
         [self updateBubble:button record:[self.store latestForApp:appID]];
+        if (button.swiping) return;
         BOOL expanded = [self.expandedUntil[appID] doubleValue] > CACurrentMediaTime();
         CGAffineTransform target = CGAffineTransformMakeTranslation(expanded ? 0 : NFBRetraction(diameter), 0);
         CGRect targetBounds = CGRectMake(0, 0, side, side);
@@ -300,7 +410,7 @@ static double NFBNumber(NSString *key, double fallback) {
             !CGAffineTransformEqualToTransform(button.transform, target) ||
             fabs(button.alpha - self.iconOpacity) > 0.001;
         if (changed) {
-            [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : (fresh ? 1.2 : 0.6)
+            [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : NFBMotion
                 delay:0 usingSpringWithDamping:0.86 initialSpringVelocity:0
                 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
                 animations:^{
@@ -315,14 +425,31 @@ static double NFBNumber(NSString *key, double fallback) {
         }
     }];
 }
-- (void)longPressed:(UILongPressGestureRecognizer *)gesture {
-    if (gesture.state != UIGestureRecognizerStateBegan) return;
+- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gesture {
+    if (![gesture isKindOfClass:UIPanGestureRecognizer.class]) return YES;
+    CGPoint speed = [(UIPanGestureRecognizer *)gesture velocityInView:gesture.view];
+    return speed.x > 0 && fabs(speed.x) > fabs(speed.y);
+}
+- (void)swiped:(UIPanGestureRecognizer *)gesture {
     NFBBubble *button = (NFBBubble *)gesture.view;
     if (self.buttons[button.appID] != button) return;
-    [self.burstApps addObject:button.appID];
-    [self.store closeApp:button.appID];
-    [self.expandedUntil removeObjectForKey:button.appID];
-    [self refresh];
+    if (gesture.state == UIGestureRecognizerStateBegan) {
+        CALayer *visible = (CALayer *)button.layer.presentationLayer;
+        button.swipeStart = visible ? visible.transform.m41 : button.transform.tx;
+        [button.layer removeAllAnimations]; button.swiping = YES;
+    }
+    CGFloat distance = MAX(0, [gesture translationInView:button].x);
+    if (gesture.state == UIGestureRecognizerStateChanged || gesture.state == UIGestureRecognizerStateBegan)
+        button.transform = CGAffineTransformMakeTranslation(button.swipeStart + distance, 0);
+    if (gesture.state == UIGestureRecognizerStateEnded || gesture.state == UIGestureRecognizerStateCancelled || gesture.state == UIGestureRecognizerStateFailed) {
+        button.swiping = NO;
+        BOOL close = gesture.state == UIGestureRecognizerStateEnded &&
+            (distance >= 20 || [gesture velocityInView:button].x > 350);
+        if (close) {
+            [self.dismissedSwitcher addObject:button.appID];
+            [self closeAppsInOrder:@[button.appID]];
+        } else [self refresh];
+    }
 }
 - (void)burstBubble:(NFBBubble *)button {
     if (UIAccessibilityIsReduceMotionEnabled()) {
@@ -331,11 +458,12 @@ static double NFBNumber(NSString *key, double fallback) {
         return;
     }
     UIView *root = self.window.rootViewController.view;
-    // Capture presentation geometry so a long press during sliding does not jump.
+    // Capture presentation geometry so a swipe during sliding does not jump.
     CALayer *presentation = (CALayer *)button.layer.presentationLayer;
     CALayer *sourceLayer = presentation ?: button.layer;
     CGPoint origin = [sourceLayer convertPoint:CGPointMake(CGRectGetMidX(button.bounds), CGRectGetMidY(button.bounds)) toLayer:root.layer];
     CGFloat diameter = button.imageView.bounds.size.width;
+    origin.x = MIN(origin.x, root.bounds.size.width - diameter * 0.15);
     UIView *ring = [[UIView alloc] initWithFrame:CGRectMake(origin.x - diameter/2, origin.y - diameter/2, diameter, diameter)];
     ring.userInteractionEnabled = NO;
     ring.layer.cornerRadius = diameter/2;
@@ -364,25 +492,37 @@ static double NFBNumber(NSString *key, double fallback) {
     } completion:^(__unused BOOL done) { [button removeFromSuperview]; }];
 }
 - (void)tapped:(NFBBubble *)button {
-    if (button.opening || self.buttons[button.appID] != button) return;
-    NFBRecord *record = [self.store actionForApp:button.appID];
-    if (!record) return;
+    if (button.opening || button.swiping || self.buttons[button.appID] != button) return;
+    if (self.pendingRecord && [self.pendingRecord.appID isEqual:button.appID]) return;
     button.opening = YES;
-    self.expandedUntil[button.appID] = @(CACurrentMediaTime() + 3.6);
-    CALayer *visible = (CALayer *)button.layer.presentationLayer;
-    CGFloat offset = visible ? visible.transform.m41 : button.transform.tx;
-    NSTimeInterval duration = UIAccessibilityIsReduceMotionEnabled() ? 0 : (fabs(offset) > 0.5 ? 0.6 : 0);
-    [UIView animateWithDuration:duration delay:0
-        options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseInOut | UIViewAnimationOptionAllowUserInteraction
-        animations:^{ button.transform = CGAffineTransformIdentity; }
-        completion:^(__unused BOOL finished) {
-            // Closing this bubble (or disabling the tweak) while it extends cancels opening.
-            button.opening = NO;
-            if (!self.enabled || self.buttons[button.appID] != button) return;
-            [self executeRecord:record];
-        }];
+    [self extendApp:button.appID];
+    [self refresh]; // Starts the same 0.6-second animation used for retraction.
+    NFBRecord *record = [self.store latestForApp:button.appID];
+    // Dispatch in this same event, never in the animation completion.
+    if (record) {
+        BOOL locked = [self isLocked];
+        if ([self executeRecord:record]) {
+            if (locked) { self.pendingRecord = record; self.pendingUntil = CACurrentMediaTime() + 20; }
+            else [self.store consumeRecord:record];
+        }
+    } else [self openApp:button.appID];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ button.opening = NO; });
 }
-- (void)executeRecord:(NFBRecord *)record {
+- (void)openApp:(NSString *)app {
+    id springboard = UIApplication.sharedApplication;
+    SEL sel = NSSelectorFromString(@"launchApplicationWithIdentifier:suspended:");
+    NSMethodSignature *sig = [springboard methodSignatureForSelector:sel];
+    if (!sig || sig.numberOfArguments != 4 || (sig.methodReturnType[0] != 'B' && sig.methodReturnType[0] != 'c') ||
+        [sig getArgumentTypeAtIndex:2][0] != '@' ||
+        ([sig getArgumentTypeAtIndex:3][0] != 'B' && [sig getArgumentTypeAtIndex:3][0] != 'c')) {
+        NSLog(@"[NotifyBubbles] SpringBoard launch adapter unavailable"); return;
+    }
+    @try {
+        BOOL opened = ((BOOL (*)(id, SEL, id, BOOL))objc_msgSend)(springboard, sel, app, NO);
+        if (!opened) UIAccessibilityPostNotification(UIAccessibilityAnnouncementNotification, @"请解锁后重试打开应用");
+    } @catch (__unused NSException *error) { NSLog(@"[NotifyBubbles] SpringBoard app launch failed"); }
+}
+- (BOOL)executeRecord:(NFBRecord *)record {
     id action = NFBGet(record.request, @"defaultAction");
     id delegate = NFBGet(record.destination, @"delegate");
     SEL selector = @selector(destination:executeAction:forNotificationRequest:requestAuthentication:withParameters:completion:);
@@ -399,15 +539,15 @@ static double NFBNumber(NSString *key, double fallback) {
     if (!record || !action || ![delegate respondsToSelector:selector] || !compatible) {
         NSLog(@"[NotifyBubbles] Notification action adapter unavailable; bubbles retained.");
         UIAccessibilityPostNotification(UIAccessibilityAnnouncementNotification, @"暂时无法打开，请使用原通知");
-        return;
+        return NO;
     }
     @try {
         [delegate destination:record.destination executeAction:action forNotificationRequest:record.request
             requestAuthentication:YES withParameters:@{} completion:^{}];
-        // The system handles authentication and the app's read state.
-        // Do not mutate any bubble here: cancellation and other apps stay intact.
+        return YES;
     } @catch (__unused NSException *error) {
         NSLog(@"[NotifyBubbles] Notification action failed; bubbles retained.");
+        return NO;
     }
 }
 @end

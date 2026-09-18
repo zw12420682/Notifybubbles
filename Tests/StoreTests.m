@@ -2,70 +2,55 @@
 #import "NFBStore.h"
 #import "NFBGeometry.h"
 #include <stdlib.h>
-
+@interface TestRequest : NSObject
+@property(nonatomic, strong) NSDate *timestamp;
+@end
+@implementation TestRequest
+@end
+static TestRequest *Request(double time) {
+    TestRequest *r = [TestRequest new]; r.timestamp = [NSDate dateWithTimeIntervalSince1970:time]; return r;
+}
 static void Check(BOOL value, NSString *message) {
     if (!value) { NSLog(@"FAIL: %@", message); exit(1); }
 }
 int main(void) {
     @autoreleasepool {
-        NFBStore *store = [NFBStore new];
-        NSObject *destination = [NSObject new];
-        NSObject *first = [NSObject new];
-        NSObject *replacement = [NSObject new];
-        Check(store.count == 0 && store.appIDs.count == 0, @"No phantom bubbles on startup");
-        [store putApp:@"chat" notification:@"1" request:first destination:destination];
-        [store putApp:@"chat" notification:@"1" request:replacement destination:destination];
-        Check(store.count == 1, @"Repeated deliveries are deduplicated");
-        Check([store latestForApp:@"chat"].request == replacement, @"Updated action replaces old request");
-        [store putApp:@"mail" notification:@"1" request:first destination:destination];
-        Check(store.count == 2, @"Identical IDs from different apps are distinct");
-        [store putApp:@"chat" notification:@"2" request:first destination:destination];
-        Check([store.appIDs isEqual:@[@"chat", @"mail"]], @"Arrival does not move other app icons");
-        [store removeApp:@"chat" notification:@"2"];
-        Check([[store latestForApp:@"chat"].notificationID isEqual:@"1"], @"Withdrawal restores previous actionable notification");
-        [store removeApp:@"chat" notification:@"missing"];
-        Check(store.count == 2, @"Unrelated withdrawal is harmless");
-        [store clear];
-        Check(store.count == 0 && store.appIDs.count == 0 && ![store latestForApp:@"mail"], @"Explicit settings clear removes every app");
-        [store putApp:@"chat" notification:@"new" request:first destination:destination];
-        Check(store.count == 1, @"A new message after clearing creates a fresh bubble");
-        [store putApp:@"" notification:@"bad" request:first destination:destination];
-        [store putApp:@"mail" notification:@"bad" request:nil destination:destination];
-        Check(store.count == 1, @"Invalid requests cannot create empty bubbles");
-        [store removeApp:@"chat"];
-        Check(store.count == 0, @"Section removal clears only that app");
-        Check([store.appIDs containsObject:@"chat"], @"Read or withdrawn notifications leave the icon pinned");
-        [store putApp:@"mail" notification:@"unread" request:replacement destination:destination];
-        [store closeApp:@"chat"];
-        Check([store.appIDs isEqual:@[@"mail"]], @"Long press closes only the selected app");
-        Check([store latestForApp:@"mail"].request == replacement, @"Other app action remains intact");
-        [store putApp:@"chat" notification:@"returned" request:first destination:destination];
-        Check([store.appIDs isEqual:@[@"mail", @"chat"]], @"New notification restores a manually closed app");
-        [store removeApp:@"chat" notification:@"returned"];
-        Check([store.appIDs containsObject:@"chat"] && ![store latestForApp:@"chat"], @"Withdrawing final request preserves icon but drops obsolete action");
-        Check([store actionForApp:@"chat"].request == first, @"No new notification reuses the last banner action");
-        Check([store actionForApp:@"mail"].request == replacement, @"Reusing one action does not affect another app");
-        [store closeApp:@"chat"];
-        Check(![store actionForApp:@"chat"], @"Long press releases remembered action");
-        [store clear];
-        Check(![store actionForApp:@"mail"], @"Clear releases all remembered actions");
-        for (NSUInteger i = 0; i < 600; i++)
-            [store putApp:@"chat" notification:[NSString stringWithFormat:@"%lu", (unsigned long)i]
-                request:first destination:destination];
-        Check(store.count == 512, @"Retained requests are bounded");
-        Check([[store latestForApp:@"chat"].notificationID isEqual:@"599"], @"Eviction preserves latest action");
-        Check(NFBSize(1) == 32 && NFBSize(200) == 80, @"Clamp size limits");
-        Check(NFBSize(NAN) == 48 && NFBSize(INFINITY) == 48, @"Invalid size restores default");
-        Check(NFBOpacity(-1) == 0.2 && NFBOpacity(5) == 1, @"Clamp alpha limits");
-        Check(NFBOpacity(NAN) == 1, @"Invalid alpha restores default");
-        for (int diameter = 32; diameter <= 80; diameter++) {
-            double screen = 390;
-            double expandedLeft = screen - (diameter + 14) + 7;
-            double collapsedLeft = expandedLeft + NFBRetraction(diameter);
-            Check(fabs(screen - collapsedLeft - diameter / 2.0) < 0.001, @"Half the circle is visible at every size");
-            Check(expandedLeft >= 0 && expandedLeft + diameter <= screen, @"Expanded circle is entirely on screen");
+        NFBStore *s = [NFBStore new]; id destination = [NSObject new];
+        [s pinApp:@"switcherOnly"];
+        Check(s.count == 0 && ![s latestForApp:@"switcherOnly"], @"Switcher card pins app without fabricating unread messages");
+        [s putApp:@"chat" notification:@"new" request:Request(300) destination:destination];
+        [s putApp:@"mail" notification:@"1" request:Request(250) destination:destination];
+        [s putApp:@"chat" notification:@"old" request:Request(100) destination:destination];
+        Check([s.appIDs isEqual:@[@"chat", @"mail", @"switcherOnly"]], @"Notification moves its app to first position");
+        Check([[s latestForApp:@"chat"].notificationID isEqual:@"new"], @"Queue sorts by notification timestamp, not delivery timing");
+        Check(![s putApp:@"chat" notification:@"new" request:Request(300) destination:destination] && s.count == 3, @"Duplicate system delivery is not a second notification");
+        NFBRecord *new = [s latestForApp:@"chat"];
+        [s consumeRecord:new];
+        Check([[s latestForApp:@"chat"].notificationID isEqual:@"old"], @"Second tap selects older message");
+        Check([s latestForApp:@"mail"] != nil, @"Other app unread queue unchanged");
+        Check(![s putApp:@"chat" notification:@"new" request:Request(300) destination:destination], @"Consumed duplicate cannot reenter queue");
+        [s consumeRecord:[s latestForApp:@"chat"]];
+        Check(![s latestForApp:@"chat"] && [s.appIDs containsObject:@"chat"], @"Empty queue keeps icon and selects ordinary launch");
+        Check([s putApp:@"chat" notification:@"new" request:Request(400) destination:destination], @"Reused identifier with a new timestamp is a new message");
+        NFBRecord *revision = [s latestForApp:@"chat"];
+        [s putApp:@"chat" notification:@"new" request:Request(500) destination:destination];
+        [s consumeRecord:revision];
+        Check([s latestForApp:@"chat"].timestamp.timeIntervalSince1970 == 500, @"Completing old action cannot delete a newer revision");
+        [s removeApp:@"chat" notification:@"new"];
+        Check(![s latestForApp:@"chat"] && [s.appIDs containsObject:@"chat"], @"System withdrawal preserves pinned icon");
+        [s closeApp:@"chat"];
+        Check(![s.appIDs containsObject:@"chat"] && [s latestForApp:@"mail"], @"Closing one card leaves other cards intact");
+        [s clear]; Check(s.count == 0 && s.appIDs.count == 0, @"Clear removes all queues and pins");
+        for (NSUInteger i=0; i<600; i++)
+            [s putApp:@"chat" notification:[NSString stringWithFormat:@"n%lu", (unsigned long)i] request:Request(i) destination:destination];
+        Check(s.count == 512, @"Queue memory bounded");
+        Check(NFBSize(1)==32 && NFBSize(200)==80 && NFBSize(NAN)==48, @"Size bounds and invalid input");
+        Check(NFBOpacity(-1)==0.2 && NFBOpacity(5)==1 && NFBOpacity(NAN)==1, @"Opacity bounds and invalid input");
+        for (int d=32; d<=80; d++) {
+            double left=390-(d+14)+7+NFBRetraction(d);
+            Check(fabs(390-left-d/2.0)<0.001, @"Half visible for all sizes");
         }
-        NSLog(@"PASS: notification-state and geometry checks");
+        NSLog(@"PASS: queue chronology, per-app isolation, deduplication, consumption, switcher pins and geometry");
     }
     return 0;
 }

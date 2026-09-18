@@ -10,9 +10,9 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
-			<string>通知悬浮气泡 · 测试版 0.3.1</string>
+			<string>通知悬浮气泡 · 测试版 0.4.0</string>
 			<key>footerText</key>
-			<string>首次收到通知后保留图标。点击先伸出，再执行本 App 通知动作；没有新通知时重用最近通知动作。其他气泡保持不变，长按关闭此图标。</string>
+			<string>点击时立即执行通知或 App 打开动作，同时伸出图标。通知按新到旧依次打开；没有待打开的通知时直接打开 App。向右划关闭图标，长按不再关闭。</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -32,7 +32,7 @@
 			<key>label</key>
 			<string>显示位置</string>
 			<key>footerText</key>
-			<string>三个开关分别生效。锁屏点击仍需系统认证。关闭某个位置只隐藏气泡；关闭总开关会清空气泡。</string>
+			<string>锁屏关闭仅隐藏气泡，通知仍会收集，进入允许显示的桌面或 App 后出现。总开关关闭会清理全部图标。</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -120,7 +120,7 @@
 			<key>label</key>
 			<string>气泡与角标</string>
 			<key>footerText</key>
-			<string>首次用约 1.2 秒缓慢滑出并淡入，完整显示约 3 秒后缩回右侧一半。图标在已读后仍保留；长按关闭后，新消息可再次唤出。角标跟随桌面。</string>
+			<string>伸出和缩回均为 0.6 秒，完整伸出后停留 2 秒。新通知图标动画移到第一位。切换器 App 也显示图标；上划关闭卡片时清理对应图标，清空切换器时依次破裂。角标跟随桌面。</string>
 		</dict>
 		<dict>
 			<key>cell</key>

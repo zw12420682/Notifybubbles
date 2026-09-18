@@ -50,6 +50,25 @@ static void replacedBannerPost(id self, SEL cmd, id request, id coalesced) {
     originalBannerPost(self, cmd, request, coalesced);
     NFBCapture(self, request);
 }
+// Keep collection independent of the tweak's lock-screen visibility setting.
+// While locked, requests can go to the list instead of the banner presentation path.
+static void (*originalPost)(id, SEL, id);
+static void replacedPost(id self, SEL cmd, id request) {
+    originalPost(self, cmd, request);
+    NFBMain(^{
+        id lock = NFBSingleton(@"SBLockScreenManager");
+        if (![lock respondsToSelector:@selector(isUILocked)] || ![lock isUILocked]) return;
+        id targets = NFBGet(request, @"requestDestinations");
+        if (![targets isKindOfClass:NSSet.class] && ![targets isKindOfClass:NSArray.class]) return;
+        BOOL bannerEligible = NO;
+        for (id value in targets)
+            if ([NFBString(value).lowercaseString containsString:@"banner"]) bannerEligible = YES;
+        if (!bannerEligible) return;
+        id wrapper = NFBGet(UIApplication.sharedApplication, @"notificationDispatcher");
+        id destination = NFBGet(wrapper, @"bannerDestination");
+        if (destination) [[NFBManager shared] receiveRequest:request destination:destination];
+    });
+}
 static void (*originalWithdraw)(id, SEL, id);
 static void replacedWithdraw(id self, SEL cmd, id request) {
     originalWithdraw(self, cmd, request);
@@ -103,9 +122,10 @@ static void NFBInstall(void) {
     if (!feed) feed = NFBHook(NSClassFromString(@"SBNotificationBannerDestination"),
         @"postNotificationRequest:forCoalescedNotification:", "@@", (IMP)replacedBannerPost, (IMP *)&originalBannerPost);
     BOOL withdraw = NFBHook(dispatcher, @"withdrawNotificationWithRequest:", "@", (IMP)replacedWithdraw, (IMP *)&originalWithdraw);
+    BOOL collection = NFBHook(dispatcher, @"postNotificationWithRequest:", "@", (IMP)replacedPost, (IMP *)&originalPost);
     BOOL remove = NFBHook(dispatcher, @"_didRemoveNotificationRequest:", "@", (IMP)replacedRemove, (IMP *)&originalRemove);
     NFBHook(dispatcher, @"removeNotificationSectionWithIdentifier:", "@", (IMP)replacedRemoveSection, (IMP *)&originalRemoveSection);
-    NSLog(@"[NotifyBubbles] 0.3.1 feed=%d withdraw=%d remove=%d; first-device validation required", feed, withdraw, remove);
+    NSLog(@"[NotifyBubbles] 0.4.0 feed=%d collection=%d withdraw=%d remove=%d; first-device validation required", feed, collection, withdraw, remove);
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
         NFBPreferencesChanged, CFSTR("local.notifybubbles/preferences.changed"), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
