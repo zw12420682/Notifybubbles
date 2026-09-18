@@ -6,7 +6,7 @@ INSTALL_TARGET_PROCESSES = SpringBoard
 include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = NotifyBubbles
-NotifyBubbles_FILES = Sources/Tweak.m Sources/NFBStore.m Sources/NFBManager.m Sources/NFBSwitcher.m
+NotifyBubbles_FILES = Sources/Tweak.m Sources/NFBStore.m Sources/NFBManager.m Sources/NFBSwitcher.m Sources/NFBTrollOpen.m
 NotifyBubbles_CFLAGS = -fobjc-arc -Wall -Wextra
 NotifyBubbles_FRAMEWORKS = UIKit Foundation QuartzCore
 NotifyBubbles_LIBRARIES = substrate

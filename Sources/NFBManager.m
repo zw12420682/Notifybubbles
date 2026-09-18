@@ -3,6 +3,7 @@
 #import "NFBStore.h"
 #import "NFBGeometry.h"
 #import "NFBSwitcher.h"
+#import "NFBTrollOpen.h"
 
 static const NSTimeInterval NFBMotion = 0.6;
 static const NSTimeInterval NFBHold = 2.0;
@@ -49,8 +50,6 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, strong) UIImageView *imageView;
 @property(nonatomic, strong) UILabel *badge;
 @property(nonatomic) BOOL opening;
-@property(nonatomic) BOOL swiping;
-@property(nonatomic) CGFloat swipeStart;
 @end
 @implementation NFBBubble
 - (instancetype)initWithFrame:(CGRect)frame {
@@ -80,7 +79,7 @@ static double NFBNumber(NSString *key, double fallback) {
 }
 @end
 
-@interface NFBManager () <UIGestureRecognizerDelegate>
+@interface NFBManager ()
 @property(nonatomic, strong) NFBStore *store;
 @property(nonatomic, strong) NFBWindow *window;
 @property(nonatomic, strong) UIScrollView *rail;
@@ -111,6 +110,7 @@ static double NFBNumber(NSString *key, double fallback) {
 - (void)extendApp:(NSString *)app;
 - (void)closeAppsInOrder:(NSArray<NSString *> *)apps;
 - (void)openApp:(NSString *)app;
+- (void)showOpenNotice:(NSString *)message;
 - (BOOL)isLocked;
 @end
 
@@ -307,7 +307,7 @@ static double NFBNumber(NSString *key, double fallback) {
     button.badge.frame = CGRectMake(0, 0, width, 20);
     NSString *name = NFBString(NFBGet(icon, @"displayName")) ?: button.appID;
     button.accessibilityLabel = [NSString stringWithFormat:@"%@，%@", name, text ?: (record ? @"有通知" : @"暂无新通知")];
-    button.accessibilityHint = @"点击依次打开通知或应用，向右划关闭图标";
+    button.accessibilityHint = @"点击打开通知，无通知时通过 TrollOpen 分屏打开，长按关闭图标";
     NSNumber *previous = self.lastBadges[button.appID];
     if (previous.doubleValue > 0 && (!text.length || [text isEqualToString:@"0"]))
         [self.store removeApp:button.appID];
@@ -385,14 +385,14 @@ static double NFBNumber(NSString *key, double fallback) {
             button = [[NFBBubble alloc] initWithFrame:CGRectZero];
             button.appID = appID;
             [button addTarget:self action:@selector(tapped:) forControlEvents:UIControlEventTouchUpInside];
-            UIPanGestureRecognizer *swipe = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(swiped:)];
-            swipe.delegate = self; swipe.cancelsTouchesInView = YES;
-            [button addGestureRecognizer:swipe];
+            UILongPressGestureRecognizer *hold = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(longPressed:)];
+            hold.minimumPressDuration = 0.6;
+            hold.cancelsTouchesInView = YES;
+            [button addGestureRecognizer:hold];
             self.buttons[appID] = button;
             [self.rail addSubview:button];
         }
         [self updateBubble:button record:[self.store latestForApp:appID]];
-        if (button.swiping) return;
         BOOL expanded = [self.expandedUntil[appID] doubleValue] > CACurrentMediaTime();
         CGAffineTransform target = CGAffineTransformMakeTranslation(expanded ? 0 : NFBRetraction(diameter), 0);
         CGRect targetBounds = CGRectMake(0, 0, side, side);
@@ -425,31 +425,21 @@ static double NFBNumber(NSString *key, double fallback) {
         }
     }];
 }
-- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gesture {
-    if (![gesture isKindOfClass:UIPanGestureRecognizer.class]) return YES;
-    CGPoint speed = [(UIPanGestureRecognizer *)gesture velocityInView:gesture.view];
-    return speed.x > 0 && fabs(speed.x) > fabs(speed.y);
-}
-- (void)swiped:(UIPanGestureRecognizer *)gesture {
+- (void)longPressed:(UILongPressGestureRecognizer *)gesture {
+    if (gesture.state != UIGestureRecognizerStateBegan) return;
     NFBBubble *button = (NFBBubble *)gesture.view;
     if (self.buttons[button.appID] != button) return;
-    if (gesture.state == UIGestureRecognizerStateBegan) {
-        CALayer *visible = (CALayer *)button.layer.presentationLayer;
-        button.swipeStart = visible ? visible.transform.m41 : button.transform.tx;
-        [button.layer removeAllAnimations]; button.swiping = YES;
-    }
-    CGFloat distance = MAX(0, [gesture translationInView:button].x);
-    if (gesture.state == UIGestureRecognizerStateChanged || gesture.state == UIGestureRecognizerStateBegan)
-        button.transform = CGAffineTransformMakeTranslation(button.swipeStart + distance, 0);
-    if (gesture.state == UIGestureRecognizerStateEnded || gesture.state == UIGestureRecognizerStateCancelled || gesture.state == UIGestureRecognizerStateFailed) {
-        button.swiping = NO;
-        BOOL close = gesture.state == UIGestureRecognizerStateEnded &&
-            (distance >= 20 || [gesture velocityInView:button].x > 350);
-        if (close) {
-            [self.dismissedSwitcher addObject:button.appID];
-            [self closeAppsInOrder:@[button.appID]];
-        } else [self refresh];
-    }
+    // Suppress touch-up activation while the queued burst removes this control.
+    button.opening = YES;
+    button.userInteractionEnabled = NO;
+    [self.dismissedSwitcher addObject:button.appID];
+    [self closeAppsInOrder:@[button.appID]];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        // If a new notification cancelled dismissal, leave that surviving icon usable.
+        if (self.buttons[button.appID] == button) {
+            button.opening = NO; button.userInteractionEnabled = YES;
+        }
+    });
 }
 - (void)burstBubble:(NFBBubble *)button {
     if (UIAccessibilityIsReduceMotionEnabled()) {
@@ -458,7 +448,7 @@ static double NFBNumber(NSString *key, double fallback) {
         return;
     }
     UIView *root = self.window.rootViewController.view;
-    // Capture presentation geometry so a swipe during sliding does not jump.
+    // Capture presentation geometry so a long press during sliding does not jump.
     CALayer *presentation = (CALayer *)button.layer.presentationLayer;
     CALayer *sourceLayer = presentation ?: button.layer;
     CGPoint origin = [sourceLayer convertPoint:CGPointMake(CGRectGetMidX(button.bounds), CGRectGetMidY(button.bounds)) toLayer:root.layer];
@@ -492,7 +482,7 @@ static double NFBNumber(NSString *key, double fallback) {
     } completion:^(__unused BOOL done) { [button removeFromSuperview]; }];
 }
 - (void)tapped:(NFBBubble *)button {
-    if (button.opening || button.swiping || self.buttons[button.appID] != button) return;
+    if (button.opening || self.buttons[button.appID] != button) return;
     if (self.pendingRecord && [self.pendingRecord.appID isEqual:button.appID]) return;
     button.opening = YES;
     [self extendApp:button.appID];
@@ -508,19 +498,40 @@ static double NFBNumber(NSString *key, double fallback) {
     } else [self openApp:button.appID];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ button.opening = NO; });
 }
+- (void)showOpenNotice:(NSString *)message {
+    // A non-modal message keeps the overlay from taking keyboard or app focus.
+    [self ensureWindow];
+    UILabel *notice = [UILabel new];
+    notice.text = message; notice.numberOfLines = 0;
+    notice.textAlignment = NSTextAlignmentCenter;
+    notice.font = [UIFont systemFontOfSize:14];
+    notice.textColor = UIColor.whiteColor;
+    notice.backgroundColor = [UIColor.blackColor colorWithAlphaComponent:0.85];
+    notice.layer.cornerRadius = 12; notice.clipsToBounds = YES;
+    notice.userInteractionEnabled = NO;
+    UIView *root = self.window.rootViewController.view;
+    CGFloat width = MIN(320, root.bounds.size.width - 32);
+    notice.frame = CGRectMake((root.bounds.size.width - width) / 2,
+        MAX(root.safeAreaInsets.top, 44) + 12, width, 76);
+    [root addSubview:notice];
+    UIAccessibilityPostNotification(UIAccessibilityAnnouncementNotification, message);
+    [UIView animateWithDuration:0.2 delay:2.8 options:0 animations:^{ notice.alpha = 0; }
+        completion:^(__unused BOOL done) { [notice removeFromSuperview]; }];
+}
 - (void)openApp:(NSString *)app {
-    id springboard = UIApplication.sharedApplication;
-    SEL sel = NSSelectorFromString(@"launchApplicationWithIdentifier:suspended:");
-    NSMethodSignature *sig = [springboard methodSignatureForSelector:sel];
-    if (!sig || sig.numberOfArguments != 4 || (sig.methodReturnType[0] != 'B' && sig.methodReturnType[0] != 'c') ||
-        [sig getArgumentTypeAtIndex:2][0] != '@' ||
-        ([sig getArgumentTypeAtIndex:3][0] != 'B' && [sig getArgumentTypeAtIndex:3][0] != 'c')) {
-        NSLog(@"[NotifyBubbles] SpringBoard launch adapter unavailable"); return;
+    if ([self isLocked]) {
+        [self showOpenNotice:@"请先解锁，再点击图标通过 TrollOpen 分屏打开"];
+        return;
     }
-    @try {
-        BOOL opened = ((BOOL (*)(id, SEL, id, BOOL))objc_msgSend)(springboard, sel, app, NO);
-        if (!opened) UIAccessibilityPostNotification(UIAccessibilityAnnouncementNotification, @"请解锁后重试打开应用");
-    } @catch (__unused NSException *error) { NSLog(@"[NotifyBubbles] SpringBoard app launch failed"); }
+    CFStringRef domain = CFSTR("com.charlieleung.trollopenjbprefs");
+    CFPreferencesAppSynchronize(domain);
+    id enabled = CFBridgingRelease(CFPreferencesCopyAppValue(CFSTR("enabled"), domain));
+    if (![enabled respondsToSelector:@selector(boolValue)] || ![enabled boolValue]) {
+        [self showOpenNotice:@"请先安装并在设置中启用 TrollOpen"];
+        return;
+    }
+    if (!NFBOpenTrollApp(app))
+        [self showOpenNotice:@"TrollOpen 分屏接口不可用，请确认已安装适配的 1.5.2 隐根版并重启桌面"];
 }
 - (BOOL)executeRecord:(NFBRecord *)record {
     id action = NFBGet(record.request, @"defaultAction");
