@@ -2,6 +2,25 @@
 #import <objc/message.h>
 #include <string.h>
 
+BOOL NFBSplitTrollFrontmostApp(void) {
+    if (!NSThread.isMainThread) return NO;
+    // RootHide TrollOpen 1.5.2: +[TOJBBarGestureBridge splitFrontmostApplication], v16@0:8.
+    // Let the plugin own the fullscreen-to-floating transition, rather than
+    // pulling the foreground scene through its generic bundle-ID entry point.
+    Class bridge = NSClassFromString(@"TOJBBarGestureBridge");
+    SEL selector = NSSelectorFromString(@"splitFrontmostApplication");
+    @try {
+        if (![bridge respondsToSelector:selector]) return NO;
+        NSMethodSignature *sig = [bridge methodSignatureForSelector:selector];
+        if (!sig || sig.numberOfArguments != 2 || strcmp(sig.methodReturnType, @encode(void)) != 0) return NO;
+        ((void (*)(id, SEL))objc_msgSend)(bridge, selector);
+        return YES;
+    } @catch (__unused NSException *error) {
+        NSLog(@"[NotifyBubbles] TrollOpen foreground split failed");
+        return NO;
+    }
+}
+
 static BOOL NFBTrollSignature(id target, SEL selector, BOOL hasFlag) {
     if (![target respondsToSelector:selector]) return NO;
     NSMethodSignature *sig = [target methodSignatureForSelector:selector];

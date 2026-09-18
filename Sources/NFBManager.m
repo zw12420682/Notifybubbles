@@ -530,7 +530,18 @@ static double NFBNumber(NSString *key, double fallback) {
         [self showOpenNotice:@"请先安装并在设置中启用 TrollOpen"];
         return;
     }
-    if (!NFBOpenTrollApp(app))
+    id springboard = UIApplication.sharedApplication;
+    NSString *front = NFBString(NFBGet(NFBGet(springboard, @"_accessibilityFrontMostApplication"), @"bundleIdentifier"));
+    BOOL home = [springboard respondsToSelector:@selector(isShowingHomescreen)] && [springboard isShowingHomescreen];
+    BOOL submitted;
+    if (!home && [front isEqualToString:app]) {
+        // Do not fall back to the generic path: that path left a black backdrop
+        // when the very same app was still occupying the fullscreen scene.
+        submitted = NFBSplitTrollFrontmostApp();
+    } else {
+        submitted = NFBOpenTrollApp(app);
+    }
+    if (!submitted)
         [self showOpenNotice:@"TrollOpen 分屏接口不可用，请确认已安装适配的 1.5.2 隐根版并重启桌面"];
 }
 - (BOOL)executeRecord:(NFBRecord *)record {

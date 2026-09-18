@@ -1,4 +1,4 @@
-# 通知悬浮气泡 · 0.4.1 测试工程
+# 通知悬浮气泡 · 0.4.2 测试工程
 
 目标：iPhone 14、iOS 16.0.3、Dopamine RootHide。
 
@@ -11,7 +11,7 @@
 3. 上传覆盖 **Sources、Preferences、Tests、scripts、Makefile、control、README.md**。
 4. 本次必须更新根目录 **Makefile**，因为新增了切换器适配文件；遗漏会导致链接失败。另将 `.github/workflows/build.yml` 更新为新版内容，以运行新增接口测试。
 5. 提交后打开 Actions，进入最新构建。成功后在 Artifacts 下载 **NotifyBubbles-RootHide**。
-6. 解压得到版本 **0.4.1** 的 `.deb`，安装后重启桌面。
+6. 解压得到版本 **0.4.2** 的 `.deb`，安装后重启桌面。
 
 新建仓库则上传完整目录内容，包括隐藏的 `.github` 文件夹；根目录直接放 Makefile，不要套一层 NotifyBubbles。
 
@@ -86,3 +86,11 @@ Actions 先运行实际通知状态类的测试，再编译，并检查 DEB 架�
 这里的“分屏”沿用 TrollOpen 的浮窗呈现及现有设置，不强制切换其窗口布局。接口为 void，没有可验证的打开成功回调；提交调用不等于已确认浮窗显示。仍需真机验证已运行/未运行 App、TrollOpen 关闭或卸载、锁屏和连续点击。
 
 新增 GitHub 测试验证插件缺失、错误返回类型、错误参数类型、抛异常和正常转发五种情况；测试使用模拟类，不代表真机 TrollOpen 功能验证。本地只完成文件与打包检查，尚未执行 Apple 编译和这些原生测试。
+
+## 0.4.2 前台转换黑底修正
+
+点击的图标属于当前全屏前台 App、且没有待处理通知时，改用 TrollOpen 1.5.2 的 `+[TOJBBarGestureBridge splitFrontmostApplication]` 专用入口。其他 App 仍按 bundle ID 打开浮窗。目的是由 TrollOpen 自己完成前台转浮窗的场景切换，避免通用入口留下空白全屏背景。专用入口不可用时提示错误，不回退到已出现黑底的通用路径。
+
+接口名称及无参数、void 返回类型已从提供的安装包确认；黑底是否消除仍需真机验证，尚不能保证修复。新增五种前台接口契约测试需在 GitHub 执行。
+
+验收：打开一个 App 到全屏，点击它的无待处理通知气泡，确认浮窗背后显示桌面；关闭浮窗后桌面仍可操作。另检查从桌面打开 App 浮窗、在 App A 内打开 App B 浮窗、以及有通知时的原通知跳转不受影响。
