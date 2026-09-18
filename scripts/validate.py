@@ -17,7 +17,11 @@ for path in root.rglob('*.plist'):
         continue
     with path.open('rb') as stream:
         plistlib.load(stream)
-control = dict(line.split(': ', 1) for line in (root / 'control').read_text(encoding='utf-8').splitlines() if ': ' in line)
+control_bytes = (root / 'control').read_bytes()
+assert b'\r' not in control_bytes, 'control must use Unix LF line endings; upload the corrected control file.'
+assert control_bytes.endswith(b'\n'), 'control must end with a newline.'
+assert not control_bytes.startswith(b'\xef\xbb\xbf'), 'control must be UTF-8 without BOM.'
+control = dict(line.split(': ', 1) for line in control_bytes.decode('utf-8').splitlines() if ': ' in line)
 assert control['Architecture'] == 'iphoneos-arm64e'
 assert 'THEOS_PACKAGE_SCHEME = roothide' in (root / 'Makefile').read_text()
 prefs = plistlib.loads((root / 'Preferences/Resources/Root.plist').read_bytes())
