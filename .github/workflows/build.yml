@@ -1,0 +1,75 @@
+name: Build RootHide DEB
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+    paths-ignore: ['**.md']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15-intel
+    timeout-minutes: 35
+    env:
+      THEOS: ${{ github.workspace }}/.theos-toolchain
+      THEOS_REF: 88506b2c22e9e07dd4ed055f23c9e398a117a2c7
+      SDKS_REF: 0222fd5413cf4b9af096f37b4621afa2688572f7
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Validate project files
+        run: python3 scripts/validate.py
+      - name: Run notification state tests
+        run: |
+          xcrun --sdk macosx clang -fobjc-arc -fmodules -Wall -Wextra -Werror \
+            -framework Foundation -I Sources Sources/NFBStore.m Tests/StoreTests.m \
+            -o "$RUNNER_TEMP/test-store"
+          "$RUNNER_TEMP/test-store"
+      - name: Install packaging tools
+        run: brew install ldid xz dpkg
+      - name: Install pinned RootHide Theos and iOS SDK
+        run: |
+          set -euo pipefail
+          git init "$THEOS"
+          git -C "$THEOS" remote add origin https://github.com/roothide/theos.git
+          git -C "$THEOS" fetch --depth 1 origin "$THEOS_REF"
+          git -C "$THEOS" checkout --detach FETCH_HEAD
+          git -C "$THEOS" submodule update --init --recursive --depth 1
+          git init "$RUNNER_TEMP/ios-sdks"
+          git -C "$RUNNER_TEMP/ios-sdks" remote add origin https://github.com/theos/sdks.git
+          git -C "$RUNNER_TEMP/ios-sdks" fetch --depth 1 origin "$SDKS_REF"
+          git -C "$RUNNER_TEMP/ios-sdks" checkout --detach FETCH_HEAD
+          mkdir -p "$THEOS/sdks"
+          cp -R "$RUNNER_TEMP/ios-sdks/iPhoneOS16.5.sdk" "$THEOS/sdks/"
+          test -d "$THEOS/sdks/iPhoneOS16.5.sdk"
+          xcodebuild -version
+      - name: Build RootHide package
+        run: |
+          set -euo pipefail
+          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=roothide -j2 2>&1 | tee build.log
+      - name: Verify DEB architecture and payload
+        run: |
+          set -euo pipefail
+          python3 scripts/check_package.py packages/*.deb
+          shasum -a 256 packages/*.deb > packages/SHA256SUMS.txt
+      - name: Upload DEB
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: NotifyBubbles-RootHide
+          path: |
+            packages/*.deb
+            packages/SHA256SUMS.txt
+          if-no-files-found: error
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: NotifyBubbles-build-log
+          path: build.log
+          if-no-files-found: ignore
