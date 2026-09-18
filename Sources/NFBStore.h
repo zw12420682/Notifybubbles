@@ -14,6 +14,7 @@
 - (void)putApp:(NSString *)appID notification:(NSString *)notificationID
        request:(id)request destination:(id)destination;
 - (NFBRecord *)latestForApp:(NSString *)appID;
+- (NFBRecord *)actionForApp:(NSString *)appID;
 - (void)removeApp:(NSString *)appID notification:(NSString *)notificationID;
 - (void)removeApp:(NSString *)appID;
 - (void)closeApp:(NSString *)appID;

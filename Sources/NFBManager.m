@@ -44,6 +44,7 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, copy) NSString *appID;
 @property(nonatomic, strong) UIImageView *imageView;
 @property(nonatomic, strong) UILabel *badge;
+@property(nonatomic) BOOL opening;
 @end
 @implementation NFBBubble
 - (instancetype)initWithFrame:(CGRect)frame {
@@ -90,6 +91,7 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic) BOOL showApps;
 - (void)refresh;
 - (void)burstBubble:(NFBBubble *)button;
+- (void)executeRecord:(NFBRecord *)record;
 @end
 
 @implementation NFBManager
@@ -362,11 +364,25 @@ static double NFBNumber(NSString *key, double fallback) {
     } completion:^(__unused BOOL done) { [button removeFromSuperview]; }];
 }
 - (void)tapped:(NFBBubble *)button {
-    NFBRecord *record = [self.store latestForApp:button.appID];
-    if (!record) {
-        UIAccessibilityPostNotification(UIAccessibilityAnnouncementNotification, @"暂无可打开的新通知，长按可关闭图标");
-        return;
-    }
+    if (button.opening || self.buttons[button.appID] != button) return;
+    NFBRecord *record = [self.store actionForApp:button.appID];
+    if (!record) return;
+    button.opening = YES;
+    self.expandedUntil[button.appID] = @(CACurrentMediaTime() + 3.6);
+    CALayer *visible = (CALayer *)button.layer.presentationLayer;
+    CGFloat offset = visible ? visible.transform.m41 : button.transform.tx;
+    NSTimeInterval duration = UIAccessibilityIsReduceMotionEnabled() ? 0 : (fabs(offset) > 0.5 ? 0.6 : 0);
+    [UIView animateWithDuration:duration delay:0
+        options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseInOut | UIViewAnimationOptionAllowUserInteraction
+        animations:^{ button.transform = CGAffineTransformIdentity; }
+        completion:^(__unused BOOL finished) {
+            // Closing this bubble (or disabling the tweak) while it extends cancels opening.
+            button.opening = NO;
+            if (!self.enabled || self.buttons[button.appID] != button) return;
+            [self executeRecord:record];
+        }];
+}
+- (void)executeRecord:(NFBRecord *)record {
     id action = NFBGet(record.request, @"defaultAction");
     id delegate = NFBGet(record.destination, @"delegate");
     SEL selector = @selector(destination:executeAction:forNotificationRequest:requestAuthentication:withParameters:completion:);

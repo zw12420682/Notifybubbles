@@ -10,9 +10,9 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
-			<string>通知悬浮气泡 · 测试版 0.3.0</string>
+			<string>通知悬浮气泡 · 测试版 0.3.1</string>
 			<key>footerText</key>
-			<string>首次收到通知后保留图标。点击打开本 App 的系统通知，不清除其他气泡；长按约半秒关闭此图标，并播放气泡破裂动画。</string>
+			<string>首次收到通知后保留图标。点击先伸出，再执行本 App 通知动作；没有新通知时重用最近通知动作。其他气泡保持不变，长按关闭此图标。</string>
 		</dict>
 		<dict>
 			<key>cell</key>

@@ -43,7 +43,12 @@ int main(void) {
         Check([store.appIDs isEqual:@[@"mail", @"chat"]], @"New notification restores a manually closed app");
         [store removeApp:@"chat" notification:@"returned"];
         Check([store.appIDs containsObject:@"chat"] && ![store latestForApp:@"chat"], @"Withdrawing final request preserves icon but drops obsolete action");
+        Check([store actionForApp:@"chat"].request == first, @"No new notification reuses the last banner action");
+        Check([store actionForApp:@"mail"].request == replacement, @"Reusing one action does not affect another app");
+        [store closeApp:@"chat"];
+        Check(![store actionForApp:@"chat"], @"Long press releases remembered action");
         [store clear];
+        Check(![store actionForApp:@"mail"], @"Clear releases all remembered actions");
         for (NSUInteger i = 0; i < 600; i++)
             [store putApp:@"chat" notification:[NSString stringWithFormat:@"%lu", (unsigned long)i]
                 request:first destination:destination];

@@ -5,12 +5,14 @@
 @interface NFBStore ()
 @property(nonatomic, strong) NSMutableArray<NFBRecord *> *records;
 @property(nonatomic, strong) NSMutableOrderedSet<NSString *> *pinnedApps;
+@property(nonatomic, strong) NSMutableDictionary<NSString *, NFBRecord *> *lastActions;
 @end
 @implementation NFBStore
 - (instancetype)init {
     if ((self = [super init])) {
         _records = [NSMutableArray array];
         _pinnedApps = [NSMutableOrderedSet orderedSet];
+        _lastActions = [NSMutableDictionary dictionary];
     }
     return self;
 }
@@ -27,6 +29,7 @@
     record.appID = appID; record.notificationID = notificationID;
     record.request = request; record.destination = destination;
     [self.records addObject:record];
+    self.lastActions[appID] = record;
     // Bound retained private notification objects during long sessions.
     if (self.records.count > 512) [self.records removeObjectAtIndex:0];
 }
@@ -34,6 +37,9 @@
     for (NFBRecord *record in self.records.reverseObjectEnumerator)
         if ([record.appID isEqualToString:appID]) return record;
     return nil;
+}
+- (NFBRecord *)actionForApp:(NSString *)appID {
+    return [self latestForApp:appID] ?: self.lastActions[appID];
 }
 - (void)removeApp:(NSString *)appID notification:(NSString *)notificationID {
     NSIndexSet *indexes = [self.records indexesOfObjectsPassingTest:
@@ -53,6 +59,10 @@
 - (void)closeApp:(NSString *)appID {
     [self removeApp:appID];
     [self.pinnedApps removeObject:appID];
+    [self.lastActions removeObjectForKey:appID];
 }
-- (void)clear { [self.records removeAllObjects]; [self.pinnedApps removeAllObjects]; }
+- (void)clear {
+    [self.records removeAllObjects]; [self.pinnedApps removeAllObjects];
+    [self.lastActions removeAllObjects];
+}
 @end
