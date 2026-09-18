@@ -16,5 +16,6 @@
 - (NFBRecord *)latestForApp:(NSString *)appID;
 - (void)removeApp:(NSString *)appID notification:(NSString *)notificationID;
 - (void)removeApp:(NSString *)appID;
+- (void)closeApp:(NSString *)appID;
 - (void)clear;
 @end

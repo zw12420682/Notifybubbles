@@ -20,13 +20,13 @@ int main(void) {
         [store putApp:@"mail" notification:@"1" request:first destination:destination];
         Check(store.count == 2, @"Identical IDs from different apps are distinct");
         [store putApp:@"chat" notification:@"2" request:first destination:destination];
-        Check([store.appIDs isEqual:@[@"chat", @"mail"]], @"Most recent app is first");
+        Check([store.appIDs isEqual:@[@"chat", @"mail"]], @"Arrival does not move other app icons");
         [store removeApp:@"chat" notification:@"2"];
         Check([[store latestForApp:@"chat"].notificationID isEqual:@"1"], @"Withdrawal restores previous actionable notification");
         [store removeApp:@"chat" notification:@"missing"];
         Check(store.count == 2, @"Unrelated withdrawal is harmless");
         [store clear];
-        Check(store.count == 0 && ![store latestForApp:@"mail"], @"Tap clearing removes every app");
+        Check(store.count == 0 && store.appIDs.count == 0 && ![store latestForApp:@"mail"], @"Explicit settings clear removes every app");
         [store putApp:@"chat" notification:@"new" request:first destination:destination];
         Check(store.count == 1, @"A new message after clearing creates a fresh bubble");
         [store putApp:@"" notification:@"bad" request:first destination:destination];
@@ -34,6 +34,16 @@ int main(void) {
         Check(store.count == 1, @"Invalid requests cannot create empty bubbles");
         [store removeApp:@"chat"];
         Check(store.count == 0, @"Section removal clears only that app");
+        Check([store.appIDs containsObject:@"chat"], @"Read or withdrawn notifications leave the icon pinned");
+        [store putApp:@"mail" notification:@"unread" request:replacement destination:destination];
+        [store closeApp:@"chat"];
+        Check([store.appIDs isEqual:@[@"mail"]], @"Long press closes only the selected app");
+        Check([store latestForApp:@"mail"].request == replacement, @"Other app action remains intact");
+        [store putApp:@"chat" notification:@"returned" request:first destination:destination];
+        Check([store.appIDs isEqual:@[@"mail", @"chat"]], @"New notification restores a manually closed app");
+        [store removeApp:@"chat" notification:@"returned"];
+        Check([store.appIDs containsObject:@"chat"] && ![store latestForApp:@"chat"], @"Withdrawing final request preserves icon but drops obsolete action");
+        [store clear];
         for (NSUInteger i = 0; i < 600; i++)
             [store putApp:@"chat" notification:[NSString stringWithFormat:@"%lu", (unsigned long)i]
                 request:first destination:destination];

@@ -80,6 +80,8 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NFBBubble *> *buttons;
 @property(nonatomic, strong) NSTimer *timer;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *expandedUntil;
+@property(nonatomic, strong) NSMutableDictionary<NSString *, UIImage *> *icons;
+@property(nonatomic, strong) NSMutableSet<NSString *> *burstApps;
 @property(nonatomic) CGFloat iconSize;
 @property(nonatomic) CGFloat iconOpacity;
 @property(nonatomic) BOOL enabled;
@@ -87,6 +89,7 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic) BOOL showHome;
 @property(nonatomic) BOOL showApps;
 - (void)refresh;
+- (void)burstBubble:(NFBBubble *)button;
 @end
 
 @implementation NFBManager
@@ -101,6 +104,8 @@ static double NFBNumber(NSString *key, double fallback) {
         _store = [NFBStore new];
         _buttons = [NSMutableDictionary dictionary];
         _expandedUntil = [NSMutableDictionary dictionary];
+        _icons = [NSMutableDictionary dictionary];
+        _burstApps = [NSMutableSet set];
         [self reloadPreferences];
     }
     return self;
@@ -122,11 +127,15 @@ static double NFBNumber(NSString *key, double fallback) {
     NSString *appID = NFBString(NFBGet(request, @"sectionIdentifier"));
     NSString *notificationID = NFBString(NFBGet(request, @"notificationIdentifier"));
     if (!appID.length || !notificationID.length || !NFBGet(request, @"defaultAction")) return;
+    BOOL firstAppearance = ![self.store.appIDs containsObject:appID];
     [self.store putApp:appID notification:notificationID request:request destination:destination];
+    id image = NFBGet(NFBGet(request, @"content"), @"icon");
+    if ([image isKindOfClass:UIImage.class]) self.icons[appID] = image;
     // Each app owns its own deadline. A newer message replaces the old deadline.
-    NSNumber *deadline = @(CACurrentMediaTime() + 3.0);
+    NSTimeInterval hold = firstAppearance ? 4.2 : 3.6;
+    NSNumber *deadline = @(CACurrentMediaTime() + hold);
     self.expandedUntil[appID] = deadline;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(hold * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         if ([self.expandedUntil[appID] isEqual:deadline]) [self refresh];
     });
     if (!self.timer) {
@@ -138,7 +147,11 @@ static double NFBNumber(NSString *key, double fallback) {
         [NSRunLoop.mainRunLoop addTimer:self.timer forMode:NSRunLoopCommonModes];
     }
     [self refresh];
-    if (!self.window.hidden) [self.rail setContentOffset:CGPointZero animated:!UIAccessibilityIsReduceMotionEnabled()];
+    NFBBubble *updated = self.buttons[appID];
+    if (!self.window.hidden && updated) {
+        CGRect row = CGRectMake(0, updated.center.y - updated.bounds.size.height / 2, self.rail.bounds.size.width, updated.bounds.size.height);
+        [self.rail scrollRectToVisible:row animated:!UIAccessibilityIsReduceMotionEnabled()];
+    }
 }
 - (void)withdrawRequest:(id)request {
     NSString *appID = NFBString(NFBGet(request, @"sectionIdentifier"));
@@ -150,7 +163,7 @@ static double NFBNumber(NSString *key, double fallback) {
     [self.store removeApp:section]; [self refresh];
 }
 - (void)clear {
-    [self.store clear]; [self.expandedUntil removeAllObjects]; [self refresh];
+    [self.store clear]; [self.expandedUntil removeAllObjects]; [self.icons removeAllObjects]; [self refresh];
 }
 - (BOOL)shouldShow {
     id lock = NFBSingleton(@"SBLockScreenManager");
@@ -177,7 +190,7 @@ static double NFBNumber(NSString *key, double fallback) {
     self.window.rootViewController = [UIViewController new];
     self.window.rootViewController.view.backgroundColor = UIColor.clearColor;
     self.rail = [NFBRail new];
-    self.rail.clipsToBounds = NO;
+    self.rail.clipsToBounds = YES;
     self.rail.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
     self.window.clipsToBounds = YES;
     self.rail.backgroundColor = UIColor.clearColor;
@@ -193,7 +206,7 @@ static double NFBNumber(NSString *key, double fallback) {
     @catch (__unused NSException *error) { return nil; }
 }
 - (void)updateBubble:(NFBBubble *)button record:(NFBRecord *)record {
-    id icon = [self iconForApp:record.appID];
+    id icon = [self iconForApp:button.appID];
     id badge = NFBGet(icon, @"badgeNumberOrString");
     NSString *text = nil;
     if ([badge isKindOfClass:NSNumber.class] && [badge longLongValue] > 0) text = [badge stringValue];
@@ -202,10 +215,10 @@ static double NFBNumber(NSString *key, double fallback) {
     button.badge.text = text;
     CGFloat width = MAX(20, [text sizeWithAttributes:@{NSFontAttributeName:button.badge.font}].width + 10);
     button.badge.frame = CGRectMake(0, 0, width, 20);
-    NSString *name = NFBString(NFBGet(icon, @"displayName")) ?: record.appID;
-    button.accessibilityLabel = [NSString stringWithFormat:@"%@，%@", name, text ?: @"新通知"];
-    button.accessibilityHint = @"打开最新通知并清除全部悬浮气泡";
-    id image = NFBGet(NFBGet(record.request, @"content"), @"icon");
+    NSString *name = NFBString(NFBGet(icon, @"displayName")) ?: button.appID;
+    button.accessibilityLabel = [NSString stringWithFormat:@"%@，%@", name, text ?: (record ? @"有通知" : @"暂无新通知")];
+    button.accessibilityHint = @"点击打开本应用通知，长按关闭此气泡";
+    id image = self.icons[button.appID];
     button.imageView.image = [image isKindOfClass:UIImage.class] ? image : [UIImage systemImageNamed:@"bell.fill"];
 }
 - (void)refresh {
@@ -217,6 +230,12 @@ static double NFBNumber(NSString *key, double fallback) {
         [self.buttons removeObjectForKey:appID];
         [self.expandedUntil removeObjectForKey:appID];
         button.userInteractionEnabled = NO;
+        [self.icons removeObjectForKey:appID];
+        if ([self.burstApps containsObject:appID]) {
+            [self.burstApps removeObject:appID];
+            [self burstBubble:button];
+            continue;
+        }
         [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : 0.2 delay:0
             options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseInOut animations:^{
             button.alpha = 0; button.transform = CGAffineTransformMakeTranslation(self.iconSize + 20, 0);
@@ -225,8 +244,8 @@ static double NFBNumber(NSString *key, double fallback) {
     if (!apps.count || !self.enabled) {
         [self.timer invalidate]; self.timer = nil;
         // Delay hiding until the removal animation completes; recheck new arrivals.
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.21 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            if (!self.store.count || !self.enabled) self.window.hidden = YES;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.65 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (!self.store.appIDs.count || !self.enabled) self.window.hidden = YES;
         });
         return;
     }
@@ -254,6 +273,10 @@ static double NFBNumber(NSString *key, double fallback) {
             button = [[NFBBubble alloc] initWithFrame:CGRectZero];
             button.appID = appID;
             [button addTarget:self action:@selector(tapped:) forControlEvents:UIControlEventTouchUpInside];
+            UILongPressGestureRecognizer *press = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(longPressed:)];
+            press.minimumPressDuration = 0.55;
+            press.cancelsTouchesInView = YES;
+            [button addGestureRecognizer:press];
             self.buttons[appID] = button;
             [self.rail addSubview:button];
         }
@@ -275,7 +298,7 @@ static double NFBNumber(NSString *key, double fallback) {
             !CGAffineTransformEqualToTransform(button.transform, target) ||
             fabs(button.alpha - self.iconOpacity) > 0.001;
         if (changed) {
-            [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : 0.35
+            [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : (fresh ? 1.2 : 0.6)
                 delay:0 usingSpringWithDamping:0.86 initialSpringVelocity:0
                 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
                 animations:^{
@@ -290,8 +313,60 @@ static double NFBNumber(NSString *key, double fallback) {
         }
     }];
 }
+- (void)longPressed:(UILongPressGestureRecognizer *)gesture {
+    if (gesture.state != UIGestureRecognizerStateBegan) return;
+    NFBBubble *button = (NFBBubble *)gesture.view;
+    if (self.buttons[button.appID] != button) return;
+    [self.burstApps addObject:button.appID];
+    [self.store closeApp:button.appID];
+    [self.expandedUntil removeObjectForKey:button.appID];
+    [self refresh];
+}
+- (void)burstBubble:(NFBBubble *)button {
+    if (UIAccessibilityIsReduceMotionEnabled()) {
+        [UIView animateWithDuration:0.15 animations:^{ button.alpha = 0; }
+            completion:^(__unused BOOL done) { [button removeFromSuperview]; }];
+        return;
+    }
+    UIView *root = self.window.rootViewController.view;
+    // Capture presentation geometry so a long press during sliding does not jump.
+    CALayer *presentation = (CALayer *)button.layer.presentationLayer;
+    CALayer *sourceLayer = presentation ?: button.layer;
+    CGPoint origin = [sourceLayer convertPoint:CGPointMake(CGRectGetMidX(button.bounds), CGRectGetMidY(button.bounds)) toLayer:root.layer];
+    CGFloat diameter = button.imageView.bounds.size.width;
+    UIView *ring = [[UIView alloc] initWithFrame:CGRectMake(origin.x - diameter/2, origin.y - diameter/2, diameter, diameter)];
+    ring.userInteractionEnabled = NO;
+    ring.layer.cornerRadius = diameter/2;
+    ring.layer.borderWidth = 2;
+    ring.layer.borderColor = UIColor.systemTealColor.CGColor;
+    ring.alpha = self.iconOpacity;
+    [root addSubview:ring];
+    [UIView animateWithDuration:0.55 animations:^{
+        ring.transform = CGAffineTransformMakeScale(1.65, 1.65); ring.alpha = 0;
+    } completion:^(__unused BOOL done) { [ring removeFromSuperview]; }];
+    for (NSInteger i = 0; i < 12; i++) {
+        CGFloat angle = (2 * M_PI * i) / 12;
+        UIView *drop = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 4 + (i % 3), 4 + (i % 3))];
+        drop.center = CGPointMake(origin.x + cos(angle)*diameter*0.32, origin.y + sin(angle)*diameter*0.32);
+        drop.layer.cornerRadius = drop.bounds.size.width/2;
+        drop.backgroundColor = i % 2 ? UIColor.systemTealColor : UIColor.whiteColor;
+        drop.userInteractionEnabled = NO; drop.alpha = self.iconOpacity;
+        [root addSubview:drop];
+        [UIView animateWithDuration:0.55 delay:0 options:UIViewAnimationOptionCurveEaseOut animations:^{
+            drop.center = CGPointMake(origin.x + cos(angle)*diameter*0.95, origin.y + sin(angle)*diameter*0.95);
+            drop.alpha = 0; drop.transform = CGAffineTransformMakeScale(0.15, 0.15);
+        } completion:^(__unused BOOL done) { [drop removeFromSuperview]; }];
+    }
+    [UIView animateWithDuration:0.18 delay:0 options:UIViewAnimationOptionBeginFromCurrentState animations:^{
+        button.transform = CGAffineTransformScale(button.transform, 1.16, 1.16); button.alpha = 0;
+    } completion:^(__unused BOOL done) { [button removeFromSuperview]; }];
+}
 - (void)tapped:(NFBBubble *)button {
     NFBRecord *record = [self.store latestForApp:button.appID];
+    if (!record) {
+        UIAccessibilityPostNotification(UIAccessibilityAnnouncementNotification, @"暂无可打开的新通知，长按可关闭图标");
+        return;
+    }
     id action = NFBGet(record.request, @"defaultAction");
     id delegate = NFBGet(record.destination, @"delegate");
     SEL selector = @selector(destination:executeAction:forNotificationRequest:requestAuthentication:withParameters:completion:);
@@ -313,9 +388,8 @@ static double NFBNumber(NSString *key, double fallback) {
     @try {
         [delegate destination:record.destination executeAction:action forNotificationRequest:record.request
             requestAuthentication:YES withParameters:@{} completion:^{}];
-        // User requested clearing ALL bubbles on tap, including when authentication is cancelled.
-        // Does not clear Notification Center, set app badges, or mark app messages read.
-        [self clear];
+        // The system handles authentication and the app's read state.
+        // Do not mutate any bubble here: cancellation and other apps stay intact.
     } @catch (__unused NSException *error) {
         NSLog(@"[NotifyBubbles] Notification action failed; bubbles retained.");
     }

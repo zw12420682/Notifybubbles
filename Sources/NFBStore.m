@@ -4,22 +4,24 @@
 
 @interface NFBStore ()
 @property(nonatomic, strong) NSMutableArray<NFBRecord *> *records;
+@property(nonatomic, strong) NSMutableOrderedSet<NSString *> *pinnedApps;
 @end
 @implementation NFBStore
 - (instancetype)init {
-    if ((self = [super init])) _records = [NSMutableArray array];
+    if ((self = [super init])) {
+        _records = [NSMutableArray array];
+        _pinnedApps = [NSMutableOrderedSet orderedSet];
+    }
     return self;
 }
 - (NSUInteger)count { return self.records.count; }
 - (NSArray<NSString *> *)appIDs {
-    NSMutableOrderedSet *apps = [NSMutableOrderedSet orderedSet];
-    for (NFBRecord *record in self.records.reverseObjectEnumerator)
-        [apps addObject:record.appID];
-    return apps.array;
+    return self.pinnedApps.array;
 }
 - (void)putApp:(NSString *)appID notification:(NSString *)notificationID
        request:(id)request destination:(id)destination {
     if (!appID.length || !notificationID.length || !request || !destination) return;
+    [self.pinnedApps addObject:appID];
     [self removeApp:appID notification:notificationID];
     NFBRecord *record = [NFBRecord new];
     record.appID = appID; record.notificationID = notificationID;
@@ -48,5 +50,9 @@
         }];
     [self.records removeObjectsAtIndexes:indexes];
 }
-- (void)clear { [self.records removeAllObjects]; }
+- (void)closeApp:(NSString *)appID {
+    [self removeApp:appID];
+    [self.pinnedApps removeObject:appID];
+}
+- (void)clear { [self.records removeAllObjects]; [self.pinnedApps removeAllObjects]; }
 @end
