@@ -1,6 +1,7 @@
 #import "NFBManager.h"
 #import "NFBPrivate.h"
 #import "NFBStore.h"
+#import "NFBGeometry.h"
 #import <QuartzCore/QuartzCore.h>
 
 static CFStringRef const NFBDomain = CFSTR("local.notifybubbles");
@@ -8,6 +9,25 @@ static BOOL NFBPreference(NSString *key, BOOL fallback) {
     id value = CFBridgingRelease(CFPreferencesCopyAppValue((__bridge CFStringRef)key, NFBDomain));
     return [value respondsToSelector:@selector(boolValue)] ? [value boolValue] : fallback;
 }
+
+static double NFBNumber(NSString *key, double fallback) {
+    id value = CFBridgingRelease(CFPreferencesCopyAppValue((__bridge CFStringRef)key, NFBDomain));
+    return [value respondsToSelector:@selector(doubleValue)] ? [value doubleValue] : fallback;
+}
+
+// The transparent strip must not block touches beside a half-hidden bubble.
+@interface NFBRail : UIScrollView
+@end
+@implementation NFBRail
+- (BOOL)pointInside:(CGPoint)point withEvent:(UIEvent *)event {
+    if (point.y < CGRectGetMinY(self.bounds) || point.y > CGRectGetMaxY(self.bounds)) return NO;
+    for (UIView *view in self.subviews) {
+        if (![view isKindOfClass:UIControl.class] || !view.userInteractionEnabled) continue;
+        if ([view pointInside:[view convertPoint:point fromView:self] withEvent:event]) return YES;
+    }
+    return NO;
+}
+@end
 
 @interface NFBWindow : UIWindow
 @end
@@ -59,6 +79,9 @@ static BOOL NFBPreference(NSString *key, BOOL fallback) {
 @property(nonatomic, strong) UIScrollView *rail;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NFBBubble *> *buttons;
 @property(nonatomic, strong) NSTimer *timer;
+@property(nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *expandedUntil;
+@property(nonatomic) CGFloat iconSize;
+@property(nonatomic) CGFloat iconOpacity;
 @property(nonatomic) BOOL enabled;
 @property(nonatomic) BOOL showLock;
 @property(nonatomic) BOOL showHome;
@@ -77,6 +100,7 @@ static BOOL NFBPreference(NSString *key, BOOL fallback) {
     if ((self = [super init])) {
         _store = [NFBStore new];
         _buttons = [NSMutableDictionary dictionary];
+        _expandedUntil = [NSMutableDictionary dictionary];
         [self reloadPreferences];
     }
     return self;
@@ -84,6 +108,8 @@ static BOOL NFBPreference(NSString *key, BOOL fallback) {
 - (void)reloadPreferences {
     NSAssert(NSThread.isMainThread, @"UI must be on main thread");
     CFPreferencesAppSynchronize(NFBDomain);
+    self.iconSize = NFBSize(NFBNumber(@"IconSize", 48));
+    self.iconOpacity = NFBOpacity(NFBNumber(@"IconOpacity", 1));
     self.enabled = NFBPreference(@"Enabled", YES);
     self.showLock = NFBPreference(@"ShowOnLock", YES);
     self.showHome = NFBPreference(@"ShowOnHome", YES);
@@ -97,6 +123,12 @@ static BOOL NFBPreference(NSString *key, BOOL fallback) {
     NSString *notificationID = NFBString(NFBGet(request, @"notificationIdentifier"));
     if (!appID.length || !notificationID.length || !NFBGet(request, @"defaultAction")) return;
     [self.store putApp:appID notification:notificationID request:request destination:destination];
+    // Each app owns its own deadline. A newer message replaces the old deadline.
+    NSNumber *deadline = @(CACurrentMediaTime() + 3.0);
+    self.expandedUntil[appID] = deadline;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        if ([self.expandedUntil[appID] isEqual:deadline]) [self refresh];
+    });
     if (!self.timer) {
         __weak NFBManager *weakSelf = self;
         self.timer = [NSTimer timerWithTimeInterval:0.75 repeats:YES block:^(__unused NSTimer *timer) {
@@ -106,6 +138,7 @@ static BOOL NFBPreference(NSString *key, BOOL fallback) {
         [NSRunLoop.mainRunLoop addTimer:self.timer forMode:NSRunLoopCommonModes];
     }
     [self refresh];
+    if (!self.window.hidden) [self.rail setContentOffset:CGPointZero animated:!UIAccessibilityIsReduceMotionEnabled()];
 }
 - (void)withdrawRequest:(id)request {
     NSString *appID = NFBString(NFBGet(request, @"sectionIdentifier"));
@@ -117,7 +150,7 @@ static BOOL NFBPreference(NSString *key, BOOL fallback) {
     [self.store removeApp:section]; [self refresh];
 }
 - (void)clear {
-    [self.store clear]; [self refresh];
+    [self.store clear]; [self.expandedUntil removeAllObjects]; [self refresh];
 }
 - (BOOL)shouldShow {
     id lock = NFBSingleton(@"SBLockScreenManager");
@@ -143,7 +176,10 @@ static BOOL NFBPreference(NSString *key, BOOL fallback) {
     self.window.windowLevel = UIWindowLevelAlert + 1;
     self.window.rootViewController = [UIViewController new];
     self.window.rootViewController.view.backgroundColor = UIColor.clearColor;
-    self.rail = [UIScrollView new];
+    self.rail = [NFBRail new];
+    self.rail.clipsToBounds = NO;
+    self.rail.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
+    self.window.clipsToBounds = YES;
     self.rail.backgroundColor = UIColor.clearColor;
     self.rail.showsVerticalScrollIndicator = NO;
     self.rail.alwaysBounceVertical = NO;
@@ -179,9 +215,11 @@ static BOOL NFBPreference(NSString *key, BOOL fallback) {
         if ([apps containsObject:appID]) continue;
         NFBBubble *button = self.buttons[appID];
         [self.buttons removeObjectForKey:appID];
+        [self.expandedUntil removeObjectForKey:appID];
         button.userInteractionEnabled = NO;
-        [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : 0.2 animations:^{
-            button.alpha = 0; button.transform = CGAffineTransformMakeTranslation(65, 0);
+        [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : 0.2 delay:0
+            options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseInOut animations:^{
+            button.alpha = 0; button.transform = CGAffineTransformMakeTranslation(self.iconSize + 20, 0);
         } completion:^(__unused BOOL done) { [button removeFromSuperview]; }];
     }
     if (!apps.count || !self.enabled) {
@@ -199,10 +237,16 @@ static BOOL NFBPreference(NSString *key, BOOL fallback) {
     CGRect bounds = root.bounds;
     UIEdgeInsets safe = root.safeAreaInsets;
     CGFloat top = MAX(safe.top, 48) + 30;
-    CGFloat available = MAX(62, bounds.size.height - top - MAX(safe.bottom, 20) - 20);
-    CGFloat height = MIN(available, apps.count * 66.0);
-    self.rail.frame = CGRectMake(bounds.size.width - safe.right - 70, top + (available - height) * 0.42, 66, height);
-    self.rail.contentSize = CGSizeMake(66, apps.count * 66.0);
+    CGFloat diameter = self.iconSize;
+    CGFloat side = diameter + 14;
+    CGFloat step = side + 4;
+    CGFloat available = MAX(side, bounds.size.height - top - MAX(safe.bottom, 20) - 20);
+    CGFloat height = MIN(available, apps.count * step);
+    // Use the actual screen edge, not safeArea.right, for exactly half exposure.
+    self.rail.frame = CGRectMake(bounds.size.width - side, top + (available - height) * 0.42, side, height);
+    self.rail.contentSize = CGSizeMake(side, apps.count * step);
+    CGFloat maxOffset = MAX(0, self.rail.contentSize.height - height);
+    if (self.rail.contentOffset.y > maxOffset) self.rail.contentOffset = CGPointMake(0, maxOffset);
     [apps enumerateObjectsUsingBlock:^(NSString *appID, NSUInteger index, __unused BOOL *stop) {
         NFBBubble *button = self.buttons[appID];
         BOOL fresh = !button;
@@ -213,13 +257,35 @@ static BOOL NFBPreference(NSString *key, BOOL fallback) {
             self.buttons[appID] = button;
             [self.rail addSubview:button];
         }
-        button.frame = CGRectMake(0, index * 66.0, 62, 62);
         [self updateBubble:button record:[self.store latestForApp:appID]];
-        if (fresh && !UIAccessibilityIsReduceMotionEnabled()) {
-            button.transform = CGAffineTransformMakeTranslation(65, 0); button.alpha = 0;
-            [UIView animateWithDuration:0.35 delay:0 usingSpringWithDamping:0.8 initialSpringVelocity:0.4
-                options:UIViewAnimationOptionBeginFromCurrentState animations:^{
-                    button.transform = CGAffineTransformIdentity; button.alpha = 1;
+        BOOL expanded = [self.expandedUntil[appID] doubleValue] > CACurrentMediaTime();
+        CGAffineTransform target = CGAffineTransformMakeTranslation(expanded ? 0 : NFBRetraction(diameter), 0);
+        CGRect targetBounds = CGRectMake(0, 0, side, side);
+        CGPoint targetCenter = CGPointMake(side / 2, index * step + side / 2);
+        if (fresh) {
+            button.bounds = targetBounds;
+            button.center = targetCenter;
+            button.imageView.frame = CGRectMake(7, 7, diameter, diameter);
+            button.imageView.layer.cornerRadius = diameter / 2;
+            button.transform = CGAffineTransformMakeTranslation(side + 10, 0);
+            button.alpha = 0;
+        }
+        BOOL changed = fresh || !CGRectEqualToRect(button.bounds, targetBounds) ||
+            !CGPointEqualToPoint(button.center, targetCenter) ||
+            !CGAffineTransformEqualToTransform(button.transform, target) ||
+            fabs(button.alpha - self.iconOpacity) > 0.001;
+        if (changed) {
+            [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : 0.35
+                delay:0 usingSpringWithDamping:0.86 initialSpringVelocity:0
+                options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
+                animations:^{
+                    // Bounds/center remain valid even while the view is transformed.
+                    button.bounds = targetBounds;
+                    button.center = targetCenter;
+                    button.imageView.frame = CGRectMake(7, 7, diameter, diameter);
+                    button.imageView.layer.cornerRadius = diameter / 2;
+                    button.transform = target;
+                    button.alpha = self.iconOpacity;
                 } completion:nil];
         }
     }];

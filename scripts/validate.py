@@ -5,7 +5,7 @@ import plistlib
 root = Path(__file__).resolve().parents[1]
 required = [
     'Makefile', 'control', 'NotifyBubbles.plist', 'Sources/Tweak.m',
-    'Sources/NFBManager.m', 'Sources/NFBStore.m', 'Preferences/Makefile',
+    'Sources/NFBGeometry.h', 'Sources/NFBManager.m', 'Sources/NFBStore.m', 'Preferences/Makefile',
     'Preferences/NFBPreferences.m', 'Preferences/Resources/Root.plist',
     'Preferences/Resources/Info.plist', '.github/workflows/build.yml',
     'layout/Library/PreferenceLoader/Preferences/NotifyBubbles.plist',
@@ -21,7 +21,7 @@ control = dict(line.split(': ', 1) for line in (root / 'control').read_text(enco
 assert control['Architecture'] == 'iphoneos-arm64e'
 assert 'THEOS_PACKAGE_SCHEME = roothide' in (root / 'Makefile').read_text()
 prefs = plistlib.loads((root / 'Preferences/Resources/Root.plist').read_bytes())
-assert {x['key'] for x in prefs['items'] if 'key' in x} == {'Enabled','ShowOnLock','ShowOnHome','ShowInApps'}
+assert {x['key'] for x in prefs['items'] if 'key' in x} == {'Enabled','ShowOnLock','ShowOnHome','ShowInApps','IconSize','IconOpacity'}
 filter_ = plistlib.loads((root / 'NotifyBubbles.plist').read_bytes())
 assert filter_['Filter']['Bundles'] == ['com.apple.springboard']
 print('PASS: required files, property lists, RootHide configuration, preference keys and injection filter')

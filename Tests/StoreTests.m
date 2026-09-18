@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #import "NFBStore.h"
+#import "NFBGeometry.h"
 #include <stdlib.h>
 
 static void Check(BOOL value, NSString *message) {
@@ -38,7 +39,18 @@ int main(void) {
                 request:first destination:destination];
         Check(store.count == 512, @"Retained requests are bounded");
         Check([[store latestForApp:@"chat"].notificationID isEqual:@"599"], @"Eviction preserves latest action");
-        NSLog(@"PASS: 13 notification-state checks");
+        Check(NFBSize(1) == 32 && NFBSize(200) == 80, @"Clamp size limits");
+        Check(NFBSize(NAN) == 48 && NFBSize(INFINITY) == 48, @"Invalid size restores default");
+        Check(NFBOpacity(-1) == 0.2 && NFBOpacity(5) == 1, @"Clamp alpha limits");
+        Check(NFBOpacity(NAN) == 1, @"Invalid alpha restores default");
+        for (int diameter = 32; diameter <= 80; diameter++) {
+            double screen = 390;
+            double expandedLeft = screen - (diameter + 14) + 7;
+            double collapsedLeft = expandedLeft + NFBRetraction(diameter);
+            Check(fabs(screen - collapsedLeft - diameter / 2.0) < 0.001, @"Half the circle is visible at every size");
+            Check(expandedLeft >= 0 && expandedLeft + diameter <= screen, @"Expanded circle is entirely on screen");
+        }
+        NSLog(@"PASS: notification-state and geometry checks");
     }
     return 0;
 }
