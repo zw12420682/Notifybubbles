@@ -10,7 +10,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
-			<string>通知悬浮气泡 · 测试版 0.4.2</string>
+			<string>通知悬浮气泡 · 测试版 0.5.0</string>
 			<key>footerText</key>
 			<string>点击时立即执行通知或 App 打开动作，同时伸出图标。通知按新到旧依次打开；没有待打开的通知时通过 TrollOpen 1.5.2 隐根版分屏打开 App。长按约 0.6 秒关闭图标，保留气泡破裂动画。</string>
 		</dict>
@@ -120,7 +120,7 @@
 			<key>label</key>
 			<string>气泡与角标</string>
 			<key>footerText</key>
-			<string>伸出和缩回均为 0.6 秒，完整伸出后停留 2 秒。新通知图标动画移到第一位。切换器 App 也显示图标；上划关闭卡片时清理对应图标，清空切换器时依次破裂。角标跟随桌面。</string>
+			<string>当前展开的 TrollOpen 浮窗对应图标保持伸出。没有待处理通知时点击缩小浮窗；有通知时优先打开通知。其它图标伸出后停留 2 秒。每个 App 的新消息图标可在下方独立设置，不影响切换器图标。</string>
 		</dict>
 		<dict>
 			<key>cell</key>

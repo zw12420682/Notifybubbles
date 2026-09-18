@@ -51,3 +51,37 @@ BOOL NFBOpenTrollApp(NSString *bundleID) {
         return NO;
     }
 }
+
+static id NFBTrollObject(id object, NSString *name) {
+    SEL sel = NSSelectorFromString(name);
+    @try {
+        NSMethodSignature *sig = [object methodSignatureForSelector:sel];
+        if (![object respondsToSelector:sel] || !sig || sig.numberOfArguments != 2 || sig.methodReturnType[0] != '@') return nil;
+        return ((id (*)(id, SEL))objc_msgSend)(object, sel);
+    } @catch (__unused NSException *e) { return nil; }
+}
+NSString *NFBTrollVisibleApp(void) {
+    if (!NSThread.isMainThread) return nil;
+    id window = NFBTrollObject(NSClassFromString(@"TOJBBarGestureBridge"), @"currentVisibleFloatingWindow");
+    // A reduced mini-window is no longer the expanded split window.
+    SEL mini = NSSelectorFromString(@"miniWindowModeEnabled");
+    @try {
+        NSMethodSignature *sig = [window methodSignatureForSelector:mini];
+        if ([window respondsToSelector:mini] && sig.numberOfArguments == 2 &&
+            (sig.methodReturnType[0] == 'B' || sig.methodReturnType[0] == 'c') &&
+            ((BOOL (*)(id, SEL))objc_msgSend)(window, mini)) return nil;
+    } @catch (__unused NSException *e) { return nil; }
+    id app = NFBTrollObject(window, @"bundleID");
+    return [app isKindOfClass:NSString.class] ? app : nil;
+}
+BOOL NFBMinimizeTrollApp(NSString *bundleID) {
+    if (!NSThread.isMainThread || ![NFBTrollVisibleApp() isEqualToString:bundleID]) return NO;
+    id bridge = NSClassFromString(@"TOJBBarGestureBridge");
+    SEL sel = NSSelectorFromString(@"minimizeCurrentFloatingWindow");
+    @try {
+        NSMethodSignature *sig = [bridge methodSignatureForSelector:sel];
+        if (![bridge respondsToSelector:sel] || !sig || sig.numberOfArguments != 2 ||
+            (sig.methodReturnType[0] != 'B' && sig.methodReturnType[0] != 'c')) return NO;
+        return ((BOOL (*)(id, SEL))objc_msgSend)(bridge, sel);
+    } @catch (__unused NSException *e) { return NO; }
+}

@@ -326,7 +326,12 @@ static double NFBNumber(NSString *key, double fallback) {
 }
 - (void)refresh {
     NSAssert(NSThread.isMainThread, @"UI must be on main thread");
-    NSArray<NSString *> *apps = self.store.appIDs;
+    NSMutableArray<NSString *> *apps = [NSMutableArray array];
+    for (NSString *app in self.store.appIDs) {
+        BOOL fromSwitcher = [self.lastSwitcher containsObject:app];
+        if (fromSwitcher || NFBPreference([@"NotifyApp." stringByAppendingString:app], YES)) [apps addObject:app];
+    }
+    NSString *floatingApp = NFBTrollVisibleApp();
     for (NSString *appID in self.buttons.allKeys) {
         if ([apps containsObject:appID]) continue;
         NFBBubble *button = self.buttons[appID];
@@ -347,7 +352,7 @@ static double NFBNumber(NSString *key, double fallback) {
     if (!apps.count || !self.enabled) {
         // Delay hiding until the removal animation completes; recheck new arrivals.
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.65 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            if (!self.store.appIDs.count || !self.enabled) self.window.hidden = YES;
+            if (!self.enabled || !self.buttons.count) self.window.hidden = YES;
         });
         return;
     }
@@ -393,7 +398,7 @@ static double NFBNumber(NSString *key, double fallback) {
             [self.rail addSubview:button];
         }
         [self updateBubble:button record:[self.store latestForApp:appID]];
-        BOOL expanded = [self.expandedUntil[appID] doubleValue] > CACurrentMediaTime();
+        BOOL expanded = [floatingApp isEqualToString:appID] || [self.expandedUntil[appID] doubleValue] > CACurrentMediaTime();
         CGAffineTransform target = CGAffineTransformMakeTranslation(expanded ? 0 : NFBRetraction(diameter), 0);
         CGRect targetBounds = CGRectMake(0, 0, side, side);
         CGPoint targetCenter = CGPointMake(side / 2, index * step + side / 2);
@@ -528,6 +533,10 @@ static double NFBNumber(NSString *key, double fallback) {
     id enabled = CFBridgingRelease(CFPreferencesCopyAppValue(CFSTR("enabled"), domain));
     if (![enabled respondsToSelector:@selector(boolValue)] || ![enabled boolValue]) {
         [self showOpenNotice:@"请先安装并在设置中启用 TrollOpen"];
+        return;
+    }
+    if ([NFBTrollVisibleApp() isEqualToString:app]) {
+        if (!NFBMinimizeTrollApp(app)) [self showOpenNotice:@"TrollOpen 暂时无法缩小这个浮窗"];
         return;
     }
     id springboard = UIApplication.sharedApplication;
