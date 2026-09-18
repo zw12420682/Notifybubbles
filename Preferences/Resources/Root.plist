@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict><key>title</key><string>通知悬浮气泡</string><key>items</key><array>
+<dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>通知悬浮气泡 · 测试版 0.1.0</string><key>footerText</key><string>适配目标：iPhone 14 / iOS 16.0.3 / Dopamine RootHide。收到新通知后显示气泡；点击任意气泡打开其最新通知，并清除全部气泡。原系统通知仍保留。</string></dict>
+<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>启用悬浮气泡</string><key>key</key><string>Enabled</string><key>default</key><true/><key>defaults</key><string>local.notifybubbles</string></dict>
+<dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>显示位置</string><key>footerText</key><string>三个开关分别生效。锁屏点击仍需系统认证。关闭某个位置只隐藏气泡；关闭总开关会清空气泡。</string></dict>
+<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>锁屏显示</string><key>key</key><string>ShowOnLock</string><key>default</key><true/><key>defaults</key><string>local.notifybubbles</string></dict>
+<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>主屏显示</string><key>key</key><string>ShowOnHome</string><key>default</key><true/><key>defaults</key><string>local.notifybubbles</string></dict>
+<dict><key>cell</key><string>PSSwitchCell</string><key>label</key><string>App 内显示</string><key>key</key><string>ShowInApps</string><key>default</key><true/><key>defaults</key><string>local.notifybubbles</string></dict>
+<dict><key>cell</key><string>PSGroupCell</string><key>label</key><string>气泡与角标</string><key>footerText</key><string>右侧 48 点圆形图标，多个 App 纵向排列，可上下滚动。左上角读取桌面图标角标，约每 0.75 秒同步；桌面无角标时气泡也不显示数字。不会把通知条数当作未读数，也不会修改 App 未读状态。</string></dict>
+<dict><key>cell</key><string>PSButtonCell</string><key>label</key><string>清除全部气泡</string><key>action</key><string>clearBubbles</string></dict>
+</array></dict></plist>

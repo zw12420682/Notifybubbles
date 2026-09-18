@@ -1,0 +1,9 @@
+Package: local.notifybubbles
+Name: 通知悬浮气泡
+Version: 0.1.0
+Architecture: iphoneos-arm64e
+Description: Notification bubbles for iOS 16 and Dopamine RootHide. Experimental first build.
+Maintainer: NotifyBubbles
+Author: NotifyBubbles
+Section: Tweaks
+Depends: firmware (>= 16.0), firmware (<< 17.0), mobilesubstrate, preferenceloader
