@@ -18,7 +18,10 @@ static UIViewController *NFBVisibleController(UIViewController *controller) {
     return controller;
 }
 static WKWebView *NFBBackWebView(UIView *view, NSUInteger depth) {
-    if (depth > 30 || view.hidden || view.alpha < 0.01 || !view.window) return nil;
+    // Under TrollOpen the app's view may be re-parented into a floating container,
+    // so its `window` relationship can be nil or point at an unusual window while
+    // still being on screen. Drop the `window` check; rely on visibility only.
+    if (depth > 30 || !view || view.hidden || view.alpha < 0.01) return nil;
     if ([view isKindOfClass:WKWebView.class] && ((WKWebView *)view).canGoBack) return (WKWebView *)view;
     for (UIView *child in view.subviews.reverseObjectEnumerator) {
         WKWebView *web = NFBBackWebView(child, depth + 1);
@@ -27,49 +30,70 @@ static WKWebView *NFBBackWebView(UIView *view, NSUInteger depth) {
     return nil;
 }
 static BOOL NFBPerformBack(void) {
+    // This tweak runs INSIDE the target app's own process, so it must operate on
+    // that app's own windows — never another process. TrollOpen floats the app in
+    // a window while the app's scene may report Background (the system foreground
+    // is a different app or the home screen). A Foreground-only scene filter, and
+    // a window-level filter, both incorrectly discard the very window we need.
+    // So: accept every visible window of every window scene, then choose the one
+    // that actually carries a navigation stack or a web view (the app's content),
+    // falling back to the key window.
     NSMutableArray<UIWindow *> *candidates = [NSMutableArray array];
-    UIWindow *key = nil;
-    // TrollOpen floats the app in a window whose level is above UIWindowLevelNormal,
-    // so a strict level check here would discard the very window we need. Accept
-    // every visible window carrying a root view controller, then prefer the key
-    // window or the lowest-level one (the app's own content, not system overlays).
     for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
-        if (![scene isKindOfClass:UIWindowScene.class] ||
-            (scene.activationState != UISceneActivationStateForegroundActive &&
-             scene.activationState != UISceneActivationStateForegroundInactive)) continue;
+        if (![scene isKindOfClass:UIWindowScene.class]) continue;
         for (UIWindow *window in ((UIWindowScene *)scene).windows) {
             if (window.hidden || window.alpha < 0.01 || !window.rootViewController) continue;
-            // Skip the obvious system overlays (keyboard, status bar, text effects).
-            if (window.windowLevel > UIWindowLevelAlert) continue;
             [candidates addObject:window];
-            if (window.isKeyWindow) key = window;
         }
     }
+    if (candidates.count == 0) {
+        NSLog(@"[NotifyBubblesBack] no visible window candidates (scene state filter removed)");
+        return NO;
+    }
+    // Prefer the window whose visible controller owns a navigation stack with a
+    // real back item, or that hosts a web view that can go back. Only fall back to
+    // the key window or the first candidate when none carries a back action.
     UIWindow *window = nil;
-    if (key && [candidates containsObject:key]) window = key;
-    else if (candidates.count == 1) window = candidates.firstObject;
-    else {
-        // Pick the lowest window level: the app's real content sits below
-        // TrollOpen's own floating chrome.
-        [candidates sortUsingComparator:^NSComparisonResult(UIWindow *a, UIWindow *b) {
-            if (a.windowLevel < b.windowLevel) return NSOrderedAscending;
-            if (a.windowLevel > b.windowLevel) return NSOrderedDescending;
-            return NSOrderedSame;
-        }];
-        window = candidates.firstObject;
+    for (UIWindow *candidate in candidates) {
+        UIViewController *controller = NFBVisibleController(candidate.rootViewController);
+        UINavigationController *nav = controller.navigationController;
+        if ((nav && nav.visibleViewController == controller && nav.viewControllers.count > 1) ||
+            NFBBackWebView(controller.viewIfLoaded, 0)) {
+            window = candidate;
+            break;
+        }
     }
-    if (!window) return NO;
-    UIViewController *visible = NFBVisibleController(window.rootViewController);
-    if (!visible || visible.transitionCoordinator || [visible isKindOfClass:UIAlertController.class]) return NO;
-    UINavigationController *nav = visible.navigationController;
-    if (nav && nav.visibleViewController == visible && nav.viewControllers.count > 1 && !nav.transitionCoordinator) {
-        // A custom left button may mean menu/delete, not back. Do not invoke it.
-        if (visible.navigationItem.leftBarButtonItem || visible.navigationItem.leftBarButtonItems.count) return NO;
-        if (visible.navigationItem.hidesBackButton) return NO;
-        return [nav popViewControllerAnimated:YES] != nil;
+    if (!window) {
+        for (UIWindow *candidate in candidates) {
+            if (candidate.isKeyWindow) { window = candidate; break; }
+        }
     }
-    WKWebView *web = NFBBackWebView(visible.viewIfLoaded, 0);
-    if (web) { [web goBack]; return YES; }
+    if (!window) window = candidates.firstObject;
+    // Try the preferred window first, then fall back to every other candidate.
+    // A floating container may re-parent the content view so the "preferred"
+    // window's controller relationship is empty while a real nav stack still
+    // exists on another window. Walk all candidates and pop the first valid one.
+    NSMutableArray<UIWindow *> *ordered = [NSMutableArray arrayWithObject:window];
+    for (UIWindow *candidate in candidates) {
+        if (candidate != window) [ordered addObject:candidate];
+    }
+    for (UIWindow *candidate in ordered) {
+        UIViewController *visible = NFBVisibleController(candidate.rootViewController);
+        if (!visible || visible.transitionCoordinator || [visible isKindOfClass:UIAlertController.class]) continue;
+        UINavigationController *nav = visible.navigationController;
+        if (nav && nav.visibleViewController == visible && nav.viewControllers.count > 1 && !nav.transitionCoordinator) {
+            // A custom left button may mean menu/delete, not back. Do not invoke it.
+            if (visible.navigationItem.leftBarButtonItem || visible.navigationItem.leftBarButtonItems.count) continue;
+            if (visible.navigationItem.hidesBackButton) continue;
+            BOOL popped = [nav popViewControllerAnimated:YES] != nil;
+            NSLog(@"[NotifyBubblesBack] nav pop %@ count=%lu", popped ? @"OK" : @"FAIL",
+                  (unsigned long)nav.viewControllers.count);
+            return popped;
+        }
+        WKWebView *web = NFBBackWebView(visible.viewIfLoaded, 0);
+        if (web) { [web goBack]; NSLog(@"[NotifyBubblesBack] webview goBack OK"); return YES; }
+    }
+    NSLog(@"[NotifyBubblesBack] no back action found across %lu windows", (unsigned long)ordered.count);
     return NO;
 }
 __attribute__((constructor)) static void NFBInstallAppBack(void) {
