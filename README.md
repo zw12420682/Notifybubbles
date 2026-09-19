@@ -1,4 +1,4 @@
-# 通知悬浮气泡 · 0.6.0 测试工程
+# 通知悬浮气泡 · 0.7.0 测试工程
 
 目标：iPhone 14、iOS 16.0.3、Dopamine RootHide，搭配 TrollOpenJB 1.5.2 隐根版。
 
@@ -12,7 +12,7 @@
 - Makefile、control、README.md。
 - **新增 NotifyBubblesBack.plist，不能遗漏。**
 
-另外将 `.github/workflows/build.yml` 替换为新版。提交后在 Actions 查看最新构建，成功后下载 Artifacts 中 NotifyBubbles-RootHide，解压安装 0.6.0 的 deb 并重启桌面。
+另外将 `.github/workflows/build.yml` 替换为新版。提交后在 Actions 查看最新构建，成功后下载 Artifacts 中 NotifyBubbles-RootHide，解压安装 0.7.0 的 deb 并重启桌面。
 
 **本版包含 App 内返回组件 NotifyBubblesBack（点击触发）。** 点击当前浮窗气泡返回 App 内上一页（等同边缘右滑返回）；长按当前浮窗气泡改为接入 TrollOpen 全屏动作。需允许插件在目标 App 内注入，并彻底关闭、重新打开目标 App。
 
@@ -43,7 +43,7 @@
 
 ## 返回功能范围（点击触发）
 
-返回组件通过限时、有回复的进程间请求在目标 App 主线程处理，过期请求不执行。只操作当前可见页面，不模拟任意坐标点击。自 0.6.0 起由点击当前浮窗气泡触发。
+返回组件通过限时、有回复的进程间请求在目标 App 主线程处理，过期请求不执行。只操作当前可见页面，不模拟任意坐标点击。自 0.7.0 起由点击当前浮窗气泡触发。
 
 支持标准 UINavigationController 的普通返回，以及 WKWebView 网页历史返回。已处于第一页、页面正在转场、出现警告对话框、导航栏有自定义左按钮或无法判断目标窗口时，不猜测操作并提示。Flutter、游戏、自定义导航等可能需要逐 App 适配；不保证所有 App 通用，也不把“退出桌面”当作返回。
 
