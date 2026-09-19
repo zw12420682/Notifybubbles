@@ -28,7 +28,7 @@ assert not control_bytes.startswith(b'\xef\xbb\xbf'), 'control must be UTF-8 wit
 control = dict(line.split(': ', 1) for line in control_bytes.decode('utf-8').splitlines() if ': ' in line)
 assert control['Architecture'] == 'iphoneos-arm64e'
 assert 'THEOS_PACKAGE_SCHEME = roothide' in (root / 'Makefile').read_text()
-assert 'Sources/NFBSwitcher.m' in (root / 'Makefile').read_text(), 'Update the root Makefile for 0.9.0.'
+assert 'Sources/NFBSwitcher.m' in (root / 'Makefile').read_text(), 'Update the root Makefile for 0.10.0.'
 assert 'Sources/NFBTrollOpen.m' in (root / 'Makefile').read_text(), 'Update the root Makefile for TrollOpen integration.'
 prefs = plistlib.loads((root / 'Preferences/Resources/Root.plist').read_bytes())
 assert {x['key'] for x in prefs['items'] if 'key' in x} == {'Enabled','ShowOnLock','ShowOnHome','ShowInApps','IconSize','IconOpacity','VerticalPosition'}
@@ -39,3 +39,5 @@ print('PASS: required files, property lists, RootHide configuration, preference 
 back_filter = plistlib.loads((root / 'NotifyBubblesBack.plist').read_bytes())
 assert back_filter['Filter']['Bundles'] == ['com.apple.UIKit']
 assert 'NotifyBubblesBack_FILES = Sources/NFBAppBack.m' in (root / 'Makefile').read_text()
+assert 'NotifyBubblesBack_LIBRARIES = substrate' in (root / 'Makefile').read_text(), \
+    'NotifyBubblesBack must link substrate or roothide will not inject it into target apps.'

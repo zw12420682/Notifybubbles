@@ -50,6 +50,7 @@ static BOOL NFBPerformBack(void) {
         NSLog(@"[NotifyBubblesBack] no visible window candidates (scene state filter removed)");
         return NO;
     }
+    NSLog(@"[NotifyBubblesBack] %lu window candidates", (unsigned long)candidates.count);
     // Prefer the window whose visible controller owns a navigation stack with a
     // real back item, or that hosts a web view that can go back. Only fall back to
     // the key window or the first candidate when none carries a back action.
@@ -79,17 +80,32 @@ static BOOL NFBPerformBack(void) {
     }
     for (UIWindow *candidate in ordered) {
         UIViewController *visible = NFBVisibleController(candidate.rootViewController);
-        if (!visible || visible.transitionCoordinator || [visible isKindOfClass:UIAlertController.class]) continue;
+        if (!visible || visible.transitionCoordinator || [visible isKindOfClass:UIAlertController.class]) {
+            NSLog(@"[NotifyBubblesBack] skip window %@: visible=%@ transition=%d alert=%d",
+                  candidate, visible ? NSStringFromClass(visible.class) : @"<nil>",
+                  visible && visible.transitionCoordinator != nil,
+                  [visible isKindOfClass:UIAlertController.class]);
+            continue;
+        }
         UINavigationController *nav = visible.navigationController;
         if (nav && nav.visibleViewController == visible && nav.viewControllers.count > 1 && !nav.transitionCoordinator) {
             // A custom left button may mean menu/delete, not back. Do not invoke it.
-            if (visible.navigationItem.leftBarButtonItem || visible.navigationItem.leftBarButtonItems.count) continue;
-            if (visible.navigationItem.hidesBackButton) continue;
+            if (visible.navigationItem.leftBarButtonItem || visible.navigationItem.leftBarButtonItems.count) {
+                NSLog(@"[NotifyBubblesBack] nav has custom left button, skip");
+                continue;
+            }
+            if (visible.navigationItem.hidesBackButton) {
+                NSLog(@"[NotifyBubblesBack] nav hidesBackButton, skip");
+                continue;
+            }
             BOOL popped = [nav popViewControllerAnimated:YES] != nil;
             NSLog(@"[NotifyBubblesBack] nav pop %@ count=%lu", popped ? @"OK" : @"FAIL",
                   (unsigned long)nav.viewControllers.count);
             return popped;
         }
+        NSLog(@"[NotifyBubblesBack] window %@ visible=%@ navCount=%lu no-nav",
+              candidate, NSStringFromClass(visible.class),
+              (unsigned long)(nav ? nav.viewControllers.count : 0));
         WKWebView *web = NFBBackWebView(visible.viewIfLoaded, 0);
         if (web) { [web goBack]; NSLog(@"[NotifyBubblesBack] webview goBack OK"); return YES; }
     }
@@ -99,25 +115,43 @@ static BOOL NFBPerformBack(void) {
 __attribute__((constructor)) static void NFBInstallAppBack(void) {
     @autoreleasepool {
         NSString *app = NSBundle.mainBundle.bundleIdentifier;
-        if (!app.length || [app isEqual:@"com.apple.springboard"] ||
-            ![NSBundle.mainBundle.bundlePath hasSuffix:@".app"] || NSBundle.mainBundle.infoDictionary[@"NSExtension"]) return;
+        NSString *path = NSBundle.mainBundle.bundlePath;
+        BOOL isSpringBoard = [app isEqual:@"com.apple.springboard"];
+        BOOL isApp = path.length && [path hasSuffix:@".app"];
+        BOOL isExtension = NSBundle.mainBundle.infoDictionary[@"NSExtension"] != nil;
+        // Log on every process we land in so the device log reveals where the
+        // back tweak actually injected (or did not inject).
+        NSLog(@"[NotifyBubblesBack] constructor app=%@ path=%@ springboard=%d isApp=%d extension=%d",
+              app ?: @"<nil>", path ?: @"<nil>", isSpringBoard, isApp, isExtension);
+        if (!app.length || isSpringBoard || !isApp || isExtension) return;
         dispatch_async(dispatch_get_main_queue(), ^{
             NSString *name = NFBBackName(app), *reply = [name stringByAppendingString:@".reply"];
             __block uint64_t lastRequest = 0;
             int token = 0;
-            notify_register_dispatch(name.UTF8String, &token, dispatch_get_main_queue(), ^(int inputToken) {
+            uint32_t reg = notify_register_dispatch(name.UTF8String, &token, dispatch_get_main_queue(), ^(int inputToken) {
                 uint64_t request = 0;
-                if (notify_get_state(inputToken, &request) != NOTIFY_STATUS_OK || request == lastRequest || !NFBBackFresh(request, NFBBackTime())) return;
+                if (notify_get_state(inputToken, &request) != NOTIFY_STATUS_OK || request == lastRequest || !NFBBackFresh(request, NFBBackTime())) {
+                    NSLog(@"[NotifyBubblesBack] request ignored: state=%llu last=%llu now=%llu",
+                          request, lastRequest, NFBBackTime());
+                    return;
+                }
                 lastRequest = request;
+                NSLog(@"[NotifyBubblesBack] handling back request=%llu app=%@", request, app);
                 BOOL performed = NO;
-                @try { performed = NFBPerformBack(); } @catch (__unused NSException *e) {}
+                @try { performed = NFBPerformBack(); } @catch (__unused NSException *e) {
+                    NSLog(@"[NotifyBubblesBack] NFBPerformBack threw: %@", e);
+                }
+                NSLog(@"[NotifyBubblesBack] perform result=%d", performed);
                 int responseToken = 0;
                 if (notify_register_check(reply.UTF8String, &responseToken) == NOTIFY_STATUS_OK) {
                     notify_set_state(responseToken, (request << 2) | (performed ? 1 : 2));
                     notify_post(reply.UTF8String);
                     notify_cancel(responseToken);
+                } else {
+                    NSLog(@"[NotifyBubblesBack] reply register failed");
                 }
             });
+            NSLog(@"[NotifyBubblesBack] registered listener name=%@ token=%d status=%u", name, token, reg);
         });
     }
 }

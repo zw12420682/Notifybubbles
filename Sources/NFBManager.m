@@ -486,6 +486,9 @@ static double NFBNumber(NSString *key, double fallback) {
     if (gesture.state != UIGestureRecognizerStateEnded) return;
     NFBBubble *button = (NFBBubble *)gesture.view;
     if (self.buttons[button.appID] != button) return;
+    // Double tap only acts on the CURRENT floating window's bubble (same rule as
+    // single tap and long press). Tapping another app's bubble does nothing.
+    if (![NFBTrollVisibleApp() isEqualToString:button.appID]) return;
     // Double tap toggles the current floating window's orientation (portrait
     // <-> landscape), matching the green bar's long-press "rotate" action.
     if (!NFBToggleOrientation())
@@ -588,7 +591,9 @@ static double NFBNumber(NSString *key, double fallback) {
     if ([NFBTrollVisibleApp() isEqualToString:app]) {
         // No pending notification and the bubble is the current floating window:
         // perform the app's back navigation (equivalent to an edge swipe back).
+        NSLog(@"[NotifyBubbles] single tap -> back request for %@", app);
         NFBRequestAppBack(app, ^(NSInteger result) {
+            NSLog(@"[NotifyBubbles] back result=%ld for %@", (long)result, app);
             if (result == 0)
                 [self showOpenNotice:@"当前页面没有可用的返回操作，或使用了自定义导航"];
             else if (result < 0)
