@@ -456,6 +456,14 @@ static double NFBNumber(NSString *key, double fallback) {
     if (gesture.state != UIGestureRecognizerStateBegan) return;
     NFBBubble *button = (NFBBubble *)gesture.view;
     if (self.buttons[button.appID] != button) return;
+    // Long press on the bubble while its app is the current floating window:
+    // forward the green bar's tap action (fullscreen) to TrollOpen.
+    // Non-floating apps keep the original burst-close.
+    if ([NFBTrollVisibleApp() isEqualToString:button.appID]) {
+        if (!NFBFullscreenCurrentFloatingWindow())
+            [self showOpenNotice:@"TrollOpen 全屏接口不可用，请确认已安装适配的 1.5.2 隐根版并重启桌面"];
+        return;
+    }
     // Suppress touch-up activation while the queued burst removes this control.
     button.opening = YES;
     button.userInteractionEnabled = NO;
@@ -558,9 +566,13 @@ static double NFBNumber(NSString *key, double fallback) {
         return;
     }
     if ([NFBTrollVisibleApp() isEqualToString:app]) {
+        // No pending notification and the bubble is the current floating window:
+        // perform the app's back navigation (equivalent to an edge swipe back).
         NFBRequestAppBack(app, ^(NSInteger result) {
-            if (result == 0) [self showOpenNotice:@"当前页面没有可用的返回操作，或使用了自定义导航"];
-            else if (result < 0) [self showOpenNotice:@"App 返回组件未响应，请允许插件注入该 App 并重新打开它"];
+            if (result == 0)
+                [self showOpenNotice:@"当前页面没有可用的返回操作，或使用了自定义导航"];
+            else if (result < 0)
+                [self showOpenNotice:@"App 返回组件未响应，请允许插件注入该 App 并重新打开它"];
         });
         return;
     }

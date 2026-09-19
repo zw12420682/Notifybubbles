@@ -21,6 +21,29 @@ BOOL NFBSplitTrollFrontmostApp(void) {
     }
 }
 
+// Call a no-argument, void-returning class method on TOJBBarGestureBridge.
+// Mirrors NFBSplitTrollFrontmostApp: signature is verified before the message
+// so an incompatible ABI never reaches the real bridge.
+static BOOL NFBCallBridgeVoid(NSString *selectorName) {
+    if (!NSThread.isMainThread) return NO;
+    Class bridge = NSClassFromString(@"TOJBBarGestureBridge");
+    SEL selector = NSSelectorFromString(selectorName);
+    @try {
+        if (![bridge respondsToSelector:selector]) return NO;
+        NSMethodSignature *sig = [bridge methodSignatureForSelector:selector];
+        if (!sig || sig.numberOfArguments != 2 || strcmp(sig.methodReturnType, @encode(void)) != 0) return NO;
+        ((void (*)(id, SEL))objc_msgSend)(bridge, selector);
+        return YES;
+    } @catch (__unused NSException *error) {
+        NSLog(@"[NotifyBubbles] TrollOpen %@ failed", selectorName);
+        return NO;
+    }
+}
+
+BOOL NFBFullscreenCurrentFloatingWindow(void) {
+    return NFBCallBridgeVoid(@"fullscreenCurrentFloatingWindow");
+}
+
 static BOOL NFBTrollSignature(id target, SEL selector, BOOL hasFlag) {
     if (![target respondsToSelector:selector]) return NO;
     NSMethodSignature *sig = [target methodSignatureForSelector:selector];
