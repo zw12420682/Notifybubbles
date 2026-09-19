@@ -2,6 +2,9 @@
 #import <objc/message.h>
 #include <string.h>
 
+// Forward declaration: fetches an object-returning no-argument method result.
+static id NFBTrollObject(id object, NSString *name);
+
 BOOL NFBSplitTrollFrontmostApp(void) {
     if (!NSThread.isMainThread) return NO;
     // RootHide TrollOpen 1.5.2: +[TOJBBarGestureBridge splitFrontmostApplication], v16@0:8.
@@ -21,27 +24,62 @@ BOOL NFBSplitTrollFrontmostApp(void) {
     }
 }
 
-// Call a no-argument, void-returning class method on TOJBBarGestureBridge.
-// Mirrors NFBSplitTrollFrontmostApp: signature is verified before the message
-// so an incompatible ABI never reaches the real bridge.
-static BOOL NFBCallBridgeVoid(NSString *selectorName) {
+// Fullscreen the current floating window. Unlike splitFrontmostApplication
+// (a class method on TOJBBarGestureBridge), fullscreenCurrentFloatingWindow is
+// an INSTANCE method on the floating window object (TOJBClass012) returned by
+// +[TOJBBarGestureBridge currentVisibleFloatingWindow]. Call it on the instance.
+BOOL NFBFullscreenCurrentFloatingWindow(void) {
     if (!NSThread.isMainThread) return NO;
-    Class bridge = NSClassFromString(@"TOJBBarGestureBridge");
-    SEL selector = NSSelectorFromString(selectorName);
     @try {
-        if (![bridge respondsToSelector:selector]) return NO;
-        NSMethodSignature *sig = [bridge methodSignatureForSelector:selector];
+        id window = NFBTrollObject(NSClassFromString(@"TOJBBarGestureBridge"), @"currentVisibleFloatingWindow");
+        if (!window) return NO;
+        SEL selector = NSSelectorFromString(@"fullscreenCurrentFloatingWindow");
+        if (![window respondsToSelector:selector]) return NO;
+        NSMethodSignature *sig = [window methodSignatureForSelector:selector];
         if (!sig || sig.numberOfArguments != 2 || strcmp(sig.methodReturnType, @encode(void)) != 0) return NO;
-        ((void (*)(id, SEL))objc_msgSend)(bridge, selector);
+        ((void (*)(id, SEL))objc_msgSend)(window, selector);
         return YES;
     } @catch (__unused NSException *error) {
-        NSLog(@"[NotifyBubbles] TrollOpen %@ failed", selectorName);
+        NSLog(@"[NotifyBubbles] TrollOpen fullscreen failed");
         return NO;
     }
 }
 
-BOOL NFBFullscreenCurrentFloatingWindow(void) {
-    return NFBCallBridgeVoid(@"fullscreenCurrentFloatingWindow");
+// Toggle orientation (the green bar's long-press "rotate" action). TrollOpen does
+// not expose a clean no-arg "rotate floating window" selector; its rotation is
+// surfaced through the bar-gesture command bridge. We attempt the command entry
+// point handleBarGestureCommand: with the cmd_toggle_orientation token, and fall
+// back to the floating window's own rotate method if that token path is absent.
+BOOL NFBToggleOrientation(void) {
+    if (!NSThread.isMainThread) return NO;
+    Class bridge = NSClassFromString(@"TOJBBarGestureBridge");
+    // Path 1: +[TOJBBarGestureBridge handleBarGestureCommand:].
+    @try {
+        SEL cmd = NSSelectorFromString(@"handleBarGestureCommand:");
+        if ([bridge respondsToSelector:cmd]) {
+            NSMethodSignature *sig = [bridge methodSignatureForSelector:cmd];
+            if (sig && sig.numberOfArguments == 3 && sig.methodReturnType[0] == 'v' &&
+                [sig getArgumentTypeAtIndex:2][0] == '@') {
+                ((void (*)(id, SEL, id))objc_msgSend)(bridge, cmd, @"cmd_toggle_orientation");
+                return YES;
+            }
+        }
+    } @catch (__unused NSException *error) {}
+    // Path 2: rotate the current floating window instance directly.
+    @try {
+        id window = NFBTrollObject(bridge, @"currentVisibleFloatingWindow");
+        if (!window) return NO;
+        for (NSString *name in @[@"rotateWindow", @"rotate", @"rotateToLandscape", @"toggleOrientation"]) {
+            SEL sel = NSSelectorFromString(name);
+            if (![window respondsToSelector:sel]) continue;
+            NSMethodSignature *sig = [window methodSignatureForSelector:sel];
+            if (!sig || sig.numberOfArguments != 2 || sig.methodReturnType[0] != 'v') continue;
+            ((void (*)(id, SEL))objc_msgSend)(window, sel);
+            return YES;
+        }
+    } @catch (__unused NSException *error) {}
+    NSLog(@"[NotifyBubbles] TrollOpen orientation toggle unavailable");
+    return NO;
 }
 
 static BOOL NFBTrollSignature(id target, SEL selector, BOOL hasFlag) {

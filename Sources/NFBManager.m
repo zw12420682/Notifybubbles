@@ -411,7 +411,13 @@ static double NFBNumber(NSString *key, double fallback) {
         if (fresh) {
             button = [[NFBBubble alloc] initWithFrame:CGRectZero];
             button.appID = appID;
-            [button addTarget:self action:@selector(tapped:) forControlEvents:UIControlEventTouchUpInside];
+            UITapGestureRecognizer *doubleTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(doubleTapped:)];
+            doubleTap.numberOfTapsRequired = 2;
+            [button addGestureRecognizer:doubleTap];
+            UITapGestureRecognizer *singleTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(singleTapped:)];
+            singleTap.numberOfTapsRequired = 1;
+            [singleTap requireGestureRecognizerToFail:doubleTap];
+            [button addGestureRecognizer:singleTap];
             UILongPressGestureRecognizer *hold = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(longPressed:)];
             hold.minimumPressDuration = 0.6;
             hold.cancelsTouchesInView = YES;
@@ -476,6 +482,15 @@ static double NFBNumber(NSString *key, double fallback) {
         }
     });
 }
+- (void)doubleTapped:(UITapGestureRecognizer *)gesture {
+    if (gesture.state != UIGestureRecognizerStateEnded) return;
+    NFBBubble *button = (NFBBubble *)gesture.view;
+    if (self.buttons[button.appID] != button) return;
+    // Double tap toggles the current floating window's orientation (portrait
+    // <-> landscape), mirroring the green bar's long-press "rotate" action.
+    if (!NFBToggleOrientation())
+        [self showOpenNotice:@"TrollOpen 旋转接口不可用，请确认已安装适配的 1.5.2 隐根版并重启桌面"];
+}
 - (void)burstBubble:(NFBBubble *)button {
     if (UIAccessibilityIsReduceMotionEnabled()) {
         [UIView animateWithDuration:0.15 animations:^{ button.alpha = 0; }
@@ -515,6 +530,11 @@ static double NFBNumber(NSString *key, double fallback) {
     [UIView animateWithDuration:0.18 delay:0 options:UIViewAnimationOptionBeginFromCurrentState animations:^{
         button.transform = CGAffineTransformScale(button.transform, 1.16, 1.16); button.alpha = 0;
     } completion:^(__unused BOOL done) { [button removeFromSuperview]; }];
+}
+- (void)singleTapped:(UITapGestureRecognizer *)gesture {
+    if (gesture.state != UIGestureRecognizerStateEnded) return;
+    NFBBubble *button = (NFBBubble *)gesture.view;
+    [self tapped:button];
 }
 - (void)tapped:(NFBBubble *)button {
     if (button.opening || self.buttons[button.appID] != button) return;

@@ -10,3 +10,8 @@ NSString *NFBTrollVisibleApp(void);
 // Returns YES when the bridge accepted the request; a NO means the interface is
 // unavailable and the caller should fall back gracefully.
 BOOL NFBFullscreenCurrentFloatingWindow(void);
+
+// Toggle the floating window orientation (portrait <-> landscape), matching the
+// green bar's long-press "rotate" action. Best-effort: returns YES only when a
+// compatible TrollOpen command interface was actually invoked.
+BOOL NFBToggleOrientation(void);

@@ -29,18 +29,35 @@ static WKWebView *NFBBackWebView(UIView *view, NSUInteger depth) {
 static BOOL NFBPerformBack(void) {
     NSMutableArray<UIWindow *> *candidates = [NSMutableArray array];
     UIWindow *key = nil;
+    // TrollOpen floats the app in a window whose level is above UIWindowLevelNormal,
+    // so a strict level check here would discard the very window we need. Accept
+    // every visible window carrying a root view controller, then prefer the key
+    // window or the lowest-level one (the app's own content, not system overlays).
     for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
         if (![scene isKindOfClass:UIWindowScene.class] ||
             (scene.activationState != UISceneActivationStateForegroundActive &&
              scene.activationState != UISceneActivationStateForegroundInactive)) continue;
         for (UIWindow *window in ((UIWindowScene *)scene).windows) {
-            if (window.hidden || window.alpha < 0.01 || !window.rootViewController || window.windowLevel != UIWindowLevelNormal) continue;
+            if (window.hidden || window.alpha < 0.01 || !window.rootViewController) continue;
+            // Skip the obvious system overlays (keyboard, status bar, text effects).
+            if (window.windowLevel > UIWindowLevelAlert) continue;
             [candidates addObject:window];
             if (window.isKeyWindow) key = window;
         }
     }
-    // Avoid guessing between two windows of the same app.
-    UIWindow *window = candidates.count == 1 ? candidates.firstObject : key;
+    UIWindow *window = nil;
+    if (key && [candidates containsObject:key]) window = key;
+    else if (candidates.count == 1) window = candidates.firstObject;
+    else {
+        // Pick the lowest window level: the app's real content sits below
+        // TrollOpen's own floating chrome.
+        [candidates sortUsingComparator:^NSComparisonResult(UIWindow *a, UIWindow *b) {
+            if (a.windowLevel < b.windowLevel) return NSOrderedAscending;
+            if (a.windowLevel > b.windowLevel) return NSOrderedDescending;
+            return NSOrderedSame;
+        }];
+        window = candidates.firstObject;
+    }
     if (!window) return NO;
     UIViewController *visible = NFBVisibleController(window.rootViewController);
     if (!visible || visible.transitionCoordinator || [visible isKindOfClass:UIAlertController.class]) return NO;
