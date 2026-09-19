@@ -40,7 +40,7 @@ static BOOL NFBPerformBack(void) {
     // falling back to the key window.
     NSMutableArray<UIWindow *> *candidates = [NSMutableArray array];
     // Log scene states to reveal what TrollOpen does to the app's scene.
-    NSArray<UIScene *> *scenes = UIApplication.sharedApplication.connectedScenes;
+    NSSet<UIScene *> *scenes = UIApplication.sharedApplication.connectedScenes;
     for (UIScene *scene in scenes) {
         if (![scene isKindOfClass:UIWindowScene.class]) continue;
         NSLog(@"[NotifyBubblesBack] scene %@ activationState=%ld windows=%lu",

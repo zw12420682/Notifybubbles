@@ -1,4 +1,4 @@
-# 通知悬浮气泡 · 0.13.0 测试工程
+# 通知悬浮气泡 · 0.14.0 测试工程
 
 目标：iPhone 14、iOS 16.0.3、Dopamine RootHide，搭配 TrollOpenJB 1.5.2 隐根版。
 
@@ -12,7 +12,7 @@
 - Makefile、control、README.md。
 - **新增 NotifyBubblesBack.plist，不能遗漏。**
 
-另外将 `.github/workflows/build.yml` 替换为新版。提交后在 Actions 查看最新构建，成功后下载 Artifacts 中 NotifyBubbles-RootHide，解压安装 0.13.0 的 deb 并重启桌面。
+另外将 `.github/workflows/build.yml` 替换为新版。提交后在 Actions 查看最新构建，成功后下载 Artifacts 中 NotifyBubbles-RootHide，解压安装 0.14.0 的 deb 并重启桌面。
 
 **本版包含 App 内返回组件 NotifyBubblesBack（点击触发）。** 单击当前浮窗气泡返回 App 内上一页（等同边缘右滑返回）；双击切换横竖屏；长按关闭分屏窗口。需允许插件在目标 App 内注入，并彻底关闭、重新打开目标 App。
 
