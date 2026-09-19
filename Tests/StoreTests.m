@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #import "NFBStore.h"
+#import "NFBBackProtocol.h"
 #import "NFBGeometry.h"
 #include <stdlib.h>
 @interface TestRequest : NSObject
@@ -24,6 +25,11 @@ int main(void) {
         Check([s.appIDs isEqual:@[@"chat", @"mail", @"switcherOnly"]], @"Notification moves its app to first position");
         Check([[s latestForApp:@"chat"].notificationID isEqual:@"new"], @"Queue sorts by notification timestamp, not delivery timing");
         Check(![s putApp:@"chat" notification:@"new" request:Request(300) destination:destination] && s.count == 3, @"Duplicate system delivery is not a second notification");
+        [s promoteApp:@"mail"];
+        Check([s.appIDs.firstObject isEqual:@"mail"] && s.count == 3, @"Foreground promotion preserves unread queues");
+        [s promoteApp:@"notPinned"];
+        Check(![s.appIDs containsObject:@"notPinned"], @"Promotion cannot recreate a dismissed icon");
+        [s promoteApp:@"chat"];
         NFBRecord *new = [s latestForApp:@"chat"];
         [s consumeRecord:new];
         Check([[s latestForApp:@"chat"].notificationID isEqual:@"old"], @"Second tap selects older message");
@@ -50,6 +56,9 @@ int main(void) {
             double left=390-(d+14)+7+NFBRetraction(d);
             Check(fabs(390-left-d/2.0)<0.001, @"Half visible for all sizes");
         }
+        Check(NFBPosition(-5) == 0 && NFBPosition(5) == 1 && NFBPosition(NAN) == 0.7, @"Position clamping");
+        Check(NFBRowCenter(3, 0, 66, 62) == 163 && NFBRowCenter(3, 2, 66, 62) == 31, @"First icon is lowest");
+        Check(NFBBackFresh(1000, 1200) && !NFBBackFresh(1000, 2600) && !NFBBackFresh(1300, 1200), @"Expired and future back requests rejected");
         NSLog(@"PASS: queue chronology, per-app isolation, deduplication, consumption, switcher pins and geometry");
     }
     return 0;

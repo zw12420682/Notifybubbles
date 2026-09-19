@@ -10,7 +10,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
-			<string>通知悬浮气泡 · 测试版 0.5.0</string>
+			<string>通知悬浮气泡 · 测试版 0.6.0</string>
 			<key>footerText</key>
 			<string>点击时立即执行通知或 App 打开动作，同时伸出图标。通知按新到旧依次打开；没有待打开的通知时通过 TrollOpen 1.5.2 隐根版分屏打开 App。长按约 0.6 秒关闭图标，保留气泡破裂动画。</string>
 		</dict>
@@ -72,6 +72,24 @@
 		</dict>
 		<dict>
 			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>label</key>
+			<string>整组图标上下位置</string>
+			<key>key</key>
+			<string>VerticalPosition</string>
+			<key>defaults</key>
+			<string>local.notifybubbles</string>
+			<key>default</key>
+			<real>0.7</real>
+			<key>min</key>
+			<real>0.0</real>
+			<key>max</key>
+			<real>1.0</real>
+			<key>showValue</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
 			<string>图标外观</string>
@@ -120,7 +138,7 @@
 			<key>label</key>
 			<string>气泡与角标</string>
 			<key>footerText</key>
-			<string>当前展开的 TrollOpen 浮窗对应图标保持伸出。没有待处理通知时点击缩小浮窗；有通知时优先打开通知。其它图标伸出后停留 2 秒。每个 App 的新消息图标可在下方独立设置，不影响切换器图标。</string>
+			<string>图标从下往上排列，最下面是第一位；当前 App 自动排在第一位。位置滑块 0 为顶部、1 为底部。当前浮窗图标保持伸出：无待处理通知时点击返回上一页，有通知时优先打开通知。系统关闭通知的 App 不显示通知来源图标，切换器图标不受影响。</string>
 		</dict>
 		<dict>
 			<key>cell</key>

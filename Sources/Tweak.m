@@ -125,7 +125,7 @@ static void NFBInstall(void) {
     BOOL collection = NFBHook(dispatcher, @"postNotificationWithRequest:", "@", (IMP)replacedPost, (IMP *)&originalPost);
     BOOL remove = NFBHook(dispatcher, @"_didRemoveNotificationRequest:", "@", (IMP)replacedRemove, (IMP *)&originalRemove);
     NFBHook(dispatcher, @"removeNotificationSectionWithIdentifier:", "@", (IMP)replacedRemoveSection, (IMP *)&originalRemoveSection);
-    NSLog(@"[NotifyBubbles] 0.5.0 feed=%d collection=%d withdraw=%d remove=%d; first-device validation required", feed, collection, withdraw, remove);
+    NSLog(@"[NotifyBubbles] 0.6.0 feed=%d collection=%d withdraw=%d remove=%d; first-device validation required", feed, collection, withdraw, remove);
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
         NFBPreferencesChanged, CFSTR("local.notifybubbles/preferences.changed"), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,

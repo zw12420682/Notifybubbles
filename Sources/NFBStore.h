@@ -12,6 +12,7 @@
 @property(nonatomic, readonly) NSArray<NSString *> *appIDs;
 @property(nonatomic, readonly) NSUInteger count;
 - (BOOL)putApp:(NSString *)appID notification:(NSString *)notificationID request:(id)request destination:(id)destination;
+- (void)promoteApp:(NSString *)appID;
 - (void)pinApp:(NSString *)appID;
 - (NFBRecord *)latestForApp:(NSString *)appID;
 - (void)consumeRecord:(NFBRecord *)record;

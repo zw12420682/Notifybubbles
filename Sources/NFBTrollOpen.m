@@ -74,14 +74,3 @@ NSString *NFBTrollVisibleApp(void) {
     id app = NFBTrollObject(window, @"bundleID");
     return [app isKindOfClass:NSString.class] ? app : nil;
 }
-BOOL NFBMinimizeTrollApp(NSString *bundleID) {
-    if (!NSThread.isMainThread || ![NFBTrollVisibleApp() isEqualToString:bundleID]) return NO;
-    id bridge = NSClassFromString(@"TOJBBarGestureBridge");
-    SEL sel = NSSelectorFromString(@"minimizeCurrentFloatingWindow");
-    @try {
-        NSMethodSignature *sig = [bridge methodSignatureForSelector:sel];
-        if (![bridge respondsToSelector:sel] || !sig || sig.numberOfArguments != 2 ||
-            (sig.methodReturnType[0] != 'B' && sig.methodReturnType[0] != 'c')) return NO;
-        return ((BOOL (*)(id, SEL))objc_msgSend)(bridge, sel);
-    } @catch (__unused NSException *e) { return NO; }
-}

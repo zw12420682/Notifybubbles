@@ -5,4 +5,3 @@ BOOL NFBOpenTrollApp(NSString *bundleID);
 BOOL NFBSplitTrollFrontmostApp(void);
 
 NSString *NFBTrollVisibleApp(void);
-BOOL NFBMinimizeTrollApp(NSString *bundleID);

@@ -4,6 +4,8 @@
 #import "NFBGeometry.h"
 #import "NFBSwitcher.h"
 #import "NFBTrollOpen.h"
+#import "NFBNotificationPolicy.h"
+#import "NFBBackRequest.h"
 
 static const NSTimeInterval NFBMotion = 0.6;
 static const NSTimeInterval NFBHold = 2.0;
@@ -96,6 +98,9 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, strong) NFBRecord *pendingRecord;
 @property(nonatomic) NSTimeInterval pendingUntil;
 @property(nonatomic) NSUInteger emptyReads;
+@property(nonatomic) CGFloat verticalPosition;
+@property(nonatomic, copy) NSString *lastActiveApp;
+@property(nonatomic, copy) NSArray *lastLayoutApps;
 @property(nonatomic) CGFloat iconSize;
 @property(nonatomic) CGFloat iconOpacity;
 @property(nonatomic) BOOL enabled;
@@ -139,6 +144,7 @@ static double NFBNumber(NSString *key, double fallback) {
 - (void)reloadPreferences {
     NSAssert(NSThread.isMainThread, @"UI must be on main thread");
     CFPreferencesAppSynchronize(NFBDomain);
+    self.verticalPosition = NFBPosition(NFBNumber(@"VerticalPosition", 0.7));
     self.iconSize = NFBSize(NFBNumber(@"IconSize", 48));
     self.iconOpacity = NFBOpacity(NFBNumber(@"IconOpacity", 1));
     self.enabled = NFBPreference(@"Enabled", YES);
@@ -178,9 +184,14 @@ static double NFBNumber(NSString *key, double fallback) {
 - (void)removeSection:(NSString *)section {
     [self.store removeApp:section]; [self refresh];
 }
+- (NSArray<NSString *> *)orderedAppsForRemoval {
+    NSMutableOrderedSet *apps = [NSMutableOrderedSet orderedSetWithArray:self.lastLayoutApps ?: @[]];
+    [apps addObjectsFromArray:self.store.appIDs];
+    return apps.array;
+}
 - (void)clear {
     [self.dismissedSwitcher addObjectsFromArray:self.lastSwitcher ?: @[]];
-    [self closeAppsInOrder:self.store.appIDs];
+    [self closeAppsInOrder:[self orderedAppsForRemoval]];
 }
 - (BOOL)isLocked {
     id lock = NFBSingleton(@"SBLockScreenManager");
@@ -218,7 +229,7 @@ static double NFBNumber(NSString *key, double fallback) {
             if (current.count == 0 && self.lastSwitcher.count > 0) {
                 // Require two consecutive empty reads to reject intermediate snapshots.
                 if (++self.emptyReads >= 2) {
-                    [self closeAppsInOrder:self.store.appIDs];
+                    [self closeAppsInOrder:[self orderedAppsForRemoval]];
                     self.lastSwitcher = current; self.emptyReads = 0;
                 }
             } else {
@@ -329,9 +340,20 @@ static double NFBNumber(NSString *key, double fallback) {
     NSMutableArray<NSString *> *apps = [NSMutableArray array];
     for (NSString *app in self.store.appIDs) {
         BOOL fromSwitcher = [self.lastSwitcher containsObject:app];
-        if (fromSwitcher || NFBPreference([@"NotifyApp." stringByAppendingString:app], YES)) [apps addObject:app];
+        BOOL notificationsAllowed = NFBSystemNotificationsAllowed(app, ^{ [self refresh]; });
+        if (fromSwitcher || notificationsAllowed) [apps addObject:app];
     }
     NSString *floatingApp = NFBTrollVisibleApp();
+    id springboard = UIApplication.sharedApplication;
+    BOOL home = [springboard respondsToSelector:@selector(isShowingHomescreen)] && [springboard isShowingHomescreen];
+    NSString *active = floatingApp ?: (home ? nil : NFBString(NFBGet(NFBGet(springboard, @"_accessibilityFrontMostApplication"), @"bundleIdentifier")));
+    if (active.length && [apps containsObject:active]) {
+        [apps removeObject:active]; [apps insertObject:active atIndex:0];
+        if (![self.lastActiveApp isEqual:active]) [self.store promoteApp:active];
+    }
+    self.lastActiveApp = active;
+    BOOL orderChanged = ![self.lastLayoutApps isEqualToArray:apps];
+    self.lastLayoutApps = [apps copy];
     for (NSString *appID in self.buttons.allKeys) {
         if ([apps containsObject:appID]) continue;
         NFBBubble *button = self.buttons[appID];
@@ -373,7 +395,7 @@ static double NFBNumber(NSString *key, double fallback) {
     CGFloat available = MAX(side, bounds.size.height - top - MAX(safe.bottom, 20) - 20);
     CGFloat height = MIN(available, apps.count * step);
     // Use the actual screen edge, not safeArea.right, for exactly half exposure.
-    CGRect railFrame = CGRectMake(bounds.size.width - side, top + (available - height) * 0.42, side, height);
+    CGRect railFrame = CGRectMake(bounds.size.width - side, top + (available - height) * self.verticalPosition, side, height);
     if (!CGRectEqualToRect(self.rail.frame, railFrame)) {
         if (CGRectIsEmpty(self.rail.frame)) self.rail.frame = railFrame;
         else [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : NFBMotion delay:0
@@ -382,7 +404,7 @@ static double NFBNumber(NSString *key, double fallback) {
     }
     self.rail.contentSize = CGSizeMake(side, apps.count * step);
     CGFloat maxOffset = MAX(0, self.rail.contentSize.height - height);
-    if (self.rail.contentOffset.y > maxOffset) self.rail.contentOffset = CGPointMake(0, maxOffset);
+    if (orderChanged || self.rail.contentOffset.y > maxOffset) self.rail.contentOffset = CGPointMake(0, maxOffset);
     [apps enumerateObjectsUsingBlock:^(NSString *appID, NSUInteger index, __unused BOOL *stop) {
         NFBBubble *button = self.buttons[appID];
         BOOL fresh = !button;
@@ -401,7 +423,7 @@ static double NFBNumber(NSString *key, double fallback) {
         BOOL expanded = [floatingApp isEqualToString:appID] || [self.expandedUntil[appID] doubleValue] > CACurrentMediaTime();
         CGAffineTransform target = CGAffineTransformMakeTranslation(expanded ? 0 : NFBRetraction(diameter), 0);
         CGRect targetBounds = CGRectMake(0, 0, side, side);
-        CGPoint targetCenter = CGPointMake(side / 2, index * step + side / 2);
+        CGPoint targetCenter = CGPointMake(side / 2, NFBRowCenter(apps.count, index, step, side));
         if (fresh) {
             button.bounds = targetBounds;
             button.center = targetCenter;
@@ -536,7 +558,10 @@ static double NFBNumber(NSString *key, double fallback) {
         return;
     }
     if ([NFBTrollVisibleApp() isEqualToString:app]) {
-        if (!NFBMinimizeTrollApp(app)) [self showOpenNotice:@"TrollOpen 暂时无法缩小这个浮窗"];
+        NFBRequestAppBack(app, ^(NSInteger result) {
+            if (result == 0) [self showOpenNotice:@"当前页面没有可用的返回操作，或使用了自定义导航"];
+            else if (result < 0) [self showOpenNotice:@"App 返回组件未响应，请允许插件注入该 App 并重新打开它"];
+        });
         return;
     }
     id springboard = UIApplication.sharedApplication;

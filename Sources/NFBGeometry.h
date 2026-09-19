@@ -9,3 +9,8 @@ static inline double NFBOpacity(double value) {
 // Expanded image ends 7 points before the physical edge. Move its center
 // exactly onto that edge when retracted, exposing half of the circular image.
 static inline double NFBRetraction(double diameter) { return diameter / 2 + 7; }
+
+static inline double NFBPosition(double value) { return isfinite(value) ? fmax(0, fmin(1, value)) : 0.7; }
+static inline double NFBRowCenter(unsigned long count, unsigned long index, double step, double side) {
+    return (count - 1 - index) * step + side / 2;
+}

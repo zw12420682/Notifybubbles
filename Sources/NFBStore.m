@@ -25,6 +25,10 @@ static NSDate *NFBRequestDate(id request) {
 - (NSUInteger)count { return self.records.count; }
 - (NSArray<NSString *> *)appIDs { return self.pins.array; }
 - (void)pinApp:(NSString *)appID { if (appID.length) [self.pins addObject:appID]; }
+- (void)promoteApp:(NSString *)appID {
+    if (![self.pins containsObject:appID]) return;
+    [self.pins removeObject:appID]; [self.pins insertObject:appID atIndex:0];
+}
 - (BOOL)putApp:(NSString *)appID notification:(NSString *)notificationID request:(id)request destination:(id)destination {
     if (!appID.length || !notificationID.length || !request || !destination) return NO;
     NSDate *date = NFBRequestDate(request);
