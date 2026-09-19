@@ -1,4 +1,4 @@
-# 通知悬浮气泡 · 0.10.0 测试工程
+# 通知悬浮气泡 · 0.11.0 测试工程
 
 目标：iPhone 14、iOS 16.0.3、Dopamine RootHide，搭配 TrollOpenJB 1.5.2 隐根版。
 
@@ -12,7 +12,7 @@
 - Makefile、control、README.md。
 - **新增 NotifyBubblesBack.plist，不能遗漏。**
 
-另外将 `.github/workflows/build.yml` 替换为新版。提交后在 Actions 查看最新构建，成功后下载 Artifacts 中 NotifyBubbles-RootHide，解压安装 0.10.0 的 deb 并重启桌面。
+另外将 `.github/workflows/build.yml` 替换为新版。提交后在 Actions 查看最新构建，成功后下载 Artifacts 中 NotifyBubbles-RootHide，解压安装 0.11.0 的 deb 并重启桌面。
 
 **本版包含 App 内返回组件 NotifyBubblesBack（点击触发）。** 单击当前浮窗气泡返回 App 内上一页（等同边缘右滑返回）；双击切换横竖屏；长按关闭分屏窗口。需允许插件在目标 App 内注入，并彻底关闭、重新打开目标 App。
 
@@ -48,6 +48,8 @@
 自 0.9.0 起修复分屏下的窗口发现：TrollOpen 分屏时目标 App 场景可能处于后台（activationState 非 Foreground），且窗口可能被重新挂载到悬浮容器、level 抬高。返回组件不再按「前台场景 + 窗口层级」过滤，改为遍历本进程所有可见窗口、优先命中带导航栈或可返回 WebView 的窗口，并在找不到时降级到 keyWindow / 首个候选窗口逐一遍历。同时放宽 WebView 的 window 关系检查。
 
 自 0.10.0 起：为 `NotifyBubblesBack` 补齐 `LIBRARIES = substrate`（缺失会导致 roothide/ellekit 不按 tweak 注入，constructor 不在目标 App 执行）；返回组件构造函数和每次请求处理都输出 `[NotifyBubblesBack]` 日志（注入确认、请求到达、窗口候选数、导航栈判定、pop 结果），便于真机用 `log stream` 定位断点；双击手势限定为「仅当前分屏浮窗对应的气泡」才切换横竖屏（此前任意气泡双击都会切换当前浮窗）。
+
+自 0.11.0 起：确认 TrollOpen 分屏下「边缘右滑返回」可正常返回，而直接 `popViewControllerAnimated:` 找不到导航栈。诊断日志增强——打印每个 scene 的 activationState、每个候选窗口的 rootViewController 类名/windowLevel/isKeyWindow，并合并 `UIApplication.windows` 全局窗口列表（怀疑 TrollOpen 把 App 内容窗口挂到了 scene 之外），以及 `visible.parentViewController` 链。用于真机定位「分屏下窗口/导航栈到底在哪」。
 
 支持标准 UINavigationController 的普通返回，以及 WKWebView 网页历史返回。已处于第一页、页面正在转场、出现警告对话框、导航栏有自定义左按钮或无法判断目标窗口时，不猜测操作并提示。Flutter、游戏、自定义导航等可能需要逐 App 适配；不保证所有 App 通用，也不把“退出桌面”当作返回。
 

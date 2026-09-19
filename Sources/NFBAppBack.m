@@ -39,18 +39,37 @@ static BOOL NFBPerformBack(void) {
     // that actually carries a navigation stack or a web view (the app's content),
     // falling back to the key window.
     NSMutableArray<UIWindow *> *candidates = [NSMutableArray array];
-    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+    // Log scene states to reveal what TrollOpen does to the app's scene.
+    NSArray<UIScene *> *scenes = UIApplication.sharedApplication.connectedScenes;
+    for (UIScene *scene in scenes) {
         if (![scene isKindOfClass:UIWindowScene.class]) continue;
+        NSLog(@"[NotifyBubblesBack] scene %@ activationState=%ld windows=%lu",
+              NSStringFromClass(scene.class), (long)scene.activationState,
+              (unsigned long)((UIWindowScene *)scene).windows.count);
         for (UIWindow *window in ((UIWindowScene *)scene).windows) {
             if (window.hidden || window.alpha < 0.01 || !window.rootViewController) continue;
             [candidates addObject:window];
+            NSLog(@"[NotifyBubblesBack]   window %@ root=%@ level=%.1f key=%d",
+                  window, NSStringFromClass(window.rootViewController.class),
+                  window.windowLevel, window.isKeyWindow);
         }
+    }
+    // TrollOpen may host the app's content window OUTSIDE its own scene. The
+    // global UIApplication.windows list can still see it. Merge any window not
+    // already collected (dedupe by pointer).
+    for (UIWindow *window in UIApplication.sharedApplication.windows) {
+        if (window.hidden || window.alpha < 0.01 || !window.rootViewController) continue;
+        if ([candidates containsObject:window]) continue;
+        [candidates addObject:window];
+        NSLog(@"[NotifyBubblesBack] extra app window %@ root=%@ level=%.1f key=%d",
+              window, NSStringFromClass(window.rootViewController.class),
+              window.windowLevel, window.isKeyWindow);
     }
     if (candidates.count == 0) {
         NSLog(@"[NotifyBubblesBack] no visible window candidates (scene state filter removed)");
         return NO;
     }
-    NSLog(@"[NotifyBubblesBack] %lu window candidates", (unsigned long)candidates.count);
+    NSLog(@"[NotifyBubblesBack] %lu window candidates total", (unsigned long)candidates.count);
     // Prefer the window whose visible controller owns a navigation stack with a
     // real back item, or that hosts a web view that can go back. Only fall back to
     // the key window or the first candidate when none carries a back action.
@@ -103,9 +122,12 @@ static BOOL NFBPerformBack(void) {
                   (unsigned long)nav.viewControllers.count);
             return popped;
         }
-        NSLog(@"[NotifyBubblesBack] window %@ visible=%@ navCount=%lu no-nav",
-              candidate, NSStringFromClass(visible.class),
-              (unsigned long)(nav ? nav.viewControllers.count : 0));
+        NSLog(@"[NotifyBubblesBack] window %@ root=%@ visible=%@ navCount=%lu parent=%@ no-nav",
+              candidate,
+              NSStringFromClass(candidate.rootViewController.class),
+              NSStringFromClass(visible.class),
+              (unsigned long)(nav ? nav.viewControllers.count : 0),
+              visible.parentViewController ? NSStringFromClass(visible.parentViewController.class) : @"<nil>");
         WKWebView *web = NFBBackWebView(visible.viewIfLoaded, 0);
         if (web) { [web goBack]; NSLog(@"[NotifyBubblesBack] webview goBack OK"); return YES; }
     }
