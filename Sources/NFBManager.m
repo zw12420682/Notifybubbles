@@ -463,11 +463,11 @@ static double NFBNumber(NSString *key, double fallback) {
     NFBBubble *button = (NFBBubble *)gesture.view;
     if (self.buttons[button.appID] != button) return;
     // Long press on the bubble while its app is the current floating window:
-    // forward the green bar's tap action (fullscreen) to TrollOpen.
+    // close that floating window through TrollOpen.
     // Non-floating apps keep the original burst-close.
     if ([NFBTrollVisibleApp() isEqualToString:button.appID]) {
-        if (!NFBFullscreenCurrentFloatingWindow())
-            [self showOpenNotice:@"TrollOpen 全屏接口不可用，请确认已安装适配的 1.5.2 隐根版并重启桌面"];
+        if (!NFBCloseCurrentFloatingWindow())
+            [self showOpenNotice:@"TrollOpen 关闭分屏接口不可用，请确认已安装适配的 1.5.2 隐根版并重启桌面"];
         return;
     }
     // Suppress touch-up activation while the queued burst removes this control.
@@ -487,9 +487,9 @@ static double NFBNumber(NSString *key, double fallback) {
     NFBBubble *button = (NFBBubble *)gesture.view;
     if (self.buttons[button.appID] != button) return;
     // Double tap toggles the current floating window's orientation (portrait
-    // <-> landscape), mirroring the green bar's long-press "rotate" action.
+    // <-> landscape), matching the green bar's long-press "rotate" action.
     if (!NFBToggleOrientation())
-        [self showOpenNotice:@"TrollOpen 旋转接口不可用，请确认已安装适配的 1.5.2 隐根版并重启桌面"];
+        [self showOpenNotice:@"TrollOpen 横竖屏切换接口不可用，请确认已安装适配的 1.5.2 隐根版并重启桌面"];
 }
 - (void)burstBubble:(NFBBubble *)button {
     if (UIAccessibilityIsReduceMotionEnabled()) {

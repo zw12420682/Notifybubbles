@@ -24,68 +24,60 @@ BOOL NFBSplitTrollFrontmostApp(void) {
     }
 }
 
-// Fullscreen the current floating window. Unlike splitFrontmostApplication
-// (a class method on TOJBBarGestureBridge), fullscreenCurrentFloatingWindow is
-// an INSTANCE method on the floating window object (TOJBClass012) returned by
+// Close the current floating window. closeCurrentFloatingWindow is an INSTANCE
+// method on the floating window object (TOJBClass012) returned by
 // +[TOJBBarGestureBridge currentVisibleFloatingWindow]. Call it on the instance.
-BOOL NFBFullscreenCurrentFloatingWindow(void) {
+BOOL NFBCloseCurrentFloatingWindow(void) {
     if (!NSThread.isMainThread) return NO;
     @try {
         id window = NFBTrollObject(NSClassFromString(@"TOJBBarGestureBridge"), @"currentVisibleFloatingWindow");
         if (!window) return NO;
-        SEL selector = NSSelectorFromString(@"fullscreenCurrentFloatingWindow");
+        SEL selector = NSSelectorFromString(@"closeCurrentFloatingWindow");
         if (![window respondsToSelector:selector]) return NO;
         NSMethodSignature *sig = [window methodSignatureForSelector:selector];
         if (!sig || sig.numberOfArguments != 2 || strcmp(sig.methodReturnType, @encode(void)) != 0) return NO;
         ((void (*)(id, SEL))objc_msgSend)(window, selector);
         return YES;
     } @catch (__unused NSException *error) {
-        NSLog(@"[NotifyBubbles] TrollOpen fullscreen failed");
+        NSLog(@"[NotifyBubbles] TrollOpen close failed");
         return NO;
     }
 }
 
-// Toggle orientation (the green bar's long-press "rotate" action). Reverse
-// engineering of the 1.3.7 binary (un-obfuscated class names) confirmed that
-// handleBarGestureCommand: is an INSTANCE method dispatched on the bridge
-// singleton (sharedInstance), NOT a class method on TOJBBarGestureBridge.
-// The orientation toggle is surfaced as the cmd_toggle_orientation command.
+// Toggle the current floating window orientation (portrait <-> landscape).
+// The official 1.3.7 binary exposes (on TOJBClass012) a read-only isLandscape
+// BOOL and setContainerOrientation: taking a UIInterfaceOrientation integer.
+// 1=Portrait, 3=LandscapeRight, 4=LandscapeLeft. This is the real interface
+// behind the green bar's long-press "rotate" action.
 BOOL NFBToggleOrientation(void) {
     if (!NSThread.isMainThread) return NO;
-    Class bridge = NSClassFromString(@"TOJBBarGestureBridge");
-    SEL cmd = NSSelectorFromString(@"handleBarGestureCommand:");
-    NSString *token = @"cmd_toggle_orientation";
-    // Helper: verify a (void)handleBarGestureCommand:(id) signature and send it.
-    BOOL (^sendCommand)(id) = ^BOOL(id target) {
-        if (!target) return NO;
-        @try {
-            if (![target respondsToSelector:cmd]) return NO;
-            NSMethodSignature *sig = [target methodSignatureForSelector:cmd];
-            if (!sig || sig.numberOfArguments != 3 || sig.methodReturnType[0] != 'v' ||
-                [sig getArgumentTypeAtIndex:2][0] != '@') return NO;
-            ((void (*)(id, SEL, id))objc_msgSend)(target, cmd, token);
-            return YES;
-        } @catch (__unused NSException *error) { return NO; }
-    };
-    // Path 1: instance method on the bridge singleton (most likely).
-    for (NSString *acc in @[@"sharedInstance", @"sharedManager", @"sharedInstanceIfExists"]) {
-        id singleton = NFBTrollObject(bridge, acc);
-        if (sendCommand(singleton)) return YES;
-    }
-    // Path 2: class method fallback (older builds may expose it statically).
-    if (sendCommand(bridge)) return YES;
-    // Path 3: rotate the current floating window instance directly.
     @try {
-        id window = NFBTrollObject(bridge, @"currentVisibleFloatingWindow");
-        if (window) {
-            for (NSString *name in @[@"rotateWindow", @"rotate", @"rotateToLandscape", @"toggleOrientation"]) {
-                SEL sel = NSSelectorFromString(name);
-                if (![window respondsToSelector:sel]) continue;
-                NSMethodSignature *sig = [window methodSignatureForSelector:sel];
-                if (!sig || sig.numberOfArguments != 2 || sig.methodReturnType[0] != 'v') continue;
-                ((void (*)(id, SEL))objc_msgSend)(window, sel);
-                return YES;
+        id window = NFBTrollObject(NSClassFromString(@"TOJBBarGestureBridge"), @"currentVisibleFloatingWindow");
+        if (!window) return NO;
+        // Read current landscape state (isLandscape, read-only BOOL).
+        BOOL landscape = NO;
+        SEL isLand = NSSelectorFromString(@"isLandscape");
+        @try {
+            if ([window respondsToSelector:isLand]) {
+                NSMethodSignature *sig = [window methodSignatureForSelector:isLand];
+                if (sig && sig.numberOfArguments == 2 &&
+                    (sig.methodReturnType[0] == 'B' || sig.methodReturnType[0] == 'c'))
+                    landscape = ((BOOL (*)(id, SEL))objc_msgSend)(window, isLand);
             }
+        } @catch (__unused NSException *e) {}
+        // Target the opposite orientation.
+        NSInteger target = landscape ? 1 /* UIInterfaceOrientationPortrait */
+                                     : 3 /* UIInterfaceOrientationLandscapeRight */;
+        // Drive it through setContainerOrientation: (primary) or setDeviceOrientation: (fallback).
+        for (NSString *name in @[@"setContainerOrientation:", @"setDeviceOrientation:"]) {
+            SEL sel = NSSelectorFromString(name);
+            if (![window respondsToSelector:sel]) continue;
+            NSMethodSignature *sig = [window methodSignatureForSelector:sel];
+            if (!sig || sig.numberOfArguments != 3 || sig.methodReturnType[0] != 'v') continue;
+            char arg = [sig getArgumentTypeAtIndex:2][0];
+            if (arg != 'q' && arg != 'i' && arg != 'l' && arg != 's') continue;
+            ((void (*)(id, SEL, NSInteger))objc_msgSend)(window, sel, target);
+            return YES;
         }
     } @catch (__unused NSException *error) {}
     NSLog(@"[NotifyBubbles] TrollOpen orientation toggle unavailable");

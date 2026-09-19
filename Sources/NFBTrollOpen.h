@@ -6,12 +6,12 @@ BOOL NFBSplitTrollFrontmostApp(void);
 
 NSString *NFBTrollVisibleApp(void);
 
-// Trigger the green bar's tap action (fullscreen the current floating window).
-// Returns YES when the bridge accepted the request; a NO means the interface is
-// unavailable and the caller should fall back gracefully.
-BOOL NFBFullscreenCurrentFloatingWindow(void);
+// Close the current floating window. Calls the floating window's
+// closeCurrentFloatingWindow instance method (verified in both 1.3.7 and 1.5.2).
+BOOL NFBCloseCurrentFloatingWindow(void);
 
-// Toggle the floating window orientation (portrait <-> landscape), matching the
-// green bar's long-press "rotate" action. Best-effort: returns YES only when a
-// compatible TrollOpen command interface was actually invoked.
+// Toggle the current floating window orientation (portrait <-> landscape).
+// Reads isLandscape and drives setContainerOrientation: on the floating window
+// instance (TOJBClass012), the real "rotate" interface behind the green bar's
+// long-press action.
 BOOL NFBToggleOrientation(void);
