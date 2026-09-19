@@ -56,8 +56,14 @@ static BOOL NFBPerformBack(void) {
     }
     // TrollOpen may host the app's content window OUTSIDE its own scene. The
     // global UIApplication.windows list can still see it. Merge any window not
-    // already collected (dedupe by pointer).
-    for (UIWindow *window in UIApplication.sharedApplication.windows) {
+    // already collected (dedupe by pointer). The property is deprecated since
+    // iOS 15 and theos builds with -Werror, but it remains fully functional on
+    // iOS 16; silence the warning for this deliberate legacy-API use.
+    #pragma clang diagnostic push
+    #pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    NSArray<UIWindow *> *globalWindows = UIApplication.sharedApplication.windows;
+    #pragma clang diagnostic pop
+    for (UIWindow *window in globalWindows) {
         if (window.hidden || window.alpha < 0.01 || !window.rootViewController) continue;
         if ([candidates containsObject:window]) continue;
         [candidates addObject:window];

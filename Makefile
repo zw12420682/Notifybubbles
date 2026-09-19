@@ -12,7 +12,7 @@ NotifyBubbles_FRAMEWORKS = UIKit Foundation QuartzCore UserNotifications
 NotifyBubbles_LIBRARIES = substrate
 
 NotifyBubblesBack_FILES = Sources/NFBAppBack.m
-NotifyBubblesBack_CFLAGS = -fobjc-arc -Wall -Wextra
+NotifyBubblesBack_CFLAGS = -fobjc-arc -Wall -Wextra -Wno-error=deprecated-declarations
 NotifyBubblesBack_FRAMEWORKS = UIKit Foundation WebKit
 NotifyBubblesBack_LIBRARIES = substrate
 
