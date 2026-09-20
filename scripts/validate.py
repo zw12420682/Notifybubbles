@@ -32,10 +32,10 @@ assert not control_bytes.startswith(b'\xef\xbb\xbf'), 'control must be UTF-8 wit
 control = dict(line.split(': ', 1) for line in control_bytes.decode('utf-8').splitlines() if ': ' in line)
 assert control['Architecture'] == 'iphoneos-arm64e'
 assert 'THEOS_PACKAGE_SCHEME = roothide' in (root / 'Makefile').read_text()
-assert 'Sources/NFBSwitcher.m' in (root / 'Makefile').read_text(), 'Update the root Makefile for 0.22.0.'
+assert 'Sources/NFBSwitcher.m' in (root / 'Makefile').read_text(), 'Update the root Makefile for 0.21.0.'
+assert 'Sources/NFBKeyboard.m' in (root / 'Makefile').read_text(), 'Update the root Makefile for the keyboard watcher.'
 assert 'Sources/NFBTrollOpen.m' in (root / 'Makefile').read_text(), 'Update the root Makefile for TrollOpen integration.'
 assert 'Sources/NFBAppExit.m' in (root / 'Makefile').read_text(), 'Update the root Makefile for the exit helper.'
-assert 'Sources/NFBKeyboard.m' in (root / 'Makefile').read_text(), 'Update the root Makefile for the keyboard watcher.'
 # The app-side back helper is retired: it filtered on com.apple.UIKit, so it was
 # loaded into every app, and no gesture drives it any more.
 assert 'NotifyBubblesBack_FILES' not in (root / 'Makefile').read_text(), \
