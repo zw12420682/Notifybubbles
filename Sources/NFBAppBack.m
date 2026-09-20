@@ -78,7 +78,7 @@ static BOOL NFBPerformBack(void) {
                     scene.session ? NSStringFromClass(scene.session.class) : @"<nil>");
         for (UIWindow *window in ((UIWindowScene *)scene).windows) {
             NFBDebugLog(@"  scene window %p hidden=%d alpha=%.2f level=%.1f key=%d root=%@",
-                        (void *)window, window.hidden, window.alpha, window.windowLevel, window.isKeyWindow,
+                        (__bridge void *)window, window.hidden, window.alpha, window.windowLevel, window.isKeyWindow,
                         window.rootViewController ? NSStringFromClass(window.rootViewController.class) : @"<nil>");
             if (window.hidden || window.alpha < 0.01 || !window.rootViewController) continue;
             [candidates addObject:window];
@@ -96,7 +96,7 @@ static BOOL NFBPerformBack(void) {
     NFBDebugLog(@"global UIApplication.windows=%lu", (unsigned long)globalWindows.count);
     for (UIWindow *window in globalWindows) {
         NFBDebugLog(@"  global window %p hidden=%d alpha=%.2f level=%.1f key=%d root=%@",
-                    (void *)window, window.hidden, window.alpha, window.windowLevel, window.isKeyWindow,
+                    (__bridge void *)window, window.hidden, window.alpha, window.windowLevel, window.isKeyWindow,
                     window.rootViewController ? NSStringFromClass(window.rootViewController.class) : @"<nil>");
         if (window.hidden || window.alpha < 0.01 || !window.rootViewController) continue;
         if ([candidates containsObject:window]) continue;
@@ -127,7 +127,7 @@ static BOOL NFBPerformBack(void) {
         }
     }
     if (!window) window = candidates.firstObject;
-    NFBDebugLog(@"preferred window=%p root=%@", (void *)window,
+    NFBDebugLog(@"preferred window=%p root=%@", (__bridge void *)window,
                 window.rootViewController ? NSStringFromClass(window.rootViewController.class) : @"<nil>");
     NFBDumpControllerTree(window.rootViewController, 0);
     // Try the preferred window first, then fall back to every other candidate.
@@ -141,7 +141,7 @@ static BOOL NFBPerformBack(void) {
     for (UIWindow *candidate in ordered) {
         UIViewController *visible = NFBVisibleController(candidate.rootViewController);
         if (!visible || visible.transitionCoordinator || [visible isKindOfClass:UIAlertController.class]) {
-            NFBDebugLog(@"skip window %p: visible=%@ transition=%d alert=%d", (void *)candidate,
+            NFBDebugLog(@"skip window %p: visible=%@ transition=%d alert=%d", (__bridge void *)candidate,
                         visible ? NSStringFromClass(visible.class) : @"<nil>",
                         visible && visible.transitionCoordinator != nil,
                         [visible isKindOfClass:UIAlertController.class]);
@@ -167,7 +167,7 @@ static BOOL NFBPerformBack(void) {
         // though a navigation stack with back history still exists in the tree.
         NSMutableArray<UINavigationController *> *navs = [NSMutableArray array];
         NFBCollectNavigationControllers(candidate.rootViewController, navs, 0);
-        NFBDebugLog(@"deep nav search on window %p: found=%lu", (void *)candidate, (unsigned long)navs.count);
+        NFBDebugLog(@"deep nav search on window %p: found=%lu", (__bridge void *)candidate, (unsigned long)navs.count);
         for (UINavigationController *found in navs) {
             NFBDebugLog(@"  nav %@ stack=%lu visible=%@ transitioning=%d",
                         NSStringFromClass(found.class), (unsigned long)found.viewControllers.count,
