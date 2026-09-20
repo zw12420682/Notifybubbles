@@ -16,10 +16,11 @@ static const NSTimeInterval NFBHold = 1.0;
 // possible second tap: the recognizer fires on touch-up with no arbitration lag.
 // This guard only swallows the accidental repeat that follows a real double tap.
 static const NSTimeInterval NFBGestureCooldown = 0.25;
-// While an app sits in the split view its bubble stays fully opaque and every
-// other bubble drops to this fraction, so the split-view app reads as the active
-// one without being pulled to the top of the row.
-static const CGFloat NFBFloatingDim = 0.5;
+// While an app sits in the split view its bubble stays fully opaque (alpha 1.0,
+// independent of the user's opacity slider) and every other bubble drops to this
+// fraction, so the split-view app reads as the active one without being pulled
+// to the top of the row.
+static const CGFloat NFBFloatingDim = 0.3;
 // Vertical position (0 = top, 1 = bottom) the whole row shifts to while an app
 // is in the split view, so it clears the floating window. Restores on exit.
 static const CGFloat NFBFloatingPosition = 0.80;
@@ -561,8 +562,14 @@ static double NFBNumber(NSString *key, double fallback) {
         // In split view the owning app stays fully opaque while the rest dim, so
         // it reads as the active bubble without being reordered.
         CGFloat alpha = self.iconOpacity;
-        if (floatingApp.length > 0 && ![floatingApp isEqualToString:appID]) {
-            alpha = self.iconOpacity * NFBFloatingDim;
+        if (floatingApp.length > 0) {
+            if ([floatingApp isEqualToString:appID]) {
+                // The split-view app's bubble must read clearly even when the
+                // user has the opacity slider down low, so pin it to full alpha.
+                alpha = 1.0;
+            } else {
+                alpha = self.iconOpacity * NFBFloatingDim;
+            }
         }
         BOOL changed = fresh || !CGRectEqualToRect(button.bounds, targetBounds) ||
             !CGPointEqualToPoint(button.center, targetCenter) ||
@@ -613,10 +620,17 @@ static double NFBNumber(NSString *key, double fallback) {
     if (gesture.state != UIGestureRecognizerStateBegan) return;
     NFBBubble *button = (NFBBubble *)gesture.view;
     if (self.buttons[button.appID] != button) return;
-    // Long press is deliberately inert on the bubble that owns the floating
-    // window. On every other bubble it bursts the icon away AND quits the app
-    // from the background — what removing that card in the App Switcher does.
-    if ([self isFloatingBubble:button]) return;
+    // Long press on the bubble that owns the floating window shrinks that window
+    // back to its mini size (TrollOpen's "缩小浮窗"), instead of terminating it.
+    if ([self isFloatingBubble:button]) {
+        if (![self acceptGesture]) return;
+        NSString *app = button.appID;
+        NFBDebugLog(@"gesture: long press on floating app %@ -> minimize", app);
+        [self beginRetracting:app];
+        if (!NFBMinimizeCurrentFloatingWindow())
+            [self showOpenNotice:@"TrollOpen 缩小浮窗接口不可用，请确认已安装适配的 1.5.2 隐根版并重启桌面"];
+        return;
+    }
     if (![self acceptGesture]) return;
     NSString *app = button.appID;
     // Suppress touch-up activation while the queued burst removes this control.

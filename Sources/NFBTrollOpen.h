@@ -17,3 +17,8 @@ BOOL NFBCloseCurrentFloatingWindow(void);
 // the two findings disagree on this firmware, so both are probed: the bridge
 // class method first, then the instance method.
 BOOL NFBFullscreenCurrentFloatingWindow(void);
+
+// Shrink the current floating window to its mini size. Like fullscreen, the
+// selector's owner drifted between the bridge class and the window instance
+// across builds, so both are probed (class method first, then instance).
+BOOL NFBMinimizeCurrentFloatingWindow(void);

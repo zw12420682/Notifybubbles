@@ -129,6 +129,47 @@ BOOL NFBFullscreenCurrentFloatingWindow(void) {
     }
 }
 
+// Shrink the current floating window to its mini size. The device-side method
+// dump lists minimizeCurrentFloatingWindow on the bridge metaclass, but the
+// owner of these control selectors has drifted across builds before, so probe
+// the class method first and fall back to the window instance — the same
+// dual-path shape fullscreen uses.
+BOOL NFBMinimizeCurrentFloatingWindow(void) {
+    if (!NSThread.isMainThread) return NO;
+    @try {
+        Class bridge = NSClassFromString(@"TOJBBarGestureBridge");
+        SEL selector = NSSelectorFromString(@"minimizeCurrentFloatingWindow");
+        if (NFBCallSimple(bridge, selector)) {
+            NFBDebugLog(@"minimize: invoked +[TOJBBarGestureBridge minimizeCurrentFloatingWindow]");
+            return YES;
+        }
+        id window = NFBTrollObject(bridge, @"currentVisibleFloatingWindow");
+        NFBDumpFloatingWindowInterfaces(window);
+        if (NFBCallSimple(window, selector)) {
+            NFBDebugLog(@"minimize: invoked -[%@ minimizeCurrentFloatingWindow]",
+                        NSStringFromClass([window class]));
+            return YES;
+        }
+        // Some builds split the action into "shrink" rather than "minimize".
+        SEL shrink = NSSelectorFromString(@"shrinkFloatingWindows");
+        if (NFBCallSimple(bridge, shrink)) {
+            NFBDebugLog(@"minimize: invoked +[TOJBBarGestureBridge shrinkFloatingWindows]");
+            return YES;
+        }
+        if (NFBCallSimple(window, shrink)) {
+            NFBDebugLog(@"minimize: invoked -[%@ shrinkFloatingWindows]",
+                        NSStringFromClass([window class]));
+            return YES;
+        }
+        NFBDebugLog(@"minimize: no usable path (bridge class=%d window=%d)",
+                    bridge != nil, window != nil);
+        return NO;
+    } @catch (__unused NSException *error) {
+        NFBDebugLog(@"TrollOpen minimize failed: %@", error);
+        return NO;
+    }
+}
+
 static BOOL NFBTrollSignature(id target, SEL selector, BOOL hasFlag) {
     if (![target respondsToSelector:selector]) return NO;
     NSMethodSignature *sig = [target methodSignatureForSelector:selector];
