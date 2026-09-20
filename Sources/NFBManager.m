@@ -20,6 +20,9 @@ static const NSTimeInterval NFBGestureCooldown = 0.25;
 // other bubble drops to this fraction, so the split-view app reads as the active
 // one without being pulled to the top of the row.
 static const CGFloat NFBFloatingDim = 0.5;
+// Vertical position (0 = top, 1 = bottom) the whole row shifts to while an app
+// is in the split view, so it clears the floating window. Restores on exit.
+static const CGFloat NFBFloatingPosition = 0.80;
 #import <QuartzCore/QuartzCore.h>
 
 static CFStringRef const NFBDomain = CFSTR("local.notifybubbles");
@@ -501,8 +504,12 @@ static double NFBNumber(NSString *key, double fallback) {
     CGFloat step = side + 4;
     CGFloat available = MAX(side, bounds.size.height - top - MAX(safe.bottom, 20) - 20);
     CGFloat height = MIN(available, apps.count * step);
+    // While an app is in the split view the whole row shifts down to clear the
+    // floating window (NFBFloatingPosition), then returns to the user's slider
+    // setting once the split view closes.
+    CGFloat position = floatingApp.length > 0 ? NFBFloatingPosition : self.verticalPosition;
     // Use the actual screen edge, not safeArea.right, for exactly half exposure.
-    CGRect railFrame = CGRectMake(bounds.size.width - side, top + (available - height) * self.verticalPosition, side, height);
+    CGRect railFrame = CGRectMake(bounds.size.width - side, top + (available - height) * position, side, height);
     if (!CGRectEqualToRect(self.rail.frame, railFrame)) {
         if (CGRectIsEmpty(self.rail.frame)) self.rail.frame = railFrame;
         else [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : NFBMotion delay:0

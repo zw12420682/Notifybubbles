@@ -22,7 +22,7 @@ int main(void) {
         [s putApp:@"chat" notification:@"new" request:Request(300) destination:destination];
         [s putApp:@"mail" notification:@"1" request:Request(250) destination:destination];
         [s putApp:@"chat" notification:@"old" request:Request(100) destination:destination];
-        Check([s.appIDs isEqual:@[@"chat", @"mail", @"switcherOnly"]], @"Notification moves its app to first position");
+        Check([s.appIDs isEqual:@[@"switcherOnly", @"chat", @"mail"]], @"Notification keeps its app's existing position");
         Check([[s latestForApp:@"chat"].notificationID isEqual:@"new"], @"Queue sorts by notification timestamp, not delivery timing");
         Check(![s putApp:@"chat" notification:@"new" request:Request(300) destination:destination] && s.count == 3, @"Duplicate system delivery is not a second notification");
         [s promoteApp:@"mail"];

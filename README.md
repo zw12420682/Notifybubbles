@@ -1,4 +1,4 @@
-# 通知悬浮气泡 · 0.25.0 测试工程
+# 通知悬浮气泡 · 0.27.0 测试工程
 
 目标：iPhone 14、iOS 16.0.3、Dopamine RootHide，搭配 TrollOpenJB 1.5.2 隐根版。
 
@@ -12,7 +12,7 @@
 - Makefile、control、README.md。
 - `NotifyBubbles.plist`（注入过滤器）。`NotifyBubblesBack.plist` 已随返回组件一起停用，不再需要上传。
 
-另外将 `.github/workflows/build.yml` 替换为新版。提交后在 Actions 查看最新构建，成功后下载 Artifacts 中 NotifyBubbles-RootHide，解压安装 0.25.0 的 deb 并重启桌面。
+另外将 `.github/workflows/build.yml` 替换为新版。提交后在 Actions 查看最新构建，成功后下载 Artifacts 中 NotifyBubbles-RootHide，解压安装 0.27.0 的 deb 并重启桌面。
 
 **本版只注入 SpringBoard。** 单击关闭分屏窗口、长按退出 App 都在桌面进程内完成，不再需要目标 App 注入，因此无需在 App 内允许插件，也不用为了生效而重启目标 App。
 
@@ -70,6 +70,10 @@
 自 0.24.0 起，分屏高亮方式从「跳到第一位」改为「透明度区分」：有 App 处于 TrollOpen 分屏时，该 App 的气泡**保持全不透明**，其余气泡变淡（`NFBFloatingDim = 0.5`），**位置不再变动**。只有普通前台 App（非分屏）才会被提升到列表首位。
 
 自 0.25.0 起，**新消息也不再置顶**：收到新通知时，该 App 的气泡保持原有位置不动（新出现的 App 追加到列表末尾），不再跳到第一位。气泡顺序只由「前台 App 提升」决定。
+
+0.26.0 同步更新了 `Tests/StoreTests.m` 的排序断言以匹配上述新行为（旧断言「Notification moves its app to first position」会使 Actions 构建失败）。
+
+自 0.27.0 起，分屏时整排气泡的**纵向位置**自动调整到 0.80（`NFBFloatingPosition`，更靠屏幕底部），避免遮挡悬浮窗；分屏结束后恢复用户在设置里「整组图标上下位置」滑杆所设的原始位置。
 
 ## 返回功能范围（0.18.0 起停用）
 
