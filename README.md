@@ -1,4 +1,4 @@
-# 通知悬浮气泡 · 0.21.0 测试工程
+# 通知悬浮气泡 · 0.22.0 测试工程
 
 目标：iPhone 14、iOS 16.0.3、Dopamine RootHide，搭配 TrollOpenJB 1.5.2 隐根版。
 
@@ -12,7 +12,7 @@
 - Makefile、control、README.md。
 - `NotifyBubbles.plist`（注入过滤器）。`NotifyBubblesBack.plist` 已随返回组件一起停用，不再需要上传。
 
-另外将 `.github/workflows/build.yml` 替换为新版。提交后在 Actions 查看最新构建，成功后下载 Artifacts 中 NotifyBubbles-RootHide，解压安装 0.21.0 的 deb 并重启桌面。
+另外将 `.github/workflows/build.yml` 替换为新版。提交后在 Actions 查看最新构建，成功后下载 Artifacts 中 NotifyBubbles-RootHide，解压安装 0.22.0 的 deb 并重启桌面。
 
 **本版只注入 SpringBoard。** 单击关闭分屏窗口、长按退出 App 都在桌面进程内完成，不再需要目标 App 注入，因此无需在 App 内允许插件，也不用为了生效而重启目标 App。
 
@@ -60,6 +60,8 @@
 1. **键盘弹出 → 全部缩回**（最高，覆盖下面两条）。
 2. **有 App 处于 TrollOpen 分屏 → 整排气泡全部伸出且不收回**（此前只有占据浮窗的那个 App 的气泡伸出）。
 3. 其余情况按各自的 `expandedUntil` 计时（未读到达后伸出 `NFBHold = 1.0` 秒）。
+
+自 0.22.0 起补上键盘的**恢复**：键盘弹出时缩回的气泡会被记下，键盘收起后自动重新弹出——分屏那条靠 `floatingApp` 自然恢复，未读计时那条则把「键盘弹出瞬间仍在计时」的气泡暂存起来，键盘收起时用 `extendApp` 重新伸出，避免它们在打字期间悄悄过期。
 
 键盘检测在 SpringBoard 进程内完成（`Sources/NFBKeyboard.m`）。第三方 App 的键盘窗口（`UIRemoteKeyboardWindow`）位于 App 自己的进程，SpringBoard 收不到 `UIKeyboardWillShowNotification`，因此同时取三个信号源，任一为真即判定键盘弹出：`UIKeyboardWillShow/DidShow` 通知、SpringBoard 自身窗口中可见的 `RemoteKeyboard`/`TextEffects` 类窗口（要求 `hidden == NO` 且 `alpha > 0.01`）、以及直接探测 `SBUIController` 的 `isKeyboardVisible`/`keyboardVisible`/`isKeyboardOnScreen`。每次状态翻转会向调试日志写 `keyboard: up/down (notified=? window=? system=?)`，真机上一看即知哪个源生效。
 

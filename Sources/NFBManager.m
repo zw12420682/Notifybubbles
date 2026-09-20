@@ -124,6 +124,10 @@ static double NFBNumber(NSString *key, double fallback) {
 // picked up in ~one frame rather than on the next 0.5s poll.
 @property(nonatomic, strong) NSTimer *floatingWatch;
 @property(nonatomic, copy) NSString *watchedFloating;
+// Previous keyboard state, so refresh can spot the up/down edges.
+@property(nonatomic) BOOL keyboardUp;
+// Bubbles that were out when the keyboard rose; restored when it falls.
+@property(nonatomic, strong) NSMutableSet<NSString *> *keyboardSuspended;
 - (void)refresh;
 - (void)beginRetracting:(NSString *)app;
 - (void)syncFloatingWatch:(NSString *)floating;
@@ -160,6 +164,7 @@ static double NFBNumber(NSString *key, double fallback) {
         _generations = [NSMutableDictionary dictionary];
         _needsReveal = [NSMutableSet set];
         _lastBadges = [NSMutableDictionary dictionary];
+        _keyboardSuspended = [NSMutableSet set];
         __weak NFBManager *weakSelf = self;
         NFBKeyboardInstall(^{ [weakSelf refresh]; });
         [self reloadPreferences];
@@ -413,8 +418,30 @@ static double NFBNumber(NSString *key, double fallback) {
     // Keep the fast watcher in step with reality every time we recompute layout.
     [self syncFloatingWatch:floatingApp];
     // A keyboard outranks everything else: typing is the one moment the bubbles
-    // must be out of the way, so it pulls them all back in no matter what.
+    // must be out of the way, so it pulls them all back in no matter what. The
+    // ones it pulled in are remembered and popped back out the moment typing
+    // ends (split-view bubbles come back on their own via floatingApp below).
     BOOL keyboardUp = NFBKeyboardVisible();
+    if (keyboardUp != self.keyboardUp) {
+        if (keyboardUp) {
+            // Keyboard just rose: snapshot every bubble still riding its unread
+            // timer, so it can be restored instead of silently expiring while
+            // the user is typing.
+            [self.keyboardSuspended removeAllObjects];
+            for (NSString *app in self.store.appIDs) {
+                if ([self.expandedUntil[app] doubleValue] > CACurrentMediaTime()) {
+                    [self.keyboardSuspended addObject:app];
+                }
+            }
+        } else {
+            // Keyboard just fell: re-pop the bubbles it pulled in.
+            for (NSString *app in [self.keyboardSuspended copy]) {
+                if (![self.retracting containsObject:app] && [self.store.appIDs containsObject:app]) [self extendApp:app];
+            }
+            [self.keyboardSuspended removeAllObjects];
+        }
+        self.keyboardUp = keyboardUp;
+    }
     id springboard = UIApplication.sharedApplication;
     BOOL home = [springboard respondsToSelector:@selector(isShowingHomescreen)] && [springboard isShowingHomescreen];
     NSString *active = floatingApp ?: (home ? nil : NFBString(NFBGet(NFBGet(springboard, @"_accessibilityFrontMostApplication"), @"bundleIdentifier")));
