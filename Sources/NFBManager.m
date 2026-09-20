@@ -16,6 +16,10 @@ static const NSTimeInterval NFBHold = 1.0;
 // possible second tap: the recognizer fires on touch-up with no arbitration lag.
 // This guard only swallows the accidental repeat that follows a real double tap.
 static const NSTimeInterval NFBGestureCooldown = 0.25;
+// While an app sits in the split view its bubble stays fully opaque and every
+// other bubble drops to this fraction, so the split-view app reads as the active
+// one without being pulled to the top of the row.
+static const CGFloat NFBFloatingDim = 0.5;
 #import <QuartzCore/QuartzCore.h>
 
 static CFStringRef const NFBDomain = CFSTR("local.notifybubbles");
@@ -445,7 +449,9 @@ static double NFBNumber(NSString *key, double fallback) {
     id springboard = UIApplication.sharedApplication;
     BOOL home = [springboard respondsToSelector:@selector(isShowingHomescreen)] && [springboard isShowingHomescreen];
     NSString *active = floatingApp ?: (home ? nil : NFBString(NFBGet(NFBGet(springboard, @"_accessibilityFrontMostApplication"), @"bundleIdentifier")));
-    if (active.length && [apps containsObject:active]) {
+    // The split-view app keeps its position and is highlighted by opacity instead
+    // of being pulled to the top, so only the plain frontmost app gets promoted.
+    if (!floatingApp.length && active.length && [apps containsObject:active]) {
         [apps removeObject:active]; [apps insertObject:active atIndex:0];
         if (![self.lastActiveApp isEqual:active]) [self.store promoteApp:active];
     }
@@ -545,10 +551,16 @@ static double NFBNumber(NSString *key, double fallback) {
             button.transform = CGAffineTransformMakeTranslation(side + 10, 0);
             button.alpha = 0;
         }
+        // In split view the owning app stays fully opaque while the rest dim, so
+        // it reads as the active bubble without being reordered.
+        CGFloat alpha = self.iconOpacity;
+        if (floatingApp.length > 0 && ![floatingApp isEqualToString:appID]) {
+            alpha = self.iconOpacity * NFBFloatingDim;
+        }
         BOOL changed = fresh || !CGRectEqualToRect(button.bounds, targetBounds) ||
             !CGPointEqualToPoint(button.center, targetCenter) ||
             !CGAffineTransformEqualToTransform(button.transform, target) ||
-            fabs(button.alpha - self.iconOpacity) > 0.001;
+            fabs(button.alpha - alpha) > 0.001;
         if (changed) {
             [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : NFBMotion
                 delay:0 usingSpringWithDamping:0.86 initialSpringVelocity:0
@@ -560,7 +572,7 @@ static double NFBNumber(NSString *key, double fallback) {
                     button.imageView.frame = CGRectMake(7, 7, diameter, diameter);
                     button.imageView.layer.cornerRadius = diameter / 2;
                     button.transform = target;
-                    button.alpha = self.iconOpacity;
+                    button.alpha = alpha;
                 } completion:nil];
         }
     }];

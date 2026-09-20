@@ -47,7 +47,9 @@ static NSDate *NFBRequestDate(id request) {
     record.request = request; record.destination = destination;
     record.timestamp = date ?: [NSDate date]; record.revision = revision;
     [self.records addObject:record];
-    [self.pins removeObject:appID]; [self.pins insertObject:appID atIndex:0];
+    // A new notification no longer pulls the app to the top of the row: it keeps
+    // whatever position it already had, and a brand-new app simply joins the end.
+    if (![self.pins containsObject:appID]) [self.pins addObject:appID];
     if (self.records.count > 512) [self.records removeObjectAtIndex:0];
     return YES;
 }

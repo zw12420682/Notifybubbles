@@ -1,4 +1,4 @@
-# 通知悬浮气泡 · 0.23.0 测试工程
+# 通知悬浮气泡 · 0.25.0 测试工程
 
 目标：iPhone 14、iOS 16.0.3、Dopamine RootHide，搭配 TrollOpenJB 1.5.2 隐根版。
 
@@ -12,7 +12,7 @@
 - Makefile、control、README.md。
 - `NotifyBubbles.plist`（注入过滤器）。`NotifyBubblesBack.plist` 已随返回组件一起停用，不再需要上传。
 
-另外将 `.github/workflows/build.yml` 替换为新版。提交后在 Actions 查看最新构建，成功后下载 Artifacts 中 NotifyBubbles-RootHide，解压安装 0.23.0 的 deb 并重启桌面。
+另外将 `.github/workflows/build.yml` 替换为新版。提交后在 Actions 查看最新构建，成功后下载 Artifacts 中 NotifyBubbles-RootHide，解压安装 0.25.0 的 deb 并重启桌面。
 
 **本版只注入 SpringBoard。** 单击关闭分屏窗口、长按退出 App 都在桌面进程内完成，不再需要目标 App 注入，因此无需在 App 内允许插件，也不用为了生效而重启目标 App。
 
@@ -66,6 +66,10 @@
 键盘检测在 SpringBoard 进程内完成（`Sources/NFBKeyboard.m`）。第三方 App 的键盘窗口（`UIRemoteKeyboardWindow`）位于 App 自己的进程，SpringBoard 收不到 `UIKeyboardWillShowNotification`，因此同时取三个信号源，任一为真即判定键盘弹出：`UIKeyboardWillShow/DidShow` 通知、SpringBoard 自身窗口中可见的 `UIRemoteKeyboardWindow`/`UIKeyboardWindow` 键盘窗口（要求 `hidden == NO` 且 `alpha > 0.01` 且高度 ≥ 100）、以及直接探测 `SBUIController` 的 `isKeyboardVisible`/`keyboardVisible`/`isKeyboardOnScreen`。每次状态翻转会向调试日志写 `keyboard: up/down (notified=? window=? system=?)`，真机上一看即知哪个源生效。
 
 自 0.23.0 起修掉一个致命误判：此前窗口源把 `UITextEffectsWindow`（文本放大镜/选区句柄窗口，SpringBoard 里**常驻且非隐藏**）也算作键盘，导致 `keyboardUp` 恒为真、气泡永远弹不出来。现改为只认真正的键盘窗口类名，并要求高度 ≥ 100 才判定为键盘。
+
+自 0.24.0 起，分屏高亮方式从「跳到第一位」改为「透明度区分」：有 App 处于 TrollOpen 分屏时，该 App 的气泡**保持全不透明**，其余气泡变淡（`NFBFloatingDim = 0.5`），**位置不再变动**。只有普通前台 App（非分屏）才会被提升到列表首位。
+
+自 0.25.0 起，**新消息也不再置顶**：收到新通知时，该 App 的气泡保持原有位置不动（新出现的 App 追加到列表末尾），不再跳到第一位。气泡顺序只由「前台 App 提升」决定。
 
 ## 返回功能范围（0.18.0 起停用）
 
