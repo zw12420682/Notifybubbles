@@ -66,7 +66,12 @@ static void NFBKeyboardSet(BOOL notified) {
 }
 
 void NFBKeyboardInstall(void (^onChange)(void)) {
-    NSAssert(NSThread.isMainThread, @"Keyboard observers must be installed on the main thread");
+    // Plain C function, so NSAssert is unavailable here: it expands to `self`
+    // and `_cmd`, which only exist inside a method.
+    if (!NSThread.isMainThread) {
+        dispatch_async(dispatch_get_main_queue(), ^{ NFBKeyboardInstall(onChange); });
+        return;
+    }
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         NFBKeyboardChange = [onChange copy];

@@ -9,7 +9,18 @@
 #import "NFBKeyboard.h"
 #import "NFBDebugLog.h"
 
-static const NSTimeInterval NFBMotion = 0.6;
+// Motion. Sliding out is allowed a touch more time than tucking away — a gentle
+// spring overshoot on the way out reads as "alive", while hiding should feel
+// decisive, so it uses a plain ease-in curve with no bounce. Reduce Motion turns
+// every one of these into an instant change.
+static const NSTimeInterval NFBRevealMotion = 0.42;
+static const NSTimeInterval NFBHideMotion = 0.26;
+// The row itself sits in between: it only moves when the app list changes size.
+static const NSTimeInterval NFBRailMotion = 0.34;
+// Per-bubble offset so the row flows from the active app outward instead of
+// moving as one rigid block. Capped so a long list never drags.
+static const NSTimeInterval NFBStagger = 0.022;
+static const NSUInteger NFBStaggerCap = 6;
 // How long a bubble stays expanded after an unread arrives.
 static const NSTimeInterval NFBHold = 1.0;
 // Double-tap is intentionally inert, so a single tap no longer has to wait for a
@@ -271,7 +282,10 @@ static double NFBNumber(NSString *key, double fallback) {
     [self refresh];
 }
 - (void)extendApp:(NSString *)app {
-    NSTimeInterval duration = UIAccessibilityIsReduceMotionEnabled() ? 0 : NFBMotion;
+    // Cover the reveal animation plus its share of the stagger, otherwise the
+    // bubble would start retracting before the last one in the row even moved.
+    NSTimeInterval duration = UIAccessibilityIsReduceMotionEnabled() ? 0
+        : NFBRevealMotion + NFBStagger * NFBStaggerCap;
     NSNumber *until = @(CACurrentMediaTime() + duration + NFBHold);
     self.expandedUntil[app] = until;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((duration + NFBHold) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -437,9 +451,12 @@ static double NFBNumber(NSString *key, double fallback) {
             [self burstBubble:button];
             continue;
         }
-        [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : 0.2 delay:0
-            options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseInOut animations:^{
-            button.alpha = 0; button.transform = CGAffineTransformMakeTranslation(self.iconSize + 20, 0);
+        [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : 0.22 delay:0
+            options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseIn animations:^{
+            // Shrink as it leaves, so it recedes rather than sliding off rigidly.
+            CGAffineTransform away = CGAffineTransformMakeTranslation(self.iconSize + 20, 0);
+            button.transform = CGAffineTransformScale(away, 0.9, 0.9);
+            button.alpha = 0;
         } completion:^(__unused BOOL done) { [button removeFromSuperview]; }];
     }
     if (!apps.count || !self.enabled) {
@@ -472,8 +489,9 @@ static double NFBNumber(NSString *key, double fallback) {
     CGRect railFrame = CGRectMake(bounds.size.width - side, top + (available - height) * self.verticalPosition, side, height);
     if (!CGRectEqualToRect(self.rail.frame, railFrame)) {
         if (CGRectIsEmpty(self.rail.frame)) self.rail.frame = railFrame;
-        else [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : NFBMotion delay:0
+        else [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : NFBRailMotion delay:0
             options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
+                | UIViewAnimationOptionCurveEaseOut
             animations:^{ self.rail.frame = railFrame; } completion:nil];
     }
     self.rail.contentSize = CGSizeMake(side, apps.count * step);
@@ -523,18 +541,37 @@ static double NFBNumber(NSString *key, double fallback) {
             !CGAffineTransformEqualToTransform(button.transform, target) ||
             fabs(button.alpha - self.iconOpacity) > 0.001;
         if (changed) {
-            [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : NFBMotion
-                delay:0 usingSpringWithDamping:0.86 initialSpringVelocity:0
-                options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
-                animations:^{
-                    // Bounds/center remain valid even while the view is transformed.
-                    button.bounds = targetBounds;
-                    button.center = targetCenter;
-                    button.imageView.frame = CGRectMake(7, 7, diameter, diameter);
-                    button.imageView.layer.cornerRadius = diameter / 2;
-                    button.transform = target;
-                    button.alpha = self.iconOpacity;
-                } completion:nil];
+            BOOL still = UIAccessibilityIsReduceMotionEnabled();
+            // Stagger outward from the active app when revealing, and back in
+            // reverse when hiding, so the row reads as a wave rather than a slab.
+            NSUInteger rank = MIN(index, NFBStaggerCap);
+            if (!expanded) rank = MIN(apps.count - 1 - index, NFBStaggerCap);
+            // A bubble that just appeared has no wave to join yet.
+            NSTimeInterval delay = (still || fresh) ? 0 : NFBStagger * rank;
+            NSTimeInterval duration = still ? 0 : (expanded ? NFBRevealMotion : NFBHideMotion);
+            void (^apply)(void) = ^{
+                // Bounds/center remain valid even while the view is transformed.
+                button.bounds = targetBounds;
+                button.center = targetCenter;
+                button.imageView.frame = CGRectMake(7, 7, diameter, diameter);
+                button.imageView.layer.cornerRadius = diameter / 2;
+                button.transform = target;
+                button.alpha = self.iconOpacity;
+            };
+            if (expanded) {
+                // A light overshoot on the way out is what makes it feel physical.
+                [UIView animateWithDuration:duration delay:delay
+                    usingSpringWithDamping:0.82 initialSpringVelocity:0.4
+                    options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
+                    animations:apply completion:nil];
+            } else {
+                // Hiding never bounces: an overshoot would push bubbles off screen
+                // and reads as hesitation.
+                [UIView animateWithDuration:duration delay:delay
+                    options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
+                        | UIViewAnimationOptionCurveEaseIn
+                    animations:apply completion:nil];
+            }
         }
     }];
 }
@@ -612,7 +649,7 @@ static double NFBNumber(NSString *key, double fallback) {
     ring.layer.borderColor = UIColor.systemTealColor.CGColor;
     ring.alpha = self.iconOpacity;
     [root addSubview:ring];
-    [UIView animateWithDuration:0.55 animations:^{
+    [UIView animateWithDuration:0.5 delay:0 options:UIViewAnimationOptionCurveEaseOut animations:^{
         ring.transform = CGAffineTransformMakeScale(1.65, 1.65); ring.alpha = 0;
     } completion:^(__unused BOOL done) { [ring removeFromSuperview]; }];
     for (NSInteger i = 0; i < 12; i++) {
@@ -623,8 +660,12 @@ static double NFBNumber(NSString *key, double fallback) {
         drop.backgroundColor = i % 2 ? UIColor.systemTealColor : UIColor.whiteColor;
         drop.userInteractionEnabled = NO; drop.alpha = self.iconOpacity;
         [root addSubview:drop];
-        [UIView animateWithDuration:0.55 delay:0 options:UIViewAnimationOptionCurveEaseOut animations:^{
-            drop.center = CGPointMake(origin.x + cos(angle)*diameter*0.95, origin.y + sin(angle)*diameter*0.95);
+        // A little spread in timing and reach keeps the shards from reading as a
+        // mechanical pinwheel; they should look like they scatter.
+        CGFloat spread = 0.86 + 0.1 * (i % 3);
+        [UIView animateWithDuration:0.5 + 0.06 * (i % 3) delay:0.012 * (i % 4)
+            options:UIViewAnimationOptionCurveEaseOut animations:^{
+            drop.center = CGPointMake(origin.x + cos(angle)*diameter*spread, origin.y + sin(angle)*diameter*spread);
             drop.alpha = 0; drop.transform = CGAffineTransformMakeScale(0.15, 0.15);
         } completion:^(__unused BOOL done) { [drop removeFromSuperview]; }];
     }

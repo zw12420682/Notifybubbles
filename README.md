@@ -1,4 +1,4 @@
-# 通知悬浮气泡 · 0.21.0 测试工程
+# 通知悬浮气泡 · 0.22.0 测试工程
 
 目标：iPhone 14、iOS 16.0.3、Dopamine RootHide，搭配 TrollOpenJB 1.5.2 隐根版。
 
@@ -12,7 +12,7 @@
 - Makefile、control、README.md。
 - `NotifyBubbles.plist`（注入过滤器）。`NotifyBubblesBack.plist` 已随返回组件一起停用，不再需要上传。
 
-另外将 `.github/workflows/build.yml` 替换为新版。提交后在 Actions 查看最新构建，成功后下载 Artifacts 中 NotifyBubbles-RootHide，解压安装 0.21.0 的 deb 并重启桌面。
+另外将 `.github/workflows/build.yml` 替换为新版。提交后在 Actions 查看最新构建，成功后下载 Artifacts 中 NotifyBubbles-RootHide，解压安装 0.22.0 的 deb 并重启桌面。
 
 **本版只注入 SpringBoard。** 单击关闭分屏窗口、长按退出 App 都在桌面进程内完成，不再需要目标 App 注入，因此无需在 App 内允许插件，也不用为了生效而重启目标 App。
 
@@ -48,14 +48,29 @@
 
 `fullscreenCurrentFloatingWindow` 的归属在不同证据间有冲突（0.7.0 时判定为浮窗实例方法，0.17.0 设备方法清单显示它在 `TOJBBarGestureBridge` 元类上），因此实现为**双路径探测**：先试桥接类方法，失败再试浮窗实例方法，两者都要求无参且返回 void/BOOL。
 
-气泡收到未读后停留 `NFBHold = 1.0` 秒（另有 `NFBMotion = 0.6` 秒展开动画）。要改总时长，调整 `NFBManager.m` 顶部的常量即可。
+气泡收到未读后停留 `NFBHold = 1.0` 秒。要改总时长，调整 `NFBManager.m` 顶部的常量即可。
+
+### 动画（0.22.0 起重新调校）
+
+伸出与收回**不再共用一条曲线**，这是"发涩"的主要来源：
+
+| 动作 | 时长 | 曲线 | 说明 |
+|---|---|---|---|
+| 伸出（reveal） | `NFBRevealMotion = 0.42` | 弹簧 damping 0.82 / velocity 0.4 | 轻微过冲，显得有实体感 |
+| 收回（hide） | `NFBHideMotion = 0.26` | `CurveEaseIn`，**不用弹簧** | 过冲会把气泡推出屏幕外，看起来像犹豫 |
+| 整排位移 | `NFBRailMotion = 0.34` | `CurveEaseOut` | 仅在 App 数量变化时移动 |
+
+- **错峰（stagger）**：每个气泡按 `NFBStagger = 0.022` 秒依次启动，最多累计 `NFBStaggerCap = 6` 级（0.13 秒封顶）。伸出时从当前 App 向外扩散，收回时反向——整排像波浪而不是一整块刚体在动。刚出现的新气泡不参与错峰。
+- **破裂**：碎片飞散时间按索引错开（延迟 0.012×n、时长 0.50~0.56、半径 0.86~0.96 倍），避免机械的风车感；圆环改为 `CurveEaseOut`。
+- **移除**：由原来的平移改为「平移 + 缩放 0.9」，配 `CurveEaseIn`，是退场而不是硬滑走。
+- `UIAccessibilityIsReduceMotionEnabled()` 为真时以上全部时长归零、错峰取消，直接切换状态。
 
 自 0.20.0 起，**分屏窗口关闭/全屏时气泡同步缩回**。此前气泡的展开状态只在 0.5 秒一次的轮询里更新，加上 TrollOpen 自己的过渡动画，观感是「窗口先关完、气泡才开始缩」。现改为两层：
 
 - **主动路径**（`beginRetracting:`）：调用 TrollOpen 接口**之前**先把该 App 标记为收回中并立刻刷新，缩回动画与窗口过渡在同一帧起步；同时清掉该 App 的 `expandedUntil`/`needsReveal`，否则点击自带的 1.6 秒伸出窗会在踏出的瞬间把它重新顶出去。0.8 秒后解除标记并按真实状态复核一次。
 - **被动路径**（`floatingWatch`）：仅在**存在浮窗时**运行 0.05 秒的轻量轮询，发现 `NFBTrollVisibleApp()` 变化立即刷新。这样从 TrollOpen 交互条、App 退出或崩溃等外部途径关闭窗口也能同步收回，且平时不付任何额外开销。
 
-自 0.21.0 起，气泡的展开判定改为三级优先级：
+自 0.21.0 起（0.22.0 构建修复），气泡的展开判定改为三级优先级：
 
 1. **键盘弹出 → 全部缩回**（最高优先级，覆盖下面两条）。
 2. **有 App 处于 TrollOpen 分屏 → 整排气泡全部伸出且不收回**。此前只有占据浮窗的那个 App 的气泡会伸出。
