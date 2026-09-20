@@ -5,11 +5,16 @@
 #import "NFBSwitcher.h"
 #import "NFBTrollOpen.h"
 #import "NFBNotificationPolicy.h"
-#import "NFBBackRequest.h"
+#import "NFBAppExit.h"
 #import "NFBDebugLog.h"
 
 static const NSTimeInterval NFBMotion = 0.6;
-static const NSTimeInterval NFBHold = 2.0;
+// How long a bubble stays expanded after an unread arrives.
+static const NSTimeInterval NFBHold = 1.0;
+// Double-tap is intentionally inert, so a single tap no longer has to wait for a
+// possible second tap: the recognizer fires on touch-up with no arbitration lag.
+// This guard only swallows the accidental repeat that follows a real double tap.
+static const NSTimeInterval NFBGestureCooldown = 0.25;
 #import <QuartzCore/QuartzCore.h>
 
 static CFStringRef const NFBDomain = CFSTR("local.notifybubbles");
@@ -108,7 +113,10 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic) BOOL showLock;
 @property(nonatomic) BOOL showHome;
 @property(nonatomic) BOOL showApps;
+@property(nonatomic) NSTimeInterval lastGestureAt;
 - (void)refresh;
+- (BOOL)isFloatingBubble:(NFBBubble *)button;
+- (BOOL)acceptGesture;
 - (void)burstBubble:(NFBBubble *)button;
 - (BOOL)executeRecord:(NFBRecord *)record;
 - (void)tick;
@@ -412,15 +420,15 @@ static double NFBNumber(NSString *key, double fallback) {
         if (fresh) {
             button = [[NFBBubble alloc] initWithFrame:CGRectZero];
             button.appID = appID;
-            UITapGestureRecognizer *doubleTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(doubleTapped:)];
-            doubleTap.numberOfTapsRequired = 2;
-            [button addGestureRecognizer:doubleTap];
+            // Double tap is intentionally not installed. Removing it lets the tap
+            // recognizer resolve on touch-up instead of waiting out the multi-tap
+            // window, which is what made the old single tap feel half a beat late.
             UITapGestureRecognizer *singleTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(singleTapped:)];
             singleTap.numberOfTapsRequired = 1;
-            [singleTap requireGestureRecognizerToFail:doubleTap];
             [button addGestureRecognizer:singleTap];
             UILongPressGestureRecognizer *hold = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(longPressed:)];
-            hold.minimumPressDuration = 0.6;
+            hold.minimumPressDuration = 0.45;
+            // Cancel the tap once a hold is recognised, so exit never fires twice.
             hold.cancelsTouchesInView = YES;
             [button addGestureRecognizer:hold];
             self.buttons[appID] = button;
@@ -459,19 +467,62 @@ static double NFBNumber(NSString *key, double fallback) {
         }
     }];
 }
+// One action per gesture. Without this, a bounce in the finger or a leftover
+// second tap of a retired double-tap would fire close/exit twice in a row.
+- (BOOL)acceptGesture {
+    NSTimeInterval now = CACurrentMediaTime();
+    if (now - self.lastGestureAt < NFBGestureCooldown) return NO;
+    self.lastGestureAt = now;
+    return YES;
+}
+// A bubble belongs to the app currently occupying the TrollOpen floating window.
+// Resolved through one place so tap and long press can never disagree.
+- (BOOL)isFloatingBubble:(NFBBubble *)button {
+    if (!button || self.buttons[button.appID] != button) return NO;
+    NSString *floating = NFBTrollVisibleApp();
+    return floating.length > 0 && [floating isEqualToString:button.appID];
+}
+// Close the floating window (single tap). Refreshes slightly later, because
+// TrollOpen tears the window down across a run loop turn.
+- (void)closeFloatingWindowForApp:(NSString *)app {
+    NFBDebugLog(@"gesture: tap on floating app %@ -> close", app);
+    if (!NFBCloseCurrentFloatingWindow()) {
+        [self showOpenNotice:@"TrollOpen 关闭分屏接口不可用，请确认已安装适配的 1.5.2 隐根版并重启桌面"];
+        return;
+    }
+    [self.expandedUntil removeObjectForKey:app];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{ [self refresh]; });
+}
+// Quit the app the way the App Switcher's swipe-up does (long press).
+- (void)exitApp:(NSString *)app {
+    NFBDebugLog(@"gesture: long press on floating app %@ -> exit", app);
+    if (!NFBTerminateApp(app)) {
+        [self showOpenNotice:@"未能退出该 App，请确认插件已注入桌面并重启桌面"];
+        return;
+    }
+    [self.expandedUntil removeObjectForKey:app];
+    // Termination normally takes the floating window with it. If TrollOpen still
+    // reports this app as visible afterwards, its window survived the process
+    // death and is now empty — close exactly that window, never another one.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        if ([NFBTrollVisibleApp() isEqualToString:app]) NFBCloseCurrentFloatingWindow();
+        [self refresh];
+    });
+}
 - (void)longPressed:(UILongPressGestureRecognizer *)gesture {
     if (gesture.state != UIGestureRecognizerStateBegan) return;
     NFBBubble *button = (NFBBubble *)gesture.view;
     if (self.buttons[button.appID] != button) return;
-    // Long press on the bubble while its app is the current floating window:
-    // mirror the green bar's long-press "rotate" action (portrait <-> landscape).
-    // Non-floating apps keep the original burst-close.
-    if ([NFBTrollVisibleApp() isEqualToString:button.appID]) {
-        NFBDebugLog(@"gesture: long press on current floating app %@ -> rotate", button.appID);
-        if (!NFBToggleOrientation())
-            [self showOpenNotice:@"TrollOpen 横竖屏切换接口不可用，请确认已安装适配的 1.5.2 隐根版并重启桌面"];
+    // Long press on the floating app's bubble quits the app; everything else
+    // keeps the original burst that clears that app's notifications.
+    if ([self isFloatingBubble:button]) {
+        if (![self acceptGesture]) return;
+        [self exitApp:button.appID];
         return;
     }
+    if (![self acceptGesture]) return;
     // Suppress touch-up activation while the queued burst removes this control.
     button.opening = YES;
     button.userInteractionEnabled = NO;
@@ -483,18 +534,6 @@ static double NFBNumber(NSString *key, double fallback) {
             button.opening = NO; button.userInteractionEnabled = YES;
         }
     });
-}
-- (void)doubleTapped:(UITapGestureRecognizer *)gesture {
-    if (gesture.state != UIGestureRecognizerStateEnded) return;
-    NFBBubble *button = (NFBBubble *)gesture.view;
-    if (self.buttons[button.appID] != button) return;
-    // Double tap only acts on the CURRENT floating window's bubble (same rule as
-    // single tap and long press). Tapping another app's bubble does nothing.
-    if (![NFBTrollVisibleApp() isEqualToString:button.appID]) return;
-    // Double tap closes the current floating window.
-    NFBDebugLog(@"gesture: double tap on current floating app %@ -> close", button.appID);
-    if (!NFBCloseCurrentFloatingWindow())
-        [self showOpenNotice:@"TrollOpen 关闭分屏接口不可用，请确认已安装适配的 1.5.2 隐根版并重启桌面"];
 }
 - (void)burstBubble:(NFBBubble *)button {
     if (UIAccessibilityIsReduceMotionEnabled()) {
@@ -544,6 +583,7 @@ static double NFBNumber(NSString *key, double fallback) {
 - (void)tapped:(NFBBubble *)button {
     if (button.opening || self.buttons[button.appID] != button) return;
     if (self.pendingRecord && [self.pendingRecord.appID isEqual:button.appID]) return;
+    if (![self acceptGesture]) return;
     button.opening = YES;
     [self extendApp:button.appID];
     [self refresh]; // Starts the same 0.6-second animation used for retraction.
@@ -590,27 +630,10 @@ static double NFBNumber(NSString *key, double fallback) {
         [self showOpenNotice:@"请先安装并在设置中启用 TrollOpen"];
         return;
     }
+    // Reached only with no unread notification left: on the app that currently
+    // owns the floating window, a single tap closes that window.
     if ([NFBTrollVisibleApp() isEqualToString:app]) {
-        // No pending notification and the bubble is the current floating window:
-        // perform the app's back navigation (equivalent to an edge swipe back).
-        NFBDebugLog(@"tap: single tap on current floating app -> back request for %@", app);
-        NFBRequestAppBack(app, ^(NSInteger result, NSInteger reason) {
-            NFBDebugLog(@"tap: back result=%ld reason=%ld for %@", (long)result, (long)reason, app);
-            if (result == 0) {
-                // Prefer the precise reason reported by the app process.
-                NSString *text = @"当前页面没有可用的返回操作，或使用了自定义导航";
-                if (reason == NFBBackStatusNoWindow)
-                    text = @"该 App 内未取到可用窗口（分屏托管下常见），未执行返回";
-                else if (reason == NFBBackStatusCustomBackItem)
-                    text = @"当前页面导航栏有自定义按钮或隐藏了返回，未执行返回";
-                else if (reason == NFBBackStatusTransitioning)
-                    text = @"页面正在转场或弹窗中，未执行返回";
-                else if (reason == NFBBackStatusException)
-                    text = @"返回时发生异常，已跳过";
-                [self showOpenNotice:text];
-            } else if (result < 0)
-                [self showOpenNotice:@"App 返回组件未响应，请允许插件注入该 App 并重新打开它"];
-        });
+        [self closeFloatingWindowForApp:app];
         return;
     }
     id springboard = UIApplication.sharedApplication;

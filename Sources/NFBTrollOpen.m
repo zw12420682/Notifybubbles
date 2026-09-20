@@ -50,6 +50,10 @@ BOOL NFBCloseCurrentFloatingWindow(void) {
     if (!NSThread.isMainThread) return NO;
     @try {
         Class bridge = NSClassFromString(@"TOJBBarGestureBridge");
+        // Diagnostics run once per SpringBoard launch: the floating window's
+        // real selector set is build-specific, and the file is the only way to
+        // confirm a future TrollOpen update did not rename the control methods.
+        NFBDumpFloatingWindowInterfaces(NFBTrollObject(bridge, @"currentVisibleFloatingWindow"));
         SEL selector = NSSelectorFromString(@"closeCurrentFloatingWindow");
         if (bridge && [bridge respondsToSelector:selector]) {
             NSMethodSignature *sig = [bridge methodSignatureForSelector:selector];
@@ -81,97 +85,6 @@ BOOL NFBCloseCurrentFloatingWindow(void) {
         return NO;
     } @catch (__unused NSException *error) {
         NFBDebugLog(@"TrollOpen close failed: %@", error);
-        return NO;
-    }
-}
-
-// Read a zero-argument NSInteger/int property into `out`; NO when unavailable.
-static BOOL NFBReadInteger(id object, NSString *name, NSInteger *out) {
-    if (!object || !out) return NO;
-    SEL selector = NSSelectorFromString(name);
-    if (![object respondsToSelector:selector]) return NO;
-    NSMethodSignature *sig = [object methodSignatureForSelector:selector];
-    if (!sig || sig.numberOfArguments != 2) return NO;
-    char ret = sig.methodReturnType[0];
-    if (ret == 'q' || ret == 'l') *out = ((NSInteger (*)(id, SEL))objc_msgSend)(object, selector);
-    else if (ret == 'i') *out = (NSInteger)((int (*)(id, SEL))objc_msgSend)(object, selector);
-    else return NO;
-    return YES;
-}
-
-// Toggle the current floating window orientation (portrait <-> landscape).
-// The official 1.3.7 binary exposes (on TOJBClass012) a read-only isLandscape
-// BOOL and setContainerOrientation: taking a UIInterfaceOrientation integer.
-// 1=Portrait, 3=LandscapeRight, 4=LandscapeLeft. This is the real interface
-// behind the green bar's long-press "rotate" action.
-BOOL NFBToggleOrientation(void) {
-    if (!NSThread.isMainThread) return NO;
-    @try {
-        Class bridge = NSClassFromString(@"TOJBBarGestureBridge");
-        id window = NFBTrollObject(bridge, @"currentVisibleFloatingWindow");
-        NFBDebugLog(@"rotate: currentVisibleFloatingWindow=%@ class=%@",
-                    window ?: @"<nil>", window ? NSStringFromClass([window class]) : @"<nil>");
-        if (!window) return NO;
-        NFBDumpFloatingWindowInterfaces(window);
-        // isLandscape does NOT exist on this build — the device-side method dump
-        // lists only containerOrientation / sceneOrientation (both `q`). Reading a
-        // nonexistent isLandscape always yielded NO, so the window could only ever
-        // be rotated one way. Read the real orientation integer instead.
-        NSInteger current = 0;
-        BOOL known = NO;
-        for (NSString *name in @[@"containerOrientation", @"sceneOrientation"]) {
-            if (NFBReadInteger(window, name, &current)) {
-                known = YES;
-                NFBDebugLog(@"rotate: %@=%ld", name, (long)current);
-                break;
-            }
-            NFBDebugLog(@"rotate: -%@ unavailable", name);
-        }
-        NSInteger target;
-        if (known) {
-            // 1 = UIInterfaceOrientationPortrait; anything else counts as landscape.
-            target = (current == 1) ? 3 /* LandscapeRight */ : 1 /* Portrait */;
-        } else {
-            // Legacy fallback path for builds that only expose the BOOL.
-            BOOL landscape = NO;
-            SEL isLand = NSSelectorFromString(@"isLandscape");
-            @try {
-                if ([window respondsToSelector:isLand]) {
-                    NSMethodSignature *sig = [window methodSignatureForSelector:isLand];
-                    if (sig && sig.numberOfArguments == 2 &&
-                        (sig.methodReturnType[0] == 'B' || sig.methodReturnType[0] == 'c'))
-                        landscape = ((BOOL (*)(id, SEL))objc_msgSend)(window, isLand);
-                }
-            } @catch (__unused NSException *e) {}
-            NFBDebugLog(@"rotate: fallback isLandscape=%d", landscape);
-            target = landscape ? 1 : 3;
-        }
-        NFBDebugLog(@"rotate: known=%d current=%ld -> target=%ld", known, (long)current, (long)target);
-        // Drive it through setContainerOrientation: (primary) or the siblings.
-        for (NSString *name in @[@"setContainerOrientation:", @"setSceneOrientation:", @"setDeviceOrientation:"]) {
-            SEL sel = NSSelectorFromString(name);
-            if (![window respondsToSelector:sel]) {
-                NFBDebugLog(@"rotate: -%@ not available", name);
-                continue;
-            }
-            NSMethodSignature *sig = [window methodSignatureForSelector:sel];
-            if (!sig || sig.numberOfArguments != 3 || sig.methodReturnType[0] != 'v') {
-                NFBDebugLog(@"rotate: -%@ signature mismatch", name);
-                continue;
-            }
-            char arg = [sig getArgumentTypeAtIndex:2][0];
-            if (arg != 'q' && arg != 'i' && arg != 'l' && arg != 's') {
-                NFBDebugLog(@"rotate: -%@ arg type %c unsupported", name, arg);
-                continue;
-            }
-            ((void (*)(id, SEL, NSInteger))objc_msgSend)(window, sel, target);
-            NFBDebugLog(@"rotate: invoked -%@ target=%ld", name, (long)target);
-            return YES;
-        }
-        NFBDebugLog(@"rotate: no usable orientation selector on the floating window");
-        return NO;
-    } @catch (__unused NSException *error) {
-        NFBDebugLog(@"TrollOpen orientation toggle failed: %@", error);
         return NO;
     }
 }
