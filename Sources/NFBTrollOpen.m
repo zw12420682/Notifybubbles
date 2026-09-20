@@ -89,6 +89,46 @@ BOOL NFBCloseCurrentFloatingWindow(void) {
     }
 }
 
+// Accept only a no-argument call that returns void or BOOL; anything else could
+// be a same-named helper with a different contract.
+static BOOL NFBCallSimple(id target, SEL selector) {
+    if (!target || ![target respondsToSelector:selector]) return NO;
+    NSMethodSignature *sig = [target methodSignatureForSelector:selector];
+    if (!sig || sig.numberOfArguments != 2) return NO;
+    char ret = sig.methodReturnType[0];
+    if (ret != 'v' && ret != 'B' && ret != 'c') return NO;
+    ((void (*)(id, SEL))objc_msgSend)(target, selector);
+    return YES;
+}
+
+BOOL NFBFullscreenCurrentFloatingWindow(void) {
+    if (!NSThread.isMainThread) return NO;
+    @try {
+        Class bridge = NSClassFromString(@"TOJBBarGestureBridge");
+        // The device-side dump lists it on the bridge metaclass, while an earlier
+        // build carried it as an instance method on the floating window. Probe the
+        // class method first and fall back, so neither layout can fail here.
+        SEL selector = NSSelectorFromString(@"fullscreenCurrentFloatingWindow");
+        if (NFBCallSimple(bridge, selector)) {
+            NFBDebugLog(@"fullscreen: invoked +[TOJBBarGestureBridge fullscreenCurrentFloatingWindow]");
+            return YES;
+        }
+        id window = NFBTrollObject(bridge, @"currentVisibleFloatingWindow");
+        NFBDumpFloatingWindowInterfaces(window);
+        if (NFBCallSimple(window, selector)) {
+            NFBDebugLog(@"fullscreen: invoked -[%@ fullscreenCurrentFloatingWindow]",
+                        NSStringFromClass([window class]));
+            return YES;
+        }
+        NFBDebugLog(@"fullscreen: no usable path (bridge class=%d window=%d)",
+                    bridge != nil, window != nil);
+        return NO;
+    } @catch (__unused NSException *error) {
+        NFBDebugLog(@"TrollOpen fullscreen failed: %@", error);
+        return NO;
+    }
+}
+
 static BOOL NFBTrollSignature(id target, SEL selector, BOOL hasFlag) {
     if (![target respondsToSelector:selector]) return NO;
     NSMethodSignature *sig = [target methodSignatureForSelector:selector];

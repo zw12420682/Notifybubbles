@@ -114,7 +114,19 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic) BOOL showHome;
 @property(nonatomic) BOOL showApps;
 @property(nonatomic) NSTimeInterval lastGestureAt;
+// Apps whose bubble is already retracting because we asked TrollOpen to end the
+// floating window. Marking them lets the retract animation start on the same
+// frame as the window transition instead of waiting for the window to be gone.
+@property(nonatomic, strong) NSMutableSet<NSString *> *retracting;
+// High-frequency watcher that only runs while a floating window exists, so a
+// window dismissed outside the plugin (TrollOpen's own bar, app crash, exit) is
+// picked up in ~one frame rather than on the next 0.5s poll.
+@property(nonatomic, strong) NSTimer *floatingWatch;
+@property(nonatomic, copy) NSString *watchedFloating;
 - (void)refresh;
+- (void)beginRetracting:(NSString *)app;
+- (void)syncFloatingWatch:(NSString *)floating;
+- (void)floatingWatchFired;
 - (BOOL)isFloatingBubble:(NFBBubble *)button;
 - (BOOL)acceptGesture;
 - (void)burstBubble:(NFBBubble *)button;
@@ -142,6 +154,7 @@ static double NFBNumber(NSString *key, double fallback) {
         _expandedUntil = [NSMutableDictionary dictionary];
         _icons = [NSMutableDictionary dictionary];
         _burstApps = [NSMutableSet set];
+        _retracting = [NSMutableSet set];
         _dismissedSwitcher = [NSMutableSet set];
         _generations = [NSMutableDictionary dictionary];
         _needsReveal = [NSMutableSet set];
@@ -212,6 +225,47 @@ static double NFBNumber(NSString *key, double fallback) {
     self.timer = [NSTimer timerWithTimeInterval:0.5 repeats:YES block:^(__unused NSTimer *t) { [weakSelf tick]; }];
     self.timer.tolerance = 0.1;
     [NSRunLoop.mainRunLoop addTimer:self.timer forMode:NSRunLoopCommonModes];
+}
+// Start the bubble's retract animation now, on the same frame the window
+// transition begins. Previously the bubble waited for TrollOpen to report the
+// window gone, so it only started moving after the window had finished closing.
+- (void)beginRetracting:(NSString *)app {
+    if (!app.length) return;
+    [self.retracting addObject:app];
+    // Drop any active reveal window too: a tap always extends the bubble first,
+    // and that leftover timer would otherwise force it straight back out.
+    [self.expandedUntil removeObjectForKey:app];
+    [self.needsReveal removeObject:app];
+    [self refresh];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        [self.retracting removeObject:app];
+        [self refresh]; // Adopt whichever state TrollOpen actually settled into.
+    });
+}
+// Poll the floating window only while one exists, so a window dismissed outside
+// the plugin (TrollOpen's own bar, app exit, crash) is reflected in about one
+// frame rather than on the next 0.5s poll — with no fast timer the rest of the time.
+- (void)syncFloatingWatch:(NSString *)floating {
+    BOOL needed = self.enabled && floating.length > 0;
+    if (!needed) {
+        if (self.floatingWatch) { [self.floatingWatch invalidate]; self.floatingWatch = nil; }
+        self.watchedFloating = nil;
+        return;
+    }
+    if (self.floatingWatch) return;
+    self.watchedFloating = floating;
+    __weak NFBManager *weakSelf = self;
+    self.floatingWatch = [NSTimer timerWithTimeInterval:0.05 repeats:YES
+        block:^(__unused NSTimer *t) { [weakSelf floatingWatchFired]; }];
+    self.floatingWatch.tolerance = 0.015;
+    [NSRunLoop.mainRunLoop addTimer:self.floatingWatch forMode:NSRunLoopCommonModes];
+}
+- (void)floatingWatchFired {
+    NSString *now = NFBTrollVisibleApp();
+    if (now == self.watchedFloating || [now isEqualToString:self.watchedFloating]) return;
+    self.watchedFloating = now;
+    [self refresh];
 }
 - (void)extendApp:(NSString *)app {
     NSTimeInterval duration = UIAccessibilityIsReduceMotionEnabled() ? 0 : NFBMotion;
@@ -353,6 +407,8 @@ static double NFBNumber(NSString *key, double fallback) {
         if (fromSwitcher || notificationsAllowed) [apps addObject:app];
     }
     NSString *floatingApp = NFBTrollVisibleApp();
+    // Keep the fast watcher in step with reality every time we recompute layout.
+    [self syncFloatingWatch:floatingApp];
     id springboard = UIApplication.sharedApplication;
     BOOL home = [springboard respondsToSelector:@selector(isShowingHomescreen)] && [springboard isShowingHomescreen];
     NSString *active = floatingApp ?: (home ? nil : NFBString(NFBGet(NFBGet(springboard, @"_accessibilityFrontMostApplication"), @"bundleIdentifier")));
@@ -435,7 +491,10 @@ static double NFBNumber(NSString *key, double fallback) {
             [self.rail addSubview:button];
         }
         [self updateBubble:button record:[self.store latestForApp:appID]];
-        BOOL expanded = [floatingApp isEqualToString:appID] || [self.expandedUntil[appID] doubleValue] > CACurrentMediaTime();
+        // A bubble we already started retracting must not be re-expanded by the
+        // stale "window still visible" reading taken mid-transition.
+        BOOL floating = [floatingApp isEqualToString:appID] && ![self.retracting containsObject:appID];
+        BOOL expanded = floating || [self.expandedUntil[appID] doubleValue] > CACurrentMediaTime();
         CGAffineTransform target = CGAffineTransformMakeTranslation(expanded ? 0 : NFBRetraction(diameter), 0);
         CGRect targetBounds = CGRectMake(0, 0, side, side);
         CGPoint targetCenter = CGPointMake(side / 2, NFBRowCenter(apps.count, index, step, side));
@@ -482,57 +541,43 @@ static double NFBNumber(NSString *key, double fallback) {
     NSString *floating = NFBTrollVisibleApp();
     return floating.length > 0 && [floating isEqualToString:button.appID];
 }
-// Close the floating window (single tap). Refreshes slightly later, because
-// TrollOpen tears the window down across a run loop turn.
-- (void)closeFloatingWindowForApp:(NSString *)app {
-    NFBDebugLog(@"gesture: tap on floating app %@ -> close", app);
-    if (!NFBCloseCurrentFloatingWindow()) {
-        [self showOpenNotice:@"TrollOpen 关闭分屏接口不可用，请确认已安装适配的 1.5.2 隐根版并重启桌面"];
-        return;
-    }
-    [self.expandedUntil removeObjectForKey:app];
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{ [self refresh]; });
-}
-// Quit the app the way the App Switcher's swipe-up does (long press).
-- (void)exitApp:(NSString *)app {
-    NFBDebugLog(@"gesture: long press on floating app %@ -> exit", app);
-    if (!NFBTerminateApp(app)) {
-        [self showOpenNotice:@"未能退出该 App，请确认插件已注入桌面并重启桌面"];
-        return;
-    }
-    [self.expandedUntil removeObjectForKey:app];
-    // Termination normally takes the floating window with it. If TrollOpen still
-    // reports this app as visible afterwards, its window survived the process
-    // death and is now empty — close exactly that window, never another one.
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{
-        if ([NFBTrollVisibleApp() isEqualToString:app]) NFBCloseCurrentFloatingWindow();
-        [self refresh];
-    });
+// Grow the floating window back to fullscreen (single tap). Refreshes slightly
+// later, because TrollOpen re-parents the scene across a run loop turn.
+- (void)fullscreenFloatingApp:(NSString *)app {
+    NFBDebugLog(@"gesture: tap on floating app %@ -> fullscreen", app);
+    // Retract first, then hand off: both animations now start on the same frame
+    // instead of the bubble waiting for TrollOpen to finish the transition.
+    [self beginRetracting:app];
+    if (!NFBFullscreenCurrentFloatingWindow())
+        [self showOpenNotice:@"TrollOpen 全屏接口不可用，请确认已安装适配的 1.5.2 隐根版并重启桌面"];
 }
 - (void)longPressed:(UILongPressGestureRecognizer *)gesture {
     if (gesture.state != UIGestureRecognizerStateBegan) return;
     NFBBubble *button = (NFBBubble *)gesture.view;
     if (self.buttons[button.appID] != button) return;
-    // Long press on the floating app's bubble quits the app; everything else
-    // keeps the original burst that clears that app's notifications.
-    if ([self isFloatingBubble:button]) {
-        if (![self acceptGesture]) return;
-        [self exitApp:button.appID];
-        return;
-    }
+    // Long press is deliberately inert on the bubble that owns the floating
+    // window. On every other bubble it bursts the icon away AND quits the app
+    // from the background — what removing that card in the App Switcher does.
+    if ([self isFloatingBubble:button]) return;
     if (![self acceptGesture]) return;
+    NSString *app = button.appID;
     // Suppress touch-up activation while the queued burst removes this control.
     button.opening = YES;
     button.userInteractionEnabled = NO;
-    [self.dismissedSwitcher addObject:button.appID];
-    [self closeAppsInOrder:@[button.appID]];
+    [self.dismissedSwitcher addObject:app];
+    [self closeAppsInOrder:@[app]];
     dispatch_async(dispatch_get_main_queue(), ^{
         // If a new notification cancelled dismissal, leave that surviving icon usable.
-        if (self.buttons[button.appID] == button) {
+        if (self.buttons[app] == button) {
             button.opening = NO; button.userInteractionEnabled = YES;
         }
+    });
+    // Let the burst read first, then terminate the process behind it.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        NFBDebugLog(@"gesture: long press on non-floating app %@ -> terminate", app);
+        NFBTerminateApp(app);
+        [self refresh];
     });
 }
 - (void)burstBubble:(NFBBubble *)button {
@@ -631,9 +676,9 @@ static double NFBNumber(NSString *key, double fallback) {
         return;
     }
     // Reached only with no unread notification left: on the app that currently
-    // owns the floating window, a single tap closes that window.
+    // owns the floating window, a single tap grows that window to fullscreen.
     if ([NFBTrollVisibleApp() isEqualToString:app]) {
-        [self closeFloatingWindowForApp:app];
+        [self fullscreenFloatingApp:app];
         return;
     }
     id springboard = UIApplication.sharedApplication;

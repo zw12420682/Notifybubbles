@@ -10,9 +10,9 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
-			<string>通知悬浮气泡 · 测试版 0.18.0</string>
+			<string>通知悬浮气泡 · 测试版 0.20.0</string>
 			<key>footerText</key>
-			<string>收到未读消息时图标伸出并停留约 1 秒后收回。点击执行通知或 App 打开动作；若该 App 没有未读通知且正占据 TrollOpen 分屏浮窗，则单击关闭该分屏窗口。长按约 0.45 秒：当前分屏浮窗对应的图标会退出该 App（等同 App 切换器上划卡片），其余图标长按关闭图标并保留破裂动画。双击不绑定任何操作。</string>
+			<string>收到未读消息时图标伸出并停留约 1 秒后收回。点击执行通知或 App 打开动作；若该 App 没有未读通知且正占据 TrollOpen 分屏浮窗，则单击将该分屏窗口放大到全屏。长按：分屏浮窗对应的图标长按无任何动作；其余图标长按后气泡破裂消失，同时该 App 退出后台（进程终止）。双击不绑定任何操作。</string>
 		</dict>
 		<dict>
 			<key>cell</key>
