@@ -6,6 +6,7 @@
 #import "NFBTrollOpen.h"
 #import "NFBNotificationPolicy.h"
 #import "NFBAppExit.h"
+#import "NFBKeyboard.h"
 #import "NFBDebugLog.h"
 
 static const NSTimeInterval NFBMotion = 0.6;
@@ -159,6 +160,8 @@ static double NFBNumber(NSString *key, double fallback) {
         _generations = [NSMutableDictionary dictionary];
         _needsReveal = [NSMutableSet set];
         _lastBadges = [NSMutableDictionary dictionary];
+        __weak NFBManager *weakSelf = self;
+        NFBKeyboardInstall(^{ [weakSelf refresh]; });
         [self reloadPreferences];
     }
     return self;
@@ -409,6 +412,9 @@ static double NFBNumber(NSString *key, double fallback) {
     NSString *floatingApp = NFBTrollVisibleApp();
     // Keep the fast watcher in step with reality every time we recompute layout.
     [self syncFloatingWatch:floatingApp];
+    // A keyboard outranks everything else: typing is the one moment the bubbles
+    // must be out of the way, so it pulls them all back in no matter what.
+    BOOL keyboardUp = NFBKeyboardVisible();
     id springboard = UIApplication.sharedApplication;
     BOOL home = [springboard respondsToSelector:@selector(isShowingHomescreen)] && [springboard isShowingHomescreen];
     NSString *active = floatingApp ?: (home ? nil : NFBString(NFBGet(NFBGet(springboard, @"_accessibilityFrontMostApplication"), @"bundleIdentifier")));
@@ -447,6 +453,9 @@ static double NFBNumber(NSString *key, double fallback) {
     [self ensureWindow];
     self.window.hidden = NO;
     for (NSString *app in [self.needsReveal copy]) {
+        // An open keyboard outranks even a fresh notification: leave the reveal
+        // pending instead of burning it, so it shows the moment typing ends.
+        if (keyboardUp) break;
         if ([self.store.appIDs containsObject:app]) [self extendApp:app];
         [self.needsReveal removeObject:app];
     }
@@ -493,8 +502,11 @@ static double NFBNumber(NSString *key, double fallback) {
         [self updateBubble:button record:[self.store latestForApp:appID]];
         // A bubble we already started retracting must not be re-expanded by the
         // stale "window still visible" reading taken mid-transition.
-        BOOL floating = [floatingApp isEqualToString:appID] && ![self.retracting containsObject:appID];
-        BOOL expanded = floating || [self.expandedUntil[appID] doubleValue] > CACurrentMediaTime();
+        BOOL retracting = [self.retracting containsObject:appID];
+        BOOL timed = [self.expandedUntil[appID] doubleValue] > CACurrentMediaTime();
+        // With an app sitting in the TrollOpen split view every bubble stays out
+        // instead of only that app's, so the whole row is reachable at a glance.
+        BOOL expanded = !keyboardUp && !retracting && (floatingApp.length > 0 || timed);
         CGAffineTransform target = CGAffineTransformMakeTranslation(expanded ? 0 : NFBRetraction(diameter), 0);
         CGRect targetBounds = CGRectMake(0, 0, side, side);
         CGPoint targetCenter = CGPointMake(side / 2, NFBRowCenter(apps.count, index, step, side));

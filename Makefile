@@ -10,7 +10,7 @@ include $(THEOS)/makefiles/common.mk
 # was loaded into every app on the device; dropping it removes that per-launch
 # cost. To restore it, re-add the target below and NotifyBubblesBack.plist.
 TWEAK_NAME = NotifyBubbles
-NotifyBubbles_FILES = Sources/Tweak.m Sources/NFBStore.m Sources/NFBManager.m Sources/NFBSwitcher.m Sources/NFBTrollOpen.m Sources/NFBNotificationPolicy.m Sources/NFBAppExit.m
+NotifyBubbles_FILES = Sources/Tweak.m Sources/NFBStore.m Sources/NFBManager.m Sources/NFBSwitcher.m Sources/NFBTrollOpen.m Sources/NFBNotificationPolicy.m Sources/NFBAppExit.m Sources/NFBKeyboard.m
 NotifyBubbles_CFLAGS = -fobjc-arc -Wall -Wextra
 NotifyBubbles_FRAMEWORKS = UIKit Foundation QuartzCore UserNotifications
 NotifyBubbles_LIBRARIES = substrate
