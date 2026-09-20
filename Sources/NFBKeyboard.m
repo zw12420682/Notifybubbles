@@ -8,8 +8,8 @@ static BOOL NFBKeyboardNotified = NO;
 static void (^NFBKeyboardChange)(void);
 
 // A keyboard window among SpringBoard's own windows. Conservative: the window
-// must be visible, otherwise a permanently present-but-hidden text effects
-// window would keep the bubbles retracted forever.
+// must be visible and keyboard-sized, otherwise a permanently present-but-empty
+// placeholder would keep the bubbles retracted forever.
 static BOOL NFBKeyboardWindowUp(void) {
     UIApplication *app = UIApplication.sharedApplication;
     if (![app respondsToSelector:@selector(connectedScenes)]) return NO;
@@ -18,7 +18,14 @@ static BOOL NFBKeyboardWindowUp(void) {
         for (UIWindow *window in ((UIWindowScene *)scene).windows) {
             if (window.hidden || window.alpha <= 0.01) continue;
             NSString *name = NSStringFromClass(window.class);
-            if ([name containsString:@"RemoteKeyboard"] || [name containsString:@"TextEffects"]) return YES;
+            // UITextEffectsWindow is present in SpringBoard even with no keyboard
+            // (it hosts the magnifier / text-selection handles), so it must never
+            // count as a keyboard — matching it was keeping every bubble retracted.
+            BOOL keyboard = [name isEqualToString:@"UIRemoteKeyboardWindow"] ||
+                            [name isEqualToString:@"UIKeyboardWindow"];
+            // A real keyboard spans the screen width and is tall; an empty
+            // pre-created placeholder is tiny, so require a keyboard-sized frame.
+            if (keyboard && window.bounds.size.height >= 100) return YES;
         }
     }
     return NO;
@@ -51,7 +58,20 @@ static BOOL NFBKeyboardSystemUp(void) {
 }
 
 BOOL NFBKeyboardVisible(void) {
-    return NFBKeyboardNotified || NFBKeyboardWindowUp() || NFBKeyboardSystemUp();
+    BOOL notified = NFBKeyboardNotified;
+    BOOL window = NFBKeyboardWindowUp();
+    BOOL system = NFBKeyboardSystemUp();
+    BOOL up = notified || window || system;
+    // Log every flip, not just notification-driven ones, so a polled source
+    // (window/system) that is stuck high shows up here with its per-source flags.
+    static BOOL last = NO;
+    static BOOL seen = NO;
+    if (!seen || up != last) {
+        seen = YES;
+        last = up;
+        NFBDebugLog(@"keyboard: %@ (notified=%d window=%d system=%d)", up ? @"up" : @"down", notified, window, system);
+    }
+    return up;
 }
 
 static void NFBKeyboardSet(BOOL notified) {
@@ -59,9 +79,6 @@ static void NFBKeyboardSet(BOOL notified) {
     NFBKeyboardNotified = notified;
     BOOL after = NFBKeyboardVisible();
     if (before == after) return;
-    NFBDebugLog(@"keyboard: %@ (notified=%d window=%d system=%d)",
-                after ? @"up" : @"down", NFBKeyboardNotified,
-                NFBKeyboardWindowUp(), NFBKeyboardSystemUp());
     if (NFBKeyboardChange) NFBKeyboardChange();
 }
 
