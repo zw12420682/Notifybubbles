@@ -6,11 +6,11 @@
 // Forward declaration: fetches an object-returning no-argument method result.
 static id NFBTrollObject(id object, NSString *name);
 
-// The floating-window object's real selector set is not fully documented: the
-// official 1.3.7 build and the 1.5.2 custom build differ, and the device proved
-// closeCurrentFloatingWindow is not callable on the 1.5.2 build in use. Dump the
-// methods containing control-related keywords exactly once so the debug file
-// reveals the correct selector names instead of us guessing again.
+// The TrollOpen selector set is not fully documented: the official 1.3.7 build
+// and the 1.5.2 custom build differ, and control actions such as
+// closeCurrentFloatingWindow live on the BRIDGE CLASS, not on the floating window
+// instance. Dump the methods containing control-related keywords exactly once so
+// the debug file reveals the correct selector names instead of us guessing again.
 static void NFBDumpFloatingWindowInterfaces(id window) {
     static BOOL dumped = NO;
     if (dumped) return;
@@ -42,44 +42,61 @@ BOOL NFBSplitTrollFrontmostApp(void) {
     }
 }
 
-// Close the current floating window. The precise selector differs between builds,
-// so try the known-likely names in order and report which one answered. A void or
-// BOOL return with zero arguments is accepted.
+// Close the current floating window. The device-side method dump proved
+// closeCurrentFloatingWindow is a CLASS method on TOJBBarGestureBridge
+// (B16@0:8 on the metaclass), NOT an instance method on the floating window —
+// which is why the earlier instance-based lookup always reported "unavailable".
 BOOL NFBCloseCurrentFloatingWindow(void) {
     if (!NSThread.isMainThread) return NO;
     @try {
         Class bridge = NSClassFromString(@"TOJBBarGestureBridge");
-        id window = NFBTrollObject(bridge, @"currentVisibleFloatingWindow");
-        NFBDebugLog(@"close: currentVisibleFloatingWindow=%@ class=%@",
-                    window ?: @"<nil>", window ? NSStringFromClass([window class]) : @"<nil>");
-        if (!window) return NO;
-        NFBDumpFloatingWindowInterfaces(window);
-        NSArray<NSString *> *candidates = @[@"closeCurrentFloatingWindow", @"closeFloatingWindow",
-                                            @"dismissCurrentFloatingWindow", @"hideCurrentFloatingWindow",
-                                            @"removeCurrentFloatingWindow", @"closeCurrentWindow"];
-        for (NSString *name in candidates) {
-            SEL selector = NSSelectorFromString(name);
-            if (![window respondsToSelector:selector]) {
-                NFBDebugLog(@"close: -%@ not available", name);
-                continue;
-            }
-            NSMethodSignature *sig = [window methodSignatureForSelector:selector];
+        SEL selector = NSSelectorFromString(@"closeCurrentFloatingWindow");
+        if (bridge && [bridge respondsToSelector:selector]) {
+            NSMethodSignature *sig = [bridge methodSignatureForSelector:selector];
             char ret = sig ? sig.methodReturnType[0] : '?';
-            if (!sig || sig.numberOfArguments != 2 || (ret != 'v' && ret != 'B' && ret != 'c')) {
-                NFBDebugLog(@"close: -%@ signature mismatch ret=%c args=%lu", name, ret,
-                            sig ? (unsigned long)sig.numberOfArguments : 0);
-                continue;
+            if (sig && sig.numberOfArguments == 2 && (ret == 'v' || ret == 'B' || ret == 'c')) {
+                ((void (*)(id, SEL))objc_msgSend)(bridge, selector);
+                NFBDebugLog(@"close: invoked +[TOJBBarGestureBridge closeCurrentFloatingWindow]");
+                return YES;
             }
-            ((void (*)(id, SEL))objc_msgSend)(window, selector);
-            NFBDebugLog(@"close: invoked -%@ successfully", name);
+            NFBDebugLog(@"close: class method signature mismatch ret=%c args=%lu", ret,
+                        sig ? (unsigned long)sig.numberOfArguments : 0);
+        } else {
+            NFBDebugLog(@"close: +[TOJBBarGestureBridge closeCurrentFloatingWindow] not available");
+        }
+        // Fallback: the floating window instance exposes process-closing helpers
+        // (also confirmed present in the device-side dump, both void with no args).
+        id window = NFBTrollObject(bridge, @"currentVisibleFloatingWindow");
+        for (NSString *name in @[@"closeWindowWithoutTerminatingProcessImmediately",
+                                 @"closeWindowWithoutTerminatingProcessWithoutAnimation"]) {
+            SEL sel = NSSelectorFromString(name);
+            if (![window respondsToSelector:sel]) continue;
+            NSMethodSignature *sig = [window methodSignatureForSelector:sel];
+            if (!sig || sig.numberOfArguments != 2 || sig.methodReturnType[0] != 'v') continue;
+            ((void (*)(id, SEL))objc_msgSend)(window, sel);
+            NFBDebugLog(@"close: invoked -%@ (fallback)", name);
             return YES;
         }
-        NFBDebugLog(@"close: no usable close selector on the floating window");
+        NFBDebugLog(@"close: no usable close path");
         return NO;
     } @catch (__unused NSException *error) {
         NFBDebugLog(@"TrollOpen close failed: %@", error);
         return NO;
     }
+}
+
+// Read a zero-argument NSInteger/int property into `out`; NO when unavailable.
+static BOOL NFBReadInteger(id object, NSString *name, NSInteger *out) {
+    if (!object || !out) return NO;
+    SEL selector = NSSelectorFromString(name);
+    if (![object respondsToSelector:selector]) return NO;
+    NSMethodSignature *sig = [object methodSignatureForSelector:selector];
+    if (!sig || sig.numberOfArguments != 2) return NO;
+    char ret = sig.methodReturnType[0];
+    if (ret == 'q' || ret == 'l') *out = ((NSInteger (*)(id, SEL))objc_msgSend)(object, selector);
+    else if (ret == 'i') *out = (NSInteger)((int (*)(id, SEL))objc_msgSend)(object, selector);
+    else return NO;
+    return YES;
 }
 
 // Toggle the current floating window orientation (portrait <-> landscape).
@@ -96,23 +113,42 @@ BOOL NFBToggleOrientation(void) {
                     window ?: @"<nil>", window ? NSStringFromClass([window class]) : @"<nil>");
         if (!window) return NO;
         NFBDumpFloatingWindowInterfaces(window);
-        // Read current landscape state (isLandscape, read-only BOOL).
-        BOOL landscape = NO;
-        SEL isLand = NSSelectorFromString(@"isLandscape");
-        @try {
-            if ([window respondsToSelector:isLand]) {
-                NSMethodSignature *sig = [window methodSignatureForSelector:isLand];
-                if (sig && sig.numberOfArguments == 2 &&
-                    (sig.methodReturnType[0] == 'B' || sig.methodReturnType[0] == 'c'))
-                    landscape = ((BOOL (*)(id, SEL))objc_msgSend)(window, isLand);
+        // isLandscape does NOT exist on this build — the device-side method dump
+        // lists only containerOrientation / sceneOrientation (both `q`). Reading a
+        // nonexistent isLandscape always yielded NO, so the window could only ever
+        // be rotated one way. Read the real orientation integer instead.
+        NSInteger current = 0;
+        BOOL known = NO;
+        for (NSString *name in @[@"containerOrientation", @"sceneOrientation"]) {
+            if (NFBReadInteger(window, name, &current)) {
+                known = YES;
+                NFBDebugLog(@"rotate: %@=%ld", name, (long)current);
+                break;
             }
-        } @catch (__unused NSException *e) {}
-        NFBDebugLog(@"rotate: isLandscape=%d", landscape);
-        // Target the opposite orientation.
-        NSInteger target = landscape ? 1 /* UIInterfaceOrientationPortrait */
-                                     : 3 /* UIInterfaceOrientationLandscapeRight */;
+            NFBDebugLog(@"rotate: -%@ unavailable", name);
+        }
+        NSInteger target;
+        if (known) {
+            // 1 = UIInterfaceOrientationPortrait; anything else counts as landscape.
+            target = (current == 1) ? 3 /* LandscapeRight */ : 1 /* Portrait */;
+        } else {
+            // Legacy fallback path for builds that only expose the BOOL.
+            BOOL landscape = NO;
+            SEL isLand = NSSelectorFromString(@"isLandscape");
+            @try {
+                if ([window respondsToSelector:isLand]) {
+                    NSMethodSignature *sig = [window methodSignatureForSelector:isLand];
+                    if (sig && sig.numberOfArguments == 2 &&
+                        (sig.methodReturnType[0] == 'B' || sig.methodReturnType[0] == 'c'))
+                        landscape = ((BOOL (*)(id, SEL))objc_msgSend)(window, isLand);
+                }
+            } @catch (__unused NSException *e) {}
+            NFBDebugLog(@"rotate: fallback isLandscape=%d", landscape);
+            target = landscape ? 1 : 3;
+        }
+        NFBDebugLog(@"rotate: known=%d current=%ld -> target=%ld", known, (long)current, (long)target);
         // Drive it through setContainerOrientation: (primary) or the siblings.
-        for (NSString *name in @[@"setContainerOrientation:", @"setDeviceOrientation:", @"setSceneOrientation:"]) {
+        for (NSString *name in @[@"setContainerOrientation:", @"setSceneOrientation:", @"setDeviceOrientation:"]) {
             SEL sel = NSSelectorFromString(name);
             if (![window respondsToSelector:sel]) {
                 NFBDebugLog(@"rotate: -%@ not available", name);

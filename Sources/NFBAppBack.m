@@ -58,7 +58,9 @@ static void NFBDumpControllerTree(UIViewController *controller, NSUInteger depth
     if (controller.presentedViewController)
         NFBDumpControllerTree(controller.presentedViewController, depth + 1);
 }
-static BOOL NFBPerformBack(void) {
+// Returns an NFBBackStatus describing what happened, so the requester can report
+// the precise reason even though this process's own log file is sandboxed away.
+static uint8_t NFBPerformBack(void) {
     // This tweak runs INSIDE the target app's own process, so it must operate on
     // that app's own windows — never another process. TrollOpen floats the app in
     // a window while the app's scene may report Background (the system foreground
@@ -72,10 +74,9 @@ static BOOL NFBPerformBack(void) {
     NFBDebugLog(@"--- perform back: %lu scenes ---", (unsigned long)scenes.count);
     for (UIScene *scene in scenes) {
         if (![scene isKindOfClass:UIWindowScene.class]) continue;
-        NFBDebugLog(@"scene %@ state=%ld windows=%lu session=%@",
+        NFBDebugLog(@"scene %@ state=%ld windows=%lu",
                     NSStringFromClass(scene.class), (long)scene.activationState,
-                    (unsigned long)((UIWindowScene *)scene).windows.count,
-                    scene.session ? NSStringFromClass(scene.session.class) : @"<nil>");
+                    (unsigned long)((UIWindowScene *)scene).windows.count);
         for (UIWindow *window in ((UIWindowScene *)scene).windows) {
             NFBDebugLog(@"  scene window %p hidden=%d alpha=%.2f level=%.1f key=%d root=%@",
                         (__bridge void *)window, window.hidden, window.alpha, window.windowLevel, window.isKeyWindow,
@@ -105,7 +106,7 @@ static BOOL NFBPerformBack(void) {
     }
     if (candidates.count == 0) {
         NFBDebugLog(@"no visible window candidates; nothing to operate on");
-        return NO;
+        return NFBBackStatusNoWindow;
     }
     NFBDebugLog(@"window candidates total=%lu", (unsigned long)candidates.count);
     // Prefer the window whose visible controller owns a navigation stack with a
@@ -138,6 +139,7 @@ static BOOL NFBPerformBack(void) {
     for (UIWindow *candidate in candidates) {
         if (candidate != window) [ordered addObject:candidate];
     }
+    uint8_t blocked = 0;
     for (UIWindow *candidate in ordered) {
         UIViewController *visible = NFBVisibleController(candidate.rootViewController);
         if (!visible || visible.transitionCoordinator || [visible isKindOfClass:UIAlertController.class]) {
@@ -145,6 +147,7 @@ static BOOL NFBPerformBack(void) {
                         visible ? NSStringFromClass(visible.class) : @"<nil>",
                         visible && visible.transitionCoordinator != nil,
                         [visible isKindOfClass:UIAlertController.class]);
+            if (!blocked) blocked = NFBBackStatusTransitioning;
             continue;
         }
         UINavigationController *nav = visible.navigationController;
@@ -152,16 +155,18 @@ static BOOL NFBPerformBack(void) {
             // A custom left button may mean menu/delete, not back. Do not invoke it.
             if (visible.navigationItem.leftBarButtonItem || visible.navigationItem.leftBarButtonItems.count) {
                 NFBDebugLog(@"nav has custom left button, skip");
+                if (!blocked) blocked = NFBBackStatusCustomBackItem;
                 continue;
             }
             if (visible.navigationItem.hidesBackButton) {
                 NFBDebugLog(@"nav hidesBackButton, skip");
+                if (!blocked) blocked = NFBBackStatusCustomBackItem;
                 continue;
             }
             BOOL popped = [nav popViewControllerAnimated:YES] != nil;
             NFBDebugLog(@"nav pop (direct) %@ stack=%lu", popped ? @"OK" : @"FAIL",
                         (unsigned long)nav.viewControllers.count);
-            if (popped) return YES;
+            if (popped) return NFBBackStatusPerformed;
         }
         // Deep search: the parent link can be broken under TrollOpen hosting even
         // though a navigation stack with back history still exists in the tree.
@@ -176,14 +181,15 @@ static BOOL NFBPerformBack(void) {
             if (found.viewControllers.count > 1 && !found.transitionCoordinator) {
                 BOOL popped = [found popViewControllerAnimated:YES] != nil;
                 NFBDebugLog(@"nav pop (deep) %@", popped ? @"OK" : @"FAIL");
-                if (popped) return YES;
+                if (popped) return NFBBackStatusPerformed;
             }
         }
         WKWebView *web = NFBBackWebView(visible.viewIfLoaded, 0);
-        if (web) { [web goBack]; NFBDebugLog(@"webview goBack OK"); return YES; }
+        if (web) { [web goBack]; NFBDebugLog(@"webview goBack OK"); return NFBBackStatusPerformed; }
     }
-    NFBDebugLog(@"no back action found across %lu windows", (unsigned long)ordered.count);
-    return NO;
+    NFBDebugLog(@"no back action found across %lu windows (blocked=%u)",
+                (unsigned long)ordered.count, (unsigned)blocked);
+    return blocked ? blocked : NFBBackStatusNoBackAction;
 }
 __attribute__((constructor)) static void NFBInstallAppBack(void) {
     @autoreleasepool {
@@ -210,14 +216,14 @@ __attribute__((constructor)) static void NFBInstallAppBack(void) {
                 }
                 lastRequest = request;
                 NFBDebugLog(@"=== back request %llu for %@ ===", request, app);
-                BOOL performed = NO;
-                @try { performed = NFBPerformBack(); } @catch (__unused NSException *e) {
+                uint8_t status = NFBBackStatusException;
+                @try { status = NFBPerformBack(); } @catch (__unused NSException *e) {
                     NFBDebugLog(@"perform back threw: %@", e);
                 }
-                NFBDebugLog(@"=== back result=%d ===", performed);
+                NFBDebugLog(@"=== back result status=%u ===", (unsigned)status);
                 int responseToken = 0;
                 if (notify_register_check(reply.UTF8String, &responseToken) == NOTIFY_STATUS_OK) {
-                    notify_set_state(responseToken, (request << 2) | (performed ? 1 : 2));
+                    notify_set_state(responseToken, (request << NFBBackStatusShift) | (status & 0xF));
                     notify_post(reply.UTF8String);
                     notify_cancel(responseToken);
                 } else {

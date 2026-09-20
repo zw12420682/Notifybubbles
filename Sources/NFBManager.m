@@ -594,11 +594,21 @@ static double NFBNumber(NSString *key, double fallback) {
         // No pending notification and the bubble is the current floating window:
         // perform the app's back navigation (equivalent to an edge swipe back).
         NFBDebugLog(@"tap: single tap on current floating app -> back request for %@", app);
-        NFBRequestAppBack(app, ^(NSInteger result) {
-            NFBDebugLog(@"tap: back result=%ld for %@", (long)result, app);
-            if (result == 0)
-                [self showOpenNotice:@"当前页面没有可用的返回操作，或使用了自定义导航"];
-            else if (result < 0)
+        NFBRequestAppBack(app, ^(NSInteger result, NSInteger reason) {
+            NFBDebugLog(@"tap: back result=%ld reason=%ld for %@", (long)result, (long)reason, app);
+            if (result == 0) {
+                // Prefer the precise reason reported by the app process.
+                NSString *text = @"当前页面没有可用的返回操作，或使用了自定义导航";
+                if (reason == NFBBackStatusNoWindow)
+                    text = @"该 App 内未取到可用窗口（分屏托管下常见），未执行返回";
+                else if (reason == NFBBackStatusCustomBackItem)
+                    text = @"当前页面导航栏有自定义按钮或隐藏了返回，未执行返回";
+                else if (reason == NFBBackStatusTransitioning)
+                    text = @"页面正在转场或弹窗中，未执行返回";
+                else if (reason == NFBBackStatusException)
+                    text = @"返回时发生异常，已跳过";
+                [self showOpenNotice:text];
+            } else if (result < 0)
                 [self showOpenNotice:@"App 返回组件未响应，请允许插件注入该 App 并重新打开它"];
         });
         return;

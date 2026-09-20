@@ -6,12 +6,15 @@ BOOL NFBSplitTrollFrontmostApp(void);
 
 NSString *NFBTrollVisibleApp(void);
 
-// Close the current floating window. Calls the floating window's
-// closeCurrentFloatingWindow instance method (verified in both 1.3.7 and 1.5.2).
+// Close the current floating window. Calls the CLASS method
+// +[TOJBBarGestureBridge closeCurrentFloatingWindow] (confirmed by the device-side
+// method dump: B16@0:8 on the bridge metaclass). Falls back to the floating
+// window's closeWindowWithoutTerminatingProcess* instance helpers.
 BOOL NFBCloseCurrentFloatingWindow(void);
 
 // Toggle the current floating window orientation (portrait <-> landscape).
-// Reads isLandscape and drives setContainerOrientation: on the floating window
-// instance (TOJBClass012), the real "rotate" interface behind the green bar's
-// long-press action.
+// Reads containerOrientation (falling back to sceneOrientation / isLandscape) and
+// drives setContainerOrientation: on the floating window instance (TOJBClass012).
+// Note: isLandscape does not exist on the 1.5.2 build, so the orientation integer
+// is the reliable source of the current state.
 BOOL NFBToggleOrientation(void);
