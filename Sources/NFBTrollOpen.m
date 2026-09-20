@@ -1,9 +1,27 @@
 #import "NFBTrollOpen.h"
+#import "NFBDebugLog.h"
 #import <objc/message.h>
 #include <string.h>
 
 // Forward declaration: fetches an object-returning no-argument method result.
 static id NFBTrollObject(id object, NSString *name);
+
+// The floating-window object's real selector set is not fully documented: the
+// official 1.3.7 build and the 1.5.2 custom build differ, and the device proved
+// closeCurrentFloatingWindow is not callable on the 1.5.2 build in use. Dump the
+// methods containing control-related keywords exactly once so the debug file
+// reveals the correct selector names instead of us guessing again.
+static void NFBDumpFloatingWindowInterfaces(id window) {
+    static BOOL dumped = NO;
+    if (dumped) return;
+    dumped = YES;
+    NFBDumpMethods(window, NO, @"floating", @[@"close", @"float", @"mini", @"full", @"hide", @"dismiss",
+                                             @"remove", @"orientation", @"rotate", @"landscape",
+                                             @"container", @"window", @"mode"]);
+    Class bridge = NSClassFromString(@"TOJBBarGestureBridge");
+    NFBDumpMethods(bridge, YES, @"bridge", @[@"floating", @"split", @"close", @"full", @"mini",
+                                             @"orientation", @"gesture", @"current", @"visible"]);
+}
 
 BOOL NFBSplitTrollFrontmostApp(void) {
     if (!NSThread.isMainThread) return NO;
@@ -19,27 +37,47 @@ BOOL NFBSplitTrollFrontmostApp(void) {
         ((void (*)(id, SEL))objc_msgSend)(bridge, selector);
         return YES;
     } @catch (__unused NSException *error) {
-        NSLog(@"[NotifyBubbles] TrollOpen foreground split failed");
+        NFBDebugLog(@"TrollOpen foreground split failed: %@", error);
         return NO;
     }
 }
 
-// Close the current floating window. closeCurrentFloatingWindow is an INSTANCE
-// method on the floating window object (TOJBClass012) returned by
-// +[TOJBBarGestureBridge currentVisibleFloatingWindow]. Call it on the instance.
+// Close the current floating window. The precise selector differs between builds,
+// so try the known-likely names in order and report which one answered. A void or
+// BOOL return with zero arguments is accepted.
 BOOL NFBCloseCurrentFloatingWindow(void) {
     if (!NSThread.isMainThread) return NO;
     @try {
-        id window = NFBTrollObject(NSClassFromString(@"TOJBBarGestureBridge"), @"currentVisibleFloatingWindow");
+        Class bridge = NSClassFromString(@"TOJBBarGestureBridge");
+        id window = NFBTrollObject(bridge, @"currentVisibleFloatingWindow");
+        NFBDebugLog(@"close: currentVisibleFloatingWindow=%@ class=%@",
+                    window ?: @"<nil>", window ? NSStringFromClass([window class]) : @"<nil>");
         if (!window) return NO;
-        SEL selector = NSSelectorFromString(@"closeCurrentFloatingWindow");
-        if (![window respondsToSelector:selector]) return NO;
-        NSMethodSignature *sig = [window methodSignatureForSelector:selector];
-        if (!sig || sig.numberOfArguments != 2 || strcmp(sig.methodReturnType, @encode(void)) != 0) return NO;
-        ((void (*)(id, SEL))objc_msgSend)(window, selector);
-        return YES;
+        NFBDumpFloatingWindowInterfaces(window);
+        NSArray<NSString *> *candidates = @[@"closeCurrentFloatingWindow", @"closeFloatingWindow",
+                                            @"dismissCurrentFloatingWindow", @"hideCurrentFloatingWindow",
+                                            @"removeCurrentFloatingWindow", @"closeCurrentWindow"];
+        for (NSString *name in candidates) {
+            SEL selector = NSSelectorFromString(name);
+            if (![window respondsToSelector:selector]) {
+                NFBDebugLog(@"close: -%@ not available", name);
+                continue;
+            }
+            NSMethodSignature *sig = [window methodSignatureForSelector:selector];
+            char ret = sig ? sig.methodReturnType[0] : '?';
+            if (!sig || sig.numberOfArguments != 2 || (ret != 'v' && ret != 'B' && ret != 'c')) {
+                NFBDebugLog(@"close: -%@ signature mismatch ret=%c args=%lu", name, ret,
+                            sig ? (unsigned long)sig.numberOfArguments : 0);
+                continue;
+            }
+            ((void (*)(id, SEL))objc_msgSend)(window, selector);
+            NFBDebugLog(@"close: invoked -%@ successfully", name);
+            return YES;
+        }
+        NFBDebugLog(@"close: no usable close selector on the floating window");
+        return NO;
     } @catch (__unused NSException *error) {
-        NSLog(@"[NotifyBubbles] TrollOpen close failed");
+        NFBDebugLog(@"TrollOpen close failed: %@", error);
         return NO;
     }
 }
@@ -52,8 +90,12 @@ BOOL NFBCloseCurrentFloatingWindow(void) {
 BOOL NFBToggleOrientation(void) {
     if (!NSThread.isMainThread) return NO;
     @try {
-        id window = NFBTrollObject(NSClassFromString(@"TOJBBarGestureBridge"), @"currentVisibleFloatingWindow");
+        Class bridge = NSClassFromString(@"TOJBBarGestureBridge");
+        id window = NFBTrollObject(bridge, @"currentVisibleFloatingWindow");
+        NFBDebugLog(@"rotate: currentVisibleFloatingWindow=%@ class=%@",
+                    window ?: @"<nil>", window ? NSStringFromClass([window class]) : @"<nil>");
         if (!window) return NO;
+        NFBDumpFloatingWindowInterfaces(window);
         // Read current landscape state (isLandscape, read-only BOOL).
         BOOL landscape = NO;
         SEL isLand = NSSelectorFromString(@"isLandscape");
@@ -65,23 +107,37 @@ BOOL NFBToggleOrientation(void) {
                     landscape = ((BOOL (*)(id, SEL))objc_msgSend)(window, isLand);
             }
         } @catch (__unused NSException *e) {}
+        NFBDebugLog(@"rotate: isLandscape=%d", landscape);
         // Target the opposite orientation.
         NSInteger target = landscape ? 1 /* UIInterfaceOrientationPortrait */
                                      : 3 /* UIInterfaceOrientationLandscapeRight */;
-        // Drive it through setContainerOrientation: (primary) or setDeviceOrientation: (fallback).
-        for (NSString *name in @[@"setContainerOrientation:", @"setDeviceOrientation:"]) {
+        // Drive it through setContainerOrientation: (primary) or the siblings.
+        for (NSString *name in @[@"setContainerOrientation:", @"setDeviceOrientation:", @"setSceneOrientation:"]) {
             SEL sel = NSSelectorFromString(name);
-            if (![window respondsToSelector:sel]) continue;
+            if (![window respondsToSelector:sel]) {
+                NFBDebugLog(@"rotate: -%@ not available", name);
+                continue;
+            }
             NSMethodSignature *sig = [window methodSignatureForSelector:sel];
-            if (!sig || sig.numberOfArguments != 3 || sig.methodReturnType[0] != 'v') continue;
+            if (!sig || sig.numberOfArguments != 3 || sig.methodReturnType[0] != 'v') {
+                NFBDebugLog(@"rotate: -%@ signature mismatch", name);
+                continue;
+            }
             char arg = [sig getArgumentTypeAtIndex:2][0];
-            if (arg != 'q' && arg != 'i' && arg != 'l' && arg != 's') continue;
+            if (arg != 'q' && arg != 'i' && arg != 'l' && arg != 's') {
+                NFBDebugLog(@"rotate: -%@ arg type %c unsupported", name, arg);
+                continue;
+            }
             ((void (*)(id, SEL, NSInteger))objc_msgSend)(window, sel, target);
+            NFBDebugLog(@"rotate: invoked -%@ target=%ld", name, (long)target);
             return YES;
         }
-    } @catch (__unused NSException *error) {}
-    NSLog(@"[NotifyBubbles] TrollOpen orientation toggle unavailable");
-    return NO;
+        NFBDebugLog(@"rotate: no usable orientation selector on the floating window");
+        return NO;
+    } @catch (__unused NSException *error) {
+        NFBDebugLog(@"TrollOpen orientation toggle failed: %@", error);
+        return NO;
+    }
 }
 
 static BOOL NFBTrollSignature(id target, SEL selector, BOOL hasFlag) {
@@ -110,7 +166,7 @@ BOOL NFBOpenTrollApp(NSString *bundleID) {
         ((void (*)(id, SEL, id))objc_msgSend)(target, open, bundleID);
         return YES;
     } @catch (__unused NSException *error) {
-        NSLog(@"[NotifyBubbles] TrollOpen adapter unavailable or failed");
+        NFBDebugLog(@"TrollOpen open app failed: %@", error);
         return NO;
     }
 }

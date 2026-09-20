@@ -1,6 +1,7 @@
 #import <UIKit/UIKit.h>
 #import <WebKit/WebKit.h>
 #import "NFBBackProtocol.h"
+#import "NFBDebugLog.h"
 #include <notify.h>
 
 static UIViewController *NFBVisibleController(UIViewController *controller) {
@@ -29,6 +30,34 @@ static WKWebView *NFBBackWebView(UIView *view, NSUInteger depth) {
     }
     return nil;
 }
+// Collect every UINavigationController reachable anywhere below (or presented
+// from) the given controller. TrollOpen's hosted scene can break the
+// `visible.navigationController` parent link while the navigation stack itself
+// still exists in the tree, so a deep search is the reliable way to find it.
+static void NFBCollectNavigationControllers(UIViewController *controller,
+    NSMutableArray<UINavigationController *> *out, NSUInteger depth) {
+    if (!controller || depth > 30) return;
+    if ([controller isKindOfClass:UINavigationController.class])
+        [out addObject:(UINavigationController *)controller];
+    for (UIViewController *child in controller.childViewControllers)
+        NFBCollectNavigationControllers(child, out, depth + 1);
+    if (controller.presentedViewController)
+        NFBCollectNavigationControllers(controller.presentedViewController, out, depth + 1);
+}
+// Compact controller-tree dump so the log shows where a navigation stack lives.
+static void NFBDumpControllerTree(UIViewController *controller, NSUInteger depth) {
+    if (!controller || depth > 4) return;
+    NSMutableString *indent = [NSMutableString string];
+    for (NSUInteger index = 0; index < depth; index++) [indent appendString:@"  "];
+    NFBDebugLog(@"%@tree %@ children=%lu presented=%@",
+                indent, NSStringFromClass(controller.class),
+                (unsigned long)controller.childViewControllers.count,
+                controller.presentedViewController ? NSStringFromClass(controller.presentedViewController.class) : @"<nil>");
+    for (UIViewController *child in controller.childViewControllers)
+        NFBDumpControllerTree(child, depth + 1);
+    if (controller.presentedViewController)
+        NFBDumpControllerTree(controller.presentedViewController, depth + 1);
+}
 static BOOL NFBPerformBack(void) {
     // This tweak runs INSIDE the target app's own process, so it must operate on
     // that app's own windows — never another process. TrollOpen floats the app in
@@ -39,19 +68,20 @@ static BOOL NFBPerformBack(void) {
     // that actually carries a navigation stack or a web view (the app's content),
     // falling back to the key window.
     NSMutableArray<UIWindow *> *candidates = [NSMutableArray array];
-    // Log scene states to reveal what TrollOpen does to the app's scene.
     NSSet<UIScene *> *scenes = UIApplication.sharedApplication.connectedScenes;
+    NFBDebugLog(@"--- perform back: %lu scenes ---", (unsigned long)scenes.count);
     for (UIScene *scene in scenes) {
         if (![scene isKindOfClass:UIWindowScene.class]) continue;
-        NSLog(@"[NotifyBubblesBack] scene %@ activationState=%ld windows=%lu",
-              NSStringFromClass(scene.class), (long)scene.activationState,
-              (unsigned long)((UIWindowScene *)scene).windows.count);
+        NFBDebugLog(@"scene %@ state=%ld windows=%lu session=%@",
+                    NSStringFromClass(scene.class), (long)scene.activationState,
+                    (unsigned long)((UIWindowScene *)scene).windows.count,
+                    scene.session ? NSStringFromClass(scene.session.class) : @"<nil>");
         for (UIWindow *window in ((UIWindowScene *)scene).windows) {
+            NFBDebugLog(@"  scene window %p hidden=%d alpha=%.2f level=%.1f key=%d root=%@",
+                        (void *)window, window.hidden, window.alpha, window.windowLevel, window.isKeyWindow,
+                        window.rootViewController ? NSStringFromClass(window.rootViewController.class) : @"<nil>");
             if (window.hidden || window.alpha < 0.01 || !window.rootViewController) continue;
             [candidates addObject:window];
-            NSLog(@"[NotifyBubblesBack]   window %@ root=%@ level=%.1f key=%d",
-                  window, NSStringFromClass(window.rootViewController.class),
-                  window.windowLevel, window.isKeyWindow);
         }
     }
     // TrollOpen may host the app's content window OUTSIDE its own scene. The
@@ -63,19 +93,21 @@ static BOOL NFBPerformBack(void) {
     #pragma clang diagnostic ignored "-Wdeprecated-declarations"
     NSArray<UIWindow *> *globalWindows = UIApplication.sharedApplication.windows;
     #pragma clang diagnostic pop
+    NFBDebugLog(@"global UIApplication.windows=%lu", (unsigned long)globalWindows.count);
     for (UIWindow *window in globalWindows) {
+        NFBDebugLog(@"  global window %p hidden=%d alpha=%.2f level=%.1f key=%d root=%@",
+                    (void *)window, window.hidden, window.alpha, window.windowLevel, window.isKeyWindow,
+                    window.rootViewController ? NSStringFromClass(window.rootViewController.class) : @"<nil>");
         if (window.hidden || window.alpha < 0.01 || !window.rootViewController) continue;
         if ([candidates containsObject:window]) continue;
         [candidates addObject:window];
-        NSLog(@"[NotifyBubblesBack] extra app window %@ root=%@ level=%.1f key=%d",
-              window, NSStringFromClass(window.rootViewController.class),
-              window.windowLevel, window.isKeyWindow);
+        NFBDebugLog(@"  (extra, not in any scene)");
     }
     if (candidates.count == 0) {
-        NSLog(@"[NotifyBubblesBack] no visible window candidates (scene state filter removed)");
+        NFBDebugLog(@"no visible window candidates; nothing to operate on");
         return NO;
     }
-    NSLog(@"[NotifyBubblesBack] %lu window candidates total", (unsigned long)candidates.count);
+    NFBDebugLog(@"window candidates total=%lu", (unsigned long)candidates.count);
     // Prefer the window whose visible controller owns a navigation stack with a
     // real back item, or that hosts a web view that can go back. Only fall back to
     // the key window or the first candidate when none carries a back action.
@@ -95,6 +127,9 @@ static BOOL NFBPerformBack(void) {
         }
     }
     if (!window) window = candidates.firstObject;
+    NFBDebugLog(@"preferred window=%p root=%@", (void *)window,
+                window.rootViewController ? NSStringFromClass(window.rootViewController.class) : @"<nil>");
+    NFBDumpControllerTree(window.rootViewController, 0);
     // Try the preferred window first, then fall back to every other candidate.
     // A floating container may re-parent the content view so the "preferred"
     // window's controller relationship is empty while a real nav stack still
@@ -106,38 +141,48 @@ static BOOL NFBPerformBack(void) {
     for (UIWindow *candidate in ordered) {
         UIViewController *visible = NFBVisibleController(candidate.rootViewController);
         if (!visible || visible.transitionCoordinator || [visible isKindOfClass:UIAlertController.class]) {
-            NSLog(@"[NotifyBubblesBack] skip window %@: visible=%@ transition=%d alert=%d",
-                  candidate, visible ? NSStringFromClass(visible.class) : @"<nil>",
-                  visible && visible.transitionCoordinator != nil,
-                  [visible isKindOfClass:UIAlertController.class]);
+            NFBDebugLog(@"skip window %p: visible=%@ transition=%d alert=%d", (void *)candidate,
+                        visible ? NSStringFromClass(visible.class) : @"<nil>",
+                        visible && visible.transitionCoordinator != nil,
+                        [visible isKindOfClass:UIAlertController.class]);
             continue;
         }
         UINavigationController *nav = visible.navigationController;
         if (nav && nav.visibleViewController == visible && nav.viewControllers.count > 1 && !nav.transitionCoordinator) {
             // A custom left button may mean menu/delete, not back. Do not invoke it.
             if (visible.navigationItem.leftBarButtonItem || visible.navigationItem.leftBarButtonItems.count) {
-                NSLog(@"[NotifyBubblesBack] nav has custom left button, skip");
+                NFBDebugLog(@"nav has custom left button, skip");
                 continue;
             }
             if (visible.navigationItem.hidesBackButton) {
-                NSLog(@"[NotifyBubblesBack] nav hidesBackButton, skip");
+                NFBDebugLog(@"nav hidesBackButton, skip");
                 continue;
             }
             BOOL popped = [nav popViewControllerAnimated:YES] != nil;
-            NSLog(@"[NotifyBubblesBack] nav pop %@ count=%lu", popped ? @"OK" : @"FAIL",
-                  (unsigned long)nav.viewControllers.count);
-            return popped;
+            NFBDebugLog(@"nav pop (direct) %@ stack=%lu", popped ? @"OK" : @"FAIL",
+                        (unsigned long)nav.viewControllers.count);
+            if (popped) return YES;
         }
-        NSLog(@"[NotifyBubblesBack] window %@ root=%@ visible=%@ navCount=%lu parent=%@ no-nav",
-              candidate,
-              NSStringFromClass(candidate.rootViewController.class),
-              NSStringFromClass(visible.class),
-              (unsigned long)(nav ? nav.viewControllers.count : 0),
-              visible.parentViewController ? NSStringFromClass(visible.parentViewController.class) : @"<nil>");
+        // Deep search: the parent link can be broken under TrollOpen hosting even
+        // though a navigation stack with back history still exists in the tree.
+        NSMutableArray<UINavigationController *> *navs = [NSMutableArray array];
+        NFBCollectNavigationControllers(candidate.rootViewController, navs, 0);
+        NFBDebugLog(@"deep nav search on window %p: found=%lu", (void *)candidate, (unsigned long)navs.count);
+        for (UINavigationController *found in navs) {
+            NFBDebugLog(@"  nav %@ stack=%lu visible=%@ transitioning=%d",
+                        NSStringFromClass(found.class), (unsigned long)found.viewControllers.count,
+                        found.visibleViewController ? NSStringFromClass(found.visibleViewController.class) : @"<nil>",
+                        found.transitionCoordinator != nil);
+            if (found.viewControllers.count > 1 && !found.transitionCoordinator) {
+                BOOL popped = [found popViewControllerAnimated:YES] != nil;
+                NFBDebugLog(@"nav pop (deep) %@", popped ? @"OK" : @"FAIL");
+                if (popped) return YES;
+            }
+        }
         WKWebView *web = NFBBackWebView(visible.viewIfLoaded, 0);
-        if (web) { [web goBack]; NSLog(@"[NotifyBubblesBack] webview goBack OK"); return YES; }
+        if (web) { [web goBack]; NFBDebugLog(@"webview goBack OK"); return YES; }
     }
-    NSLog(@"[NotifyBubblesBack] no back action found across %lu windows", (unsigned long)ordered.count);
+    NFBDebugLog(@"no back action found across %lu windows", (unsigned long)ordered.count);
     return NO;
 }
 __attribute__((constructor)) static void NFBInstallAppBack(void) {
@@ -147,10 +192,10 @@ __attribute__((constructor)) static void NFBInstallAppBack(void) {
         BOOL isSpringBoard = [app isEqual:@"com.apple.springboard"];
         BOOL isApp = path.length && [path hasSuffix:@".app"];
         BOOL isExtension = NSBundle.mainBundle.infoDictionary[@"NSExtension"] != nil;
-        // Log on every process we land in so the device log reveals where the
+        // Log on every process we land in so the debug file reveals where the
         // back tweak actually injected (or did not inject).
-        NSLog(@"[NotifyBubblesBack] constructor app=%@ path=%@ springboard=%d isApp=%d extension=%d",
-              app ?: @"<nil>", path ?: @"<nil>", isSpringBoard, isApp, isExtension);
+        NFBDebugLog(@"back constructor app=%@ springboard=%d isApp=%d extension=%d logpaths=%@",
+                    app ?: @"<nil>", isSpringBoard, isApp, isExtension, NFBDebugLogPaths());
         if (!app.length || isSpringBoard || !isApp || isExtension) return;
         dispatch_async(dispatch_get_main_queue(), ^{
             NSString *name = NFBBackName(app), *reply = [name stringByAppendingString:@".reply"];
@@ -159,27 +204,27 @@ __attribute__((constructor)) static void NFBInstallAppBack(void) {
             uint32_t reg = notify_register_dispatch(name.UTF8String, &token, dispatch_get_main_queue(), ^(int inputToken) {
                 uint64_t request = 0;
                 if (notify_get_state(inputToken, &request) != NOTIFY_STATUS_OK || request == lastRequest || !NFBBackFresh(request, NFBBackTime())) {
-                    NSLog(@"[NotifyBubblesBack] request ignored: state=%llu last=%llu now=%llu",
-                          request, lastRequest, NFBBackTime());
+                    NFBDebugLog(@"back request ignored state=%llu last=%llu now=%llu",
+                                request, lastRequest, NFBBackTime());
                     return;
                 }
                 lastRequest = request;
-                NSLog(@"[NotifyBubblesBack] handling back request=%llu app=%@", request, app);
+                NFBDebugLog(@"=== back request %llu for %@ ===", request, app);
                 BOOL performed = NO;
                 @try { performed = NFBPerformBack(); } @catch (__unused NSException *e) {
-                    NSLog(@"[NotifyBubblesBack] NFBPerformBack threw: %@", e);
+                    NFBDebugLog(@"perform back threw: %@", e);
                 }
-                NSLog(@"[NotifyBubblesBack] perform result=%d", performed);
+                NFBDebugLog(@"=== back result=%d ===", performed);
                 int responseToken = 0;
                 if (notify_register_check(reply.UTF8String, &responseToken) == NOTIFY_STATUS_OK) {
                     notify_set_state(responseToken, (request << 2) | (performed ? 1 : 2));
                     notify_post(reply.UTF8String);
                     notify_cancel(responseToken);
                 } else {
-                    NSLog(@"[NotifyBubblesBack] reply register failed");
+                    NFBDebugLog(@"reply register failed");
                 }
             });
-            NSLog(@"[NotifyBubblesBack] registered listener name=%@ token=%d status=%u", name, token, reg);
+            NFBDebugLog(@"back listener registered name=%@ token=%d status=%u", name, token, reg);
         });
     }
 }

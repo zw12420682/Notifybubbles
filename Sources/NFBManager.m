@@ -6,6 +6,7 @@
 #import "NFBTrollOpen.h"
 #import "NFBNotificationPolicy.h"
 #import "NFBBackRequest.h"
+#import "NFBDebugLog.h"
 
 static const NSTimeInterval NFBMotion = 0.6;
 static const NSTimeInterval NFBHold = 2.0;
@@ -466,6 +467,7 @@ static double NFBNumber(NSString *key, double fallback) {
     // mirror the green bar's long-press "rotate" action (portrait <-> landscape).
     // Non-floating apps keep the original burst-close.
     if ([NFBTrollVisibleApp() isEqualToString:button.appID]) {
+        NFBDebugLog(@"gesture: long press on current floating app %@ -> rotate", button.appID);
         if (!NFBToggleOrientation())
             [self showOpenNotice:@"TrollOpen 横竖屏切换接口不可用，请确认已安装适配的 1.5.2 隐根版并重启桌面"];
         return;
@@ -490,6 +492,7 @@ static double NFBNumber(NSString *key, double fallback) {
     // single tap and long press). Tapping another app's bubble does nothing.
     if (![NFBTrollVisibleApp() isEqualToString:button.appID]) return;
     // Double tap closes the current floating window.
+    NFBDebugLog(@"gesture: double tap on current floating app %@ -> close", button.appID);
     if (!NFBCloseCurrentFloatingWindow())
         [self showOpenNotice:@"TrollOpen 关闭分屏接口不可用，请确认已安装适配的 1.5.2 隐根版并重启桌面"];
 }
@@ -590,9 +593,9 @@ static double NFBNumber(NSString *key, double fallback) {
     if ([NFBTrollVisibleApp() isEqualToString:app]) {
         // No pending notification and the bubble is the current floating window:
         // perform the app's back navigation (equivalent to an edge swipe back).
-        NSLog(@"[NotifyBubbles] single tap -> back request for %@", app);
+        NFBDebugLog(@"tap: single tap on current floating app -> back request for %@", app);
         NFBRequestAppBack(app, ^(NSInteger result) {
-            NSLog(@"[NotifyBubbles] back result=%ld for %@", (long)result, app);
+            NFBDebugLog(@"tap: back result=%ld for %@", (long)result, app);
             if (result == 0)
                 [self showOpenNotice:@"当前页面没有可用的返回操作，或使用了自定义导航"];
             else if (result < 0)
