@@ -1,4 +1,4 @@
-# 通知悬浮气泡 · 0.35.0 测试工程
+# 通知悬浮气泡 · 0.36.0 测试工程
 
 目标：iPhone 14、iOS 16.0.3、Dopamine RootHide，搭配 TrollOpenJB 1.5.2 隐根版。
 
@@ -12,7 +12,7 @@
 - Makefile、control、README.md。
 - `NotifyBubbles.plist`（注入过滤器）。`NotifyBubblesBack.plist` 已随返回组件一起停用，不再需要上传。
 
-另外将 `.github/workflows/build.yml` 替换为新版。提交后在 Actions 查看最新构建，成功后下载 Artifacts 中 NotifyBubbles-RootHide，解压安装 0.35.0 的 deb 并重启桌面。
+另外将 `.github/workflows/build.yml` 替换为新版。提交后在 Actions 查看最新构建，成功后下载 Artifacts 中 NotifyBubbles-RootHide，解压安装 0.36.0 的 deb 并重启桌面。
 
 **本版只注入 SpringBoard。** 单击关闭分屏窗口、长按退出 App 都在桌面进程内完成，不再需要目标 App 注入，因此无需在 App 内允许插件，也不用为了生效而重启目标 App。
 
@@ -115,6 +115,13 @@
 - 0.34.0 只修正了数据顺序（新气泡往上加），但布局仍按「rail 顶部」定位（`top + (available-height)*position`），气泡增多时 rail 顶部往上、底部往下，表现为「中间向上下扩散」。
 - 现改为**锚定 rail 底部**：`railFrame.y = anchor + (step - side/2) - height`，其中 `anchor = top + available*position`。第一个气泡（index 0）的中心恒等于 `anchor`（不随数量变化），新气泡依次往上叠，整排只向上生长、不再向下扩散。
 - `position`（「整组图标上下位置」滑杆 / 分屏 0.80 / 键盘 0.49）语义从「整组位置」变为「第一个气泡中心在可用空间的 0=顶/1=底 位置」。
+
+自 0.36.0 起，非分屏时**无未读的气泡折叠成一条细边**，尽量少遮挡屏幕：
+
+- 非分屏时，只有**有未读**的气泡正常伸出显示；**无未读**的气泡缩回屏幕外、只留一条约 8pt 的细边（`NFBStackEdge`），且都堆叠到第一个气泡（最下面）的位置，重叠成一摞。
+- **点击细边 → 散开**：无未读气泡展开，可正常点击操作；**20 秒无动作 → 自动收起**（`NFBStackHold`）。散开期间任何点击都会重新计时。
+- 分屏时仍保持所有气泡伸出的原行为（`stacked` 仅在非分屏生效）。
+- 实现：新增 `stackUntil` 计时（0 = 折叠）、常量 `NFBStackHold=20`/`NFBStackEdge=8`；布局循环按 `stacked` 决定缩回量和堆叠位置；`tapped:` 折叠态点击转散开，`acceptGesture` 散开期间重置计时。
 
 ## 返回功能范围（0.18.0 起停用）
 

@@ -28,6 +28,12 @@ static const CGFloat NFBFloatingPosition = 0.80;
 // clear the keyboard. Applies in BOTH split view and fullscreen, and outranks
 // every other position rule.
 static const CGFloat NFBKeyboardPosition = 0.49;
+// How long the folded (no-unread) bubbles stay spread out after a tap on the
+// stack edge, before folding back into a thin stack.
+static const NSTimeInterval NFBStackHold = 20.0;
+// How many points of the folded stack stay visible at the screen edge, so there
+// is still a thin, tappable sliver to unfold them.
+static const CGFloat NFBStackEdge = 8.0;
 // Synthetic bubble id that rides at the top of the row while an app is in the
 // split view. Tapping it clears every background app at once. It never enters
 // the store or the switcher ordering.
@@ -131,6 +137,9 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic) BOOL showHome;
 @property(nonatomic) BOOL showApps;
 @property(nonatomic) NSTimeInterval lastGestureAt;
+// Until when the folded (no-unread) bubbles stay spread out after a tap. When
+// in the past, they fold back into a thin stack at the bottom edge.
+@property(nonatomic) NSTimeInterval stackUntil;
 // Apps whose bubble is already retracting because we asked TrollOpen to end the
 // floating window. Marking them lets the retract animation start on the same
 // frame as the window transition instead of waiting for the window to be gone.
@@ -630,6 +639,10 @@ static double NFBNumber(NSString *key, double fallback) {
     self.rail.contentSize = CGSizeMake(side, displayApps.count * step);
     CGFloat maxOffset = MAX(0, self.rail.contentSize.height - height);
     if (orderChanged || self.rail.contentOffset.y > maxOffset) self.rail.contentOffset = CGPointMake(0, maxOffset);
+    // Folded stack state (outside split view only): while "open", bubbles with no
+    // unread stay spread out; once the timer lapses they fold back into a thin
+    // stack at the bottom edge.
+    BOOL stackOpen = self.stackUntil > CACurrentMediaTime();
     [displayApps enumerateObjectsUsingBlock:^(NSString *appID, NSUInteger index, __unused BOOL *stop) {
         BOOL isClearAll = [appID isEqualToString:NFBClearAllID];
         NFBBubble *button = self.buttons[appID];
@@ -665,10 +678,18 @@ static double NFBNumber(NSString *key, double fallback) {
         BOOL timed = [self.expandedUntil[appID] doubleValue] > CACurrentMediaTime();
         // With an app sitting in the TrollOpen split view every bubble stays out
         // instead of only that app's, so the whole row is reachable at a glance.
-        BOOL expanded = !keyboardUp && !retracting && (floatingApp.length > 0 || timed);
-        CGAffineTransform target = CGAffineTransformMakeTranslation(expanded ? 0 : NFBRetraction(diameter), 0);
+        // Outside split view, bubbles with no unread fold into a thin stack unless
+        // the stack is currently spread open (stackOpen).
+        BOOL expanded = !keyboardUp && !retracting && (floatingApp.length > 0 || timed || stackOpen);
+        BOOL stacked = !isClearAll && floatingApp.length == 0 && !timed && !stackOpen;
+        CGFloat retraction = stacked ? (side - NFBStackEdge) : (expanded ? 0 : NFBRetraction(diameter));
+        CGAffineTransform target = CGAffineTransformMakeTranslation(retraction, 0);
         CGRect targetBounds = CGRectMake(0, 0, side, side);
-        CGPoint targetCenter = CGPointMake(side / 2, NFBRowCenter(displayApps.count, index, step, side));
+        // A folded bubble collapses onto the first bubble's row (the bottom edge),
+        // so every no-unread bubble overlaps into a single thin stack.
+        CGFloat rowY = NFBRowCenter(displayApps.count, index, step, side);
+        CGFloat stackY = NFBRowCenter(displayApps.count, 0, step, side);
+        CGPoint targetCenter = CGPointMake(side / 2, stacked ? stackY : rowY);
         if (fresh) {
             button.bounds = targetBounds;
             button.center = targetCenter;
@@ -723,6 +744,9 @@ static double NFBNumber(NSString *key, double fallback) {
     NSTimeInterval now = CACurrentMediaTime();
     if (now - self.lastGestureAt < NFBGestureCooldown) return NO;
     self.lastGestureAt = now;
+    // While the folded stack is spread open, any tap keeps it open for another
+    // NFBStackHold seconds — only 20 seconds of no action folds it back.
+    if (self.stackUntil > now) self.stackUntil = now + NFBStackHold;
     return YES;
 }
 // A bubble belongs to the app currently occupying the TrollOpen floating window.
@@ -826,6 +850,17 @@ static double NFBNumber(NSString *key, double fallback) {
 - (void)tapped:(NFBBubble *)button {
     if (button.opening || self.buttons[button.appID] != button) return;
     if (self.pendingRecord && [self.pendingRecord.appID isEqual:button.appID]) return;
+    // Tapping a folded stack (outside split view, no unread, stack currently
+    // folded) spreads the bubbles out instead of opening any app.
+    if (NFBTrollVisibleApp().length == 0) {
+        BOOL timed = [self.expandedUntil[button.appID] doubleValue] > CACurrentMediaTime();
+        if (!timed && self.stackUntil <= CACurrentMediaTime()) {
+            self.stackUntil = CACurrentMediaTime() + NFBStackHold;
+            NFBDebugLog(@"gesture: tap on folded stack -> unfold for %.0fs", NFBStackHold);
+            [self refresh];
+            return;
+        }
+    }
     if (![self acceptGesture]) return;
     button.opening = YES;
     [self extendApp:button.appID];
