@@ -59,6 +59,12 @@ static NSDate *NFBRequestDate(id request) {
         if ([r.appID isEqual:appID] && (!latest || [r.timestamp compare:latest.timestamp] != NSOrderedAscending)) latest = r;
     return latest;
 }
+- (NSUInteger)countForApp:(NSString *)appID {
+    NSUInteger n = 0;
+    for (NFBRecord *r in self.records)
+        if ([r.appID isEqual:appID]) n++;
+    return n;
+}
 - (void)consumeRecord:(NFBRecord *)record {
     if (!record) return;
     [self.consumed addObject:@[record.appID, record.notificationID, record.revision]];

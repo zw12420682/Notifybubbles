@@ -24,6 +24,10 @@ static const CGFloat NFBFloatingDim = 0.3;
 // Vertical position (0 = top, 1 = bottom) the whole row shifts to while an app
 // is in the split view, so it clears the floating window. Restores on exit.
 static const CGFloat NFBFloatingPosition = 0.80;
+// Synthetic bubble id that rides at the top of the row while an app is in the
+// split view. Tapping it clears every background app at once. It never enters
+// the store or the switcher ordering.
+static NSString * const NFBClearAllID = @"__notifybubbles.clearall__";
 #import <QuartzCore/QuartzCore.h>
 
 static CFStringRef const NFBDomain = CFSTR("local.notifybubbles");
@@ -151,6 +155,9 @@ static double NFBNumber(NSString *key, double fallback) {
 - (void)openApp:(NSString *)app;
 - (void)showOpenNotice:(NSString *)message;
 - (BOOL)isLocked;
+- (void)clearBackground;
+- (void)clearAllTapped:(UITapGestureRecognizer *)gesture;
+- (void)styleClearAllButton:(NFBBubble *)button;
 @end
 
 @implementation NFBManager
@@ -225,11 +232,52 @@ static double NFBNumber(NSString *key, double fallback) {
 - (NSArray<NSString *> *)orderedAppsForRemoval {
     NSMutableOrderedSet *apps = [NSMutableOrderedSet orderedSetWithArray:self.lastLayoutApps ?: @[]];
     [apps addObjectsFromArray:self.store.appIDs];
+    [apps removeObject:NFBClearAllID];
     return apps.array;
 }
 - (void)clear {
     [self.dismissedSwitcher addObjectsFromArray:self.lastSwitcher ?: @[]];
     [self closeAppsInOrder:[self orderedAppsForRemoval]];
+}
+// "一键清理后台": terminate every app in the switcher/row except the one still
+// occupying the floating window, mirroring the long-press exit path but for the
+// whole background at once.
+- (void)clearBackground {
+    NSString *floating = NFBTrollVisibleApp();
+    NSMutableArray<NSString *> *targets = [NSMutableArray array];
+    for (NSString *app in [self orderedAppsForRemoval]) {
+        if ([app isEqualToString:floating]) continue;
+        [targets addObject:app];
+    }
+    if (!targets.count) return;
+    NFBDebugLog(@"gesture: clear-background -> %lu apps", (unsigned long)targets.count);
+    [self.dismissedSwitcher addObjectsFromArray:targets];
+    [self closeAppsInOrder:targets];
+    [targets enumerateObjectsUsingBlock:^(NSString *app, NSUInteger index, __unused BOOL *stop) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((0.35 + index * 0.16) * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+            NFBTerminateApp(app);
+            [self refresh];
+        });
+    }];
+}
+- (void)clearAllTapped:(UITapGestureRecognizer *)gesture {
+    if (gesture.state != UIGestureRecognizerStateEnded) return;
+    NFBBubble *button = (NFBBubble *)gesture.view;
+    if (self.buttons[button.appID] != button) return;
+    if (![self acceptGesture]) return;
+    [self clearBackground];
+}
+// Give the clear-all bubble a distinct look: a red-tinted trash glyph, no badge,
+// and an accessibility label so VoiceOver reads it as an action, not an app.
+- (void)styleClearAllButton:(NFBBubble *)button {
+    button.badge.hidden = YES;
+    button.imageView.contentMode = UIViewContentModeCenter;
+    button.imageView.image = [UIImage systemImageNamed:@"trash.fill"];
+    button.imageView.tintColor = UIColor.systemRedColor;
+    button.imageView.backgroundColor = UIColor.secondarySystemBackgroundColor;
+    button.accessibilityLabel = @"一键清理后台";
+    button.accessibilityHint = @"点击终止所有后台应用";
 }
 - (BOOL)isLocked {
     id lock = NFBSingleton(@"SBLockScreenManager");
@@ -387,10 +435,12 @@ static double NFBNumber(NSString *key, double fallback) {
 }
 - (void)updateBubble:(NFBBubble *)button record:(NFBRecord *)record {
     id icon = [self iconForApp:button.appID];
-    id badge = NFBGet(icon, @"badgeNumberOrString");
-    NSString *text = nil;
-    if ([badge isKindOfClass:NSNumber.class] && [badge longLongValue] > 0) text = [badge stringValue];
-    if ([badge isKindOfClass:NSString.class] && [badge length] && ![badge isEqualToString:@"0"]) text = badge;
+    // The badge reflects this app's unread count in our own store, not the
+    // system icon's badge number. That keeps the badge visible for every app
+    // with a pending notification (including in split view) and lets it clear
+    // the moment the record is consumed — i.e. when the app is opened.
+    NSUInteger unread = [self.store countForApp:button.appID];
+    NSString *text = unread > 0 ? [NSString stringWithFormat:@"%lu", (unsigned long)unread] : nil;
     button.badge.hidden = !text.length;
     button.badge.text = text;
     CGFloat width = MAX(20, [text sizeWithAttributes:@{NSFontAttributeName:button.badge.font}].width + 10);
@@ -398,11 +448,17 @@ static double NFBNumber(NSString *key, double fallback) {
     NSString *name = NFBString(NFBGet(icon, @"displayName")) ?: button.appID;
     button.accessibilityLabel = [NSString stringWithFormat:@"%@，%@", name, text ?: (record ? @"有通知" : @"暂无新通知")];
     button.accessibilityHint = @"点击打开通知，无通知时通过 TrollOpen 分屏打开，长按关闭图标";
+    // Secondary cleanup: when the system icon's own badge drops to zero (the app
+    // was opened and cleared it) but no withdraw reached us, drop this app's
+    // records so the store-count badge above also clears on the next refresh.
+    id systemBadge = NFBGet(icon, @"badgeNumberOrString");
+    BOOL systemCleared = NO;
+    if ([systemBadge isKindOfClass:NSNumber.class]) systemCleared = [systemBadge longLongValue] <= 0;
+    else if ([systemBadge isKindOfClass:NSString.class]) systemCleared = ![systemBadge length] || [systemBadge isEqualToString:@"0"];
     NSNumber *previous = self.lastBadges[button.appID];
-    if (previous.doubleValue > 0 && (!text.length || [text isEqualToString:@"0"]))
-        [self.store removeApp:button.appID];
-    if ([badge isKindOfClass:NSNumber.class]) self.lastBadges[button.appID] = badge;
-    else if (!text.length) self.lastBadges[button.appID] = @0;
+    if (previous.doubleValue > 0 && systemCleared) [self.store removeApp:button.appID];
+    if ([systemBadge isKindOfClass:NSNumber.class]) self.lastBadges[button.appID] = systemBadge;
+    else if (systemCleared) self.lastBadges[button.appID] = @0;
     id image = self.icons[button.appID];
     if (!image) {
         SEL sel = NSSelectorFromString(@"_applicationIconImageForBundleIdentifier:format:scale:");
@@ -460,10 +516,15 @@ static double NFBNumber(NSString *key, double fallback) {
         if (![self.lastActiveApp isEqual:active]) [self.store promoteApp:active];
     }
     self.lastActiveApp = active;
-    BOOL orderChanged = ![self.lastLayoutApps isEqualToArray:apps];
-    self.lastLayoutApps = [apps copy];
+    // While an app is in the split view, a synthetic "clear background" bubble
+    // rides at the very top of the row. It is layout-only: never in the store,
+    // never promoted, and dropped the moment the split view closes.
+    NSMutableArray<NSString *> *displayApps = [apps mutableCopy];
+    if (floatingApp.length > 0) [displayApps addObject:NFBClearAllID];
+    BOOL orderChanged = ![self.lastLayoutApps isEqualToArray:displayApps];
+    self.lastLayoutApps = [displayApps copy];
     for (NSString *appID in self.buttons.allKeys) {
-        if ([apps containsObject:appID]) continue;
+        if ([displayApps containsObject:appID]) continue;
         NFBBubble *button = self.buttons[appID];
         [self.buttons removeObjectForKey:appID];
         [self.expandedUntil removeObjectForKey:appID];
@@ -504,7 +565,7 @@ static double NFBNumber(NSString *key, double fallback) {
     CGFloat side = diameter + 14;
     CGFloat step = side + 4;
     CGFloat available = MAX(side, bounds.size.height - top - MAX(safe.bottom, 20) - 20);
-    CGFloat height = MIN(available, apps.count * step);
+    CGFloat height = MIN(available, displayApps.count * step);
     // While an app is in the split view the whole row shifts down to clear the
     // floating window (NFBFloatingPosition), then returns to the user's slider
     // setting once the split view closes.
@@ -517,30 +578,38 @@ static double NFBNumber(NSString *key, double fallback) {
             options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
             animations:^{ self.rail.frame = railFrame; } completion:nil];
     }
-    self.rail.contentSize = CGSizeMake(side, apps.count * step);
+    self.rail.contentSize = CGSizeMake(side, displayApps.count * step);
     CGFloat maxOffset = MAX(0, self.rail.contentSize.height - height);
     if (orderChanged || self.rail.contentOffset.y > maxOffset) self.rail.contentOffset = CGPointMake(0, maxOffset);
-    [apps enumerateObjectsUsingBlock:^(NSString *appID, NSUInteger index, __unused BOOL *stop) {
+    [displayApps enumerateObjectsUsingBlock:^(NSString *appID, NSUInteger index, __unused BOOL *stop) {
+        BOOL isClearAll = [appID isEqualToString:NFBClearAllID];
         NFBBubble *button = self.buttons[appID];
         BOOL fresh = !button;
         if (fresh) {
             button = [[NFBBubble alloc] initWithFrame:CGRectZero];
             button.appID = appID;
-            // Double tap is intentionally not installed. Removing it lets the tap
-            // recognizer resolve on touch-up instead of waiting out the multi-tap
-            // window, which is what made the old single tap feel half a beat late.
-            UITapGestureRecognizer *singleTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(singleTapped:)];
-            singleTap.numberOfTapsRequired = 1;
-            [button addGestureRecognizer:singleTap];
-            UILongPressGestureRecognizer *hold = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(longPressed:)];
-            hold.minimumPressDuration = 0.45;
-            // Cancel the tap once a hold is recognised, so exit never fires twice.
-            hold.cancelsTouchesInView = YES;
-            [button addGestureRecognizer:hold];
+            if (isClearAll) {
+                UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(clearAllTapped:)];
+                tap.numberOfTapsRequired = 1;
+                [button addGestureRecognizer:tap];
+            } else {
+                // Double tap is intentionally not installed. Removing it lets the tap
+                // recognizer resolve on touch-up instead of waiting out the multi-tap
+                // window, which is what made the old single tap feel half a beat late.
+                UITapGestureRecognizer *singleTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(singleTapped:)];
+                singleTap.numberOfTapsRequired = 1;
+                [button addGestureRecognizer:singleTap];
+                UILongPressGestureRecognizer *hold = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(longPressed:)];
+                hold.minimumPressDuration = 0.45;
+                // Cancel the tap once a hold is recognised, so exit never fires twice.
+                hold.cancelsTouchesInView = YES;
+                [button addGestureRecognizer:hold];
+            }
             self.buttons[appID] = button;
             [self.rail addSubview:button];
         }
-        [self updateBubble:button record:[self.store latestForApp:appID]];
+        if (isClearAll) [self styleClearAllButton:button];
+        else [self updateBubble:button record:[self.store latestForApp:appID]];
         // A bubble we already started retracting must not be re-expanded by the
         // stale "window still visible" reading taken mid-transition.
         BOOL retracting = [self.retracting containsObject:appID];
@@ -550,7 +619,7 @@ static double NFBNumber(NSString *key, double fallback) {
         BOOL expanded = !keyboardUp && !retracting && (floatingApp.length > 0 || timed);
         CGAffineTransform target = CGAffineTransformMakeTranslation(expanded ? 0 : NFBRetraction(diameter), 0);
         CGRect targetBounds = CGRectMake(0, 0, side, side);
-        CGPoint targetCenter = CGPointMake(side / 2, NFBRowCenter(apps.count, index, step, side));
+        CGPoint targetCenter = CGPointMake(side / 2, NFBRowCenter(displayApps.count, index, step, side));
         if (fresh) {
             button.bounds = targetBounds;
             button.center = targetCenter;
@@ -559,16 +628,21 @@ static double NFBNumber(NSString *key, double fallback) {
             button.transform = CGAffineTransformMakeTranslation(side + 10, 0);
             button.alpha = 0;
         }
-        // In split view the owning app stays fully opaque while the rest dim, so
-        // it reads as the active bubble without being reordered.
+        // The clear-all bubble is an action, not an app: keep it fully opaque so
+        // it stays discoverable, unlike the dimmed background bubbles around it.
         CGFloat alpha = self.iconOpacity;
-        if (floatingApp.length > 0) {
+        if (isClearAll) {
+            alpha = 1.0;
+        } else if (floatingApp.length > 0) {
             if ([floatingApp isEqualToString:appID]) {
                 // The split-view app's bubble must read clearly even when the
                 // user has the opacity slider down low, so pin it to full alpha.
                 alpha = 1.0;
             } else {
-                alpha = self.iconOpacity * NFBFloatingDim;
+                // The dimmed bubbles use a fixed fraction independent of the
+                // opacity slider; otherwise a low slider would push them nearly
+                // invisible.
+                alpha = NFBFloatingDim;
             }
         }
         BOOL changed = fresh || !CGRectEqualToRect(button.bounds, targetBounds) ||

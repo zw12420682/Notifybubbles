@@ -24,6 +24,7 @@ int main(void) {
         [s putApp:@"chat" notification:@"old" request:Request(100) destination:destination];
         Check([s.appIDs isEqual:@[@"switcherOnly", @"chat", @"mail"]], @"Notification keeps its app's existing position");
         Check([[s latestForApp:@"chat"].notificationID isEqual:@"new"], @"Queue sorts by notification timestamp, not delivery timing");
+        Check([s countForApp:@"chat"] == 2 && [s countForApp:@"mail"] == 1 && [s countForApp:@"switcherOnly"] == 0, @"Badge count reflects only unread notifications, not pins");
         Check(![s putApp:@"chat" notification:@"new" request:Request(300) destination:destination] && s.count == 3, @"Duplicate system delivery is not a second notification");
         [s promoteApp:@"mail"];
         Check([s.appIDs.firstObject isEqual:@"mail"] && s.count == 3, @"Foreground promotion preserves unread queues");
@@ -37,6 +38,7 @@ int main(void) {
         Check(![s putApp:@"chat" notification:@"new" request:Request(300) destination:destination], @"Consumed duplicate cannot reenter queue");
         [s consumeRecord:[s latestForApp:@"chat"]];
         Check(![s latestForApp:@"chat"] && [s.appIDs containsObject:@"chat"], @"Empty queue keeps icon and selects ordinary launch");
+        Check([s countForApp:@"chat"] == 0, @"Opening the app consumes the badge count");
         Check([s putApp:@"chat" notification:@"new" request:Request(400) destination:destination], @"Reused identifier with a new timestamp is a new message");
         NFBRecord *revision = [s latestForApp:@"chat"];
         [s putApp:@"chat" notification:@"new" request:Request(500) destination:destination];

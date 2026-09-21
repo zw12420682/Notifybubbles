@@ -15,6 +15,7 @@
 - (void)promoteApp:(NSString *)appID;
 - (void)pinApp:(NSString *)appID;
 - (NFBRecord *)latestForApp:(NSString *)appID;
+- (NSUInteger)countForApp:(NSString *)appID;
 - (void)consumeRecord:(NFBRecord *)record;
 - (void)removeApp:(NSString *)appID notification:(NSString *)notificationID;
 - (void)removeApp:(NSString *)appID;
