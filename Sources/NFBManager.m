@@ -2,12 +2,14 @@
 #import "NFBPrivate.h"
 #import "NFBStore.h"
 #import "NFBGeometry.h"
+#import "NFBStorageLayout.h"
 #import "NFBSwitcher.h"
 #import "NFBTrollOpen.h"
 #import "NFBNotificationPolicy.h"
 #import "NFBAppExit.h"
 #import "NFBKeyboard.h"
 #import "NFBDebugLog.h"
+#import "NFBEdgeInspection.h"
 
 static const NSTimeInterval NFBMotion = 0.6;
 // How long a bubble stays expanded after an unread arrives.
@@ -31,13 +33,10 @@ static const CGFloat NFBKeyboardPosition = 0.49;
 // How long the folded (no-unread) bubbles stay spread out after a tap on the
 // stack edge, before folding back into a thin stack.
 static const NSTimeInterval NFBStackHold = 20.0;
-// Vertical stagger between adjacent folded bubbles, so a folded stack reads as
-// a deck of half-hidden icons instead of collapsing every bubble onto the same
-// row and leaving only the topmost one visible.
-static const CGFloat NFBStackFan = 10.0;
 // Synthetic bubble id that rides at the top of the row while an app is in the
 // split view. Tapping it clears every background app at once. It never enters
 // the store or the switcher ordering.
+static NSString * const NFBStorageID = @"__notifybubbles.storage__";
 static NSString * const NFBClearAllID = @"__notifybubbles.clearall__";
 #import <QuartzCore/QuartzCore.h>
 
@@ -175,6 +174,7 @@ static double NFBNumber(NSString *key, double fallback) {
 - (void)clearBackground;
 - (void)clearAllTapped:(UITapGestureRecognizer *)gesture;
 - (void)styleClearAllButton:(NFBBubble *)button;
+- (void)styleStorageButton:(NFBBubble *)button count:(NSUInteger)count;
 - (void)shakeBubble:(NFBBubble *)button;
 @end
 
@@ -257,6 +257,7 @@ static double NFBNumber(NSString *key, double fallback) {
     NSMutableOrderedSet *apps = [NSMutableOrderedSet orderedSetWithArray:self.lastLayoutApps ?: @[]];
     [apps addObjectsFromArray:self.store.appIDs];
     [apps removeObject:NFBClearAllID];
+    [apps removeObject:NFBStorageID];
     return apps.array;
 }
 - (void)clear {
@@ -586,11 +587,19 @@ static double NFBNumber(NSString *key, double fallback) {
         if (![self.lastActiveApp isEqual:active]) [self.store promoteApp:active];
     }
     self.lastActiveApp = active;
+    if (floatingApp.length) NFBInspectTrollEdges();
     // While an app is in the split view, a synthetic "clear background" bubble
     // rides at the very top of the row. It is layout-only: never in the store,
     // never promoted, and dropped the moment the split view closes.
     NSMutableArray<NSString *> *displayApps = [apps mutableCopy];
     if (floatingApp.length > 0) [displayApps addObject:NFBClearAllID];
+    BOOL stackOpen = self.stackUntil > CACurrentMediaTime();
+    NSUInteger storedCount = 0;
+    if (!floatingApp.length && !stackOpen) {
+        displayApps = NFBFoldedRows(apps, NFBStorageID, ^NSUInteger(NSString *app) {
+            return [self.store countForApp:app];
+        }, &storedCount);
+    }
     BOOL orderChanged = ![self.lastLayoutApps isEqualToArray:displayApps];
     self.lastLayoutApps = [displayApps copy];
     for (NSString *appID in self.buttons.allKeys) {
@@ -633,7 +642,7 @@ static double NFBNumber(NSString *key, double fallback) {
     CGFloat top = MAX(safe.top, 48) + 30;
     CGFloat diameter = self.iconSize;
     CGFloat side = diameter + 14;
-    CGFloat step = side + 4;
+    CGFloat step = storedCount ? diameter + 8 : side + 4;
     CGFloat available = MAX(side, bounds.size.height - top - MAX(safe.bottom, 20) - 20);
     CGFloat height = MIN(available, displayApps.count * step);
     // Keyboard outranks every other rule (typing must never be covered): the row
@@ -659,21 +668,18 @@ static double NFBNumber(NSString *key, double fallback) {
     self.rail.contentSize = CGSizeMake(side, displayApps.count * step);
     CGFloat maxOffset = MAX(0, self.rail.contentSize.height - height);
     if (orderChanged || self.rail.contentOffset.y > maxOffset) self.rail.contentOffset = CGPointMake(0, maxOffset);
-    // Folded stack state (outside split view only): while "open", bubbles with no
-    // unread stay spread out; once the timer lapses they fold back into a thin
-    // stack at the bottom edge.
-    BOOL stackOpen = self.stackUntil > CACurrentMediaTime();
-    // Folded bubbles fan out slightly (each a few points higher) so the stack
-    // reads as a deck of retracted icons instead of a single lonely bubble.
-    __block NSInteger stackedCount = 0;
     [displayApps enumerateObjectsUsingBlock:^(NSString *appID, NSUInteger index, __unused BOOL *stop) {
         BOOL isClearAll = [appID isEqualToString:NFBClearAllID];
+        BOOL isStorage = [appID isEqualToString:NFBStorageID];
         NFBBubble *button = self.buttons[appID];
         BOOL fresh = !button;
         if (fresh) {
             button = [[NFBBubble alloc] initWithFrame:CGRectZero];
             button.appID = appID;
-            if (isClearAll) {
+            if (isStorage) {
+                UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(storageTapped:)];
+                [button addGestureRecognizer:tap];
+            } else if (isClearAll) {
                 UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(clearAllTapped:)];
                 tap.numberOfTapsRequired = 1;
                 [button addGestureRecognizer:tap];
@@ -693,7 +699,8 @@ static double NFBNumber(NSString *key, double fallback) {
             self.buttons[appID] = button;
             [self.rail addSubview:button];
         }
-        if (isClearAll) [self styleClearAllButton:button];
+        if (isStorage) [self styleStorageButton:button count:storedCount];
+        else if (isClearAll) [self styleClearAllButton:button];
         else [self updateBubble:button record:[self.store latestForApp:appID]];
         // A bubble we already started retracting must not be re-expanded by the
         // stale "window still visible" reading taken mid-transition.
@@ -707,30 +714,16 @@ static double NFBNumber(NSString *key, double fallback) {
         // Outside split view, bubbles with no unread fold into a stack unless the
         // stack is currently spread open (stackOpen).
         BOOL expanded = !keyboardUp && !retracting && (floatingApp.length > 0 || hasUnread || stackOpen);
-        BOOL stacked = !isClearAll && floatingApp.length == 0 && !hasUnread && !stackOpen;
-        // Folded bubbles still retract by the usual amount (half the icon stays
-        // visible), just like the pre-fold retraction; they only collapse onto a
-        // shared row to overlap.
-        CGFloat retraction = expanded ? 0 : NFBRetraction(diameter);
+        CGFloat retraction = (isStorage && !keyboardUp) ? 0 : (expanded ? 0 : NFBRetraction(diameter));
         CGAffineTransform target = CGAffineTransformMakeTranslation(retraction, 0);
         CGRect targetBounds = CGRectMake(0, 0, side, side);
-        // A folded bubble collapses toward the first bubble's row (the bottom
-        // edge), then each one fans a little higher than the one below it, so
-        // every no-unread bubble peeks out as a deck instead of hiding behind the
-        // single topmost bubble.
         CGFloat rowY = NFBRowCenter(displayApps.count, index, step, side);
-        CGFloat stackY = NFBRowCenter(displayApps.count, 0, step, side);
-        CGFloat foldedY = stackY;
-        if (stacked) {
-            foldedY = stackY - stackedCount * NFBStackFan;
-            stackedCount += 1;
-        }
-        CGPoint targetCenter = CGPointMake(side / 2, stacked ? foldedY : rowY);
+        CGPoint targetCenter = CGPointMake(side / 2, rowY);
         if (fresh) {
             button.bounds = targetBounds;
             button.center = targetCenter;
             button.imageView.frame = CGRectMake(7, 7, diameter, diameter);
-            button.imageView.layer.cornerRadius = diameter / 2;
+            button.imageView.layer.cornerRadius = isStorage ? diameter * 0.32 : diameter / 2;
             button.transform = CGAffineTransformMakeTranslation(side + 10, 0);
             button.alpha = 0;
         }
@@ -767,7 +760,7 @@ static double NFBNumber(NSString *key, double fallback) {
                     button.bounds = targetBounds;
                     button.center = targetCenter;
                     button.imageView.frame = CGRectMake(7, 7, diameter, diameter);
-                    button.imageView.layer.cornerRadius = diameter / 2;
+                    button.imageView.layer.cornerRadius = isStorage ? diameter * 0.32 : diameter / 2;
                     button.transform = target;
                     button.alpha = alpha;
                 } completion:nil];
@@ -878,6 +871,43 @@ static double NFBNumber(NSString *key, double fallback) {
         button.transform = CGAffineTransformScale(button.transform, 1.16, 1.16); button.alpha = 0;
     } completion:^(__unused BOOL done) { [button removeFromSuperview]; }];
 }
+- (void)styleStorageButton:(NFBBubble *)button count:(NSUInteger)count {
+    button.imageView.image = [UIImage systemImageNamed:@"square.stack.3d.up.fill"];
+    button.imageView.contentMode = UIViewContentModeCenter;
+    button.imageView.tintColor = UIColor.labelColor;
+    button.imageView.backgroundColor = UIColor.clearColor;
+    button.imageView.layer.borderWidth = 0.5;
+    button.imageView.layer.borderColor = [UIColor.separatorColor colorWithAlphaComponent:0.35].CGColor;
+    UIVisualEffectView *material = (UIVisualEffectView *)[button.imageView viewWithTag:39001];
+    if (!material) {
+        material = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterial]];
+        material.tag = 39001; material.userInteractionEnabled = NO;
+        material.frame = button.imageView.bounds;
+        material.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        [button.imageView insertSubview:material atIndex:0];
+        // UIImageView draws its own image behind subviews; use a foreground glyph.
+        UIImageView *glyph = [[UIImageView alloc] initWithImage:button.imageView.image];
+        glyph.contentMode = UIViewContentModeCenter; glyph.tintColor = UIColor.labelColor;
+        glyph.frame = material.bounds; glyph.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        [material.contentView addSubview:glyph];
+    }
+    button.imageView.image = nil;
+    button.badge.hidden = NO;
+    button.badge.text = count > 99 ? @"99+" : [NSString stringWithFormat:@"%lu", (unsigned long)count];
+    button.badge.backgroundColor = UIColor.secondarySystemBackgroundColor;
+    button.badge.textColor = UIColor.secondaryLabelColor;
+    CGFloat width = count > 99 ? 28 : 22;
+    button.badge.frame = CGRectMake(self.iconSize + 14 - width, self.iconSize - 8, width, 18);
+    button.badge.font = [UIFont systemFontOfSize:10 weight:UIFontWeightSemibold];
+    button.badge.layer.cornerRadius = 9;
+    button.accessibilityLabel = [NSString stringWithFormat:@"收纳了 %lu 个应用", (unsigned long)count];
+    button.accessibilityHint = @"点击展开，20 秒无操作后自动收起";
+}
+- (void)storageTapped:(UITapGestureRecognizer *)gesture {
+    if (gesture.state != UIGestureRecognizerStateEnded || ![self acceptGesture]) return;
+    self.stackUntil = CACurrentMediaTime() + NFBStackHold;
+    [self refresh];
+}
 - (void)singleTapped:(UITapGestureRecognizer *)gesture {
     if (gesture.state != UIGestureRecognizerStateEnded) return;
     NFBBubble *button = (NFBBubble *)gesture.view;
@@ -886,17 +916,6 @@ static double NFBNumber(NSString *key, double fallback) {
 - (void)tapped:(NFBBubble *)button {
     if (button.opening || self.buttons[button.appID] != button) return;
     if (self.pendingRecord && [self.pendingRecord.appID isEqual:button.appID]) return;
-    // Tapping a folded stack (outside split view, no unread, stack currently
-    // folded) spreads the bubbles out instead of opening any app.
-    if (NFBTrollVisibleApp().length == 0) {
-        BOOL hasUnread = [self.store countForApp:button.appID] > 0;
-        if (!hasUnread && self.stackUntil <= CACurrentMediaTime()) {
-            self.stackUntil = CACurrentMediaTime() + NFBStackHold;
-            NFBDebugLog(@"gesture: tap on folded stack -> unfold for %.0fs", NFBStackHold);
-            [self refresh];
-            return;
-        }
-    }
     if (![self acceptGesture]) return;
     button.opening = YES;
     [self extendApp:button.appID];

@@ -1,3 +1,34 @@
+# 0.39.0 收纳外观与间距更新
+
+本版以用户提供的 0.38.0 为基础，保留原有分屏手势、键盘规则和退出逻辑，返回组件仍不构建。
+
+- 非分屏收起时，无未读应用合并为一个半透明圆角收纳按钮，带叠层图案与应用数量，不再显示一摞相互遮挡的 App 图标。
+- 未读图标紧贴收纳按钮向上排列，图像边缘间距固定约 8 点；收纳应用再多也不增加空位。
+- 点击收纳按钮展开，保留 20 秒无操作自动收起。收纳按钮没有长按退出 App 的动作。
+- 分屏时继续展示原有图标排列与清理按钮；键盘出现时保留原来的缩回规则。
+
+## 上传
+
+上传新版 Sources、Tests、Preferences、scripts 文件夹及 control、README.md 覆盖原仓库。Makefile 和 .github/workflows/build.yml 与所提供的 0.38.0 相同，无需改。不要套外层 NotifyBubbles 文件夹。
+
+## TrollOpen 边缘区域接口检查
+
+从此前提供的 TrollOpenJB 1.5.2 隐根安装包中确认 TOJBClass012 有对象返回、无参数的实例方法：leftTouchRegion、rightTouchRegion、bottomTouchRegion、topLikeTouchRegions、bottomLikeTouchRegions、allEdgeTouchRegions。这些是区域获取接口，不等于点击/长按动作入口。
+
+点击与长按目标方法有混淆，尚未确认绿色区域的准确动作回调。新版首次遇到浮窗时只读检查上述区域的 UIGestureRecognizer 目标与 selector，记录 EDGE 行；不调用、不替换手势，也不猜测执行混淆方法。
+
+安装后打开一次分屏，用 Filza 查找 /var/tmp/nfb-debug.log；若不存在则查 /var/mobile/Library/Logs/nfb-debug.log。把包含 EDGE 的日志发来，可据实际绑定确定单击、长按的 target、selector 和方法参数。若私有手势结构不可读取，日志会显示不可用，仍需进一步适配。
+
+## 验证状态
+
+文件、LF 换行、plist 和压缩包完整性本地检查；未执行 Apple 编译或真机测试。GitHub 原生测试新增：全部已读只占一行、未读紧邻收纳、全部未读不留空收纳按钮。
+
+真机重点：1/10/30 个已读应用加一条新通知，间距应相同；展开与 20 秒收起不误打开或退出应用；所有消息读完只剩收纳按钮；分屏、键盘与一键清理保持原行为。
+
+---
+
+以下保留 0.38.0 原说明与历史记录；其中旧收纳样式由本页上述规则替代。
+
 # 通知悬浮气泡 · 0.38.0 测试工程
 
 目标：iPhone 14、iOS 16.0.3、Dopamine RootHide，搭配 TrollOpenJB 1.5.2 隐根版。

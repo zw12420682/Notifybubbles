@@ -4,7 +4,7 @@ import plistlib
 
 root = Path(__file__).resolve().parents[1]
 required = [
-    'Makefile', 'control', 'Sources/NFBAppExit.h', 'Sources/NFBAppExit.m',
+    'Sources/NFBStorageLayout.h', 'Sources/NFBEdgeInspection.h', 'Makefile', 'control', 'Sources/NFBAppExit.h', 'Sources/NFBAppExit.m',
     # Retired app-side back helper: kept on disk so it can be restored, but the
     # Makefile must not build it (see the assertions below).
     'NotifyBubblesBack.plist', 'Sources/NFBAppBack.m',
@@ -32,7 +32,7 @@ assert not control_bytes.startswith(b'\xef\xbb\xbf'), 'control must be UTF-8 wit
 control = dict(line.split(': ', 1) for line in control_bytes.decode('utf-8').splitlines() if ': ' in line)
 assert control['Architecture'] == 'iphoneos-arm64e'
 assert 'THEOS_PACKAGE_SCHEME = roothide' in (root / 'Makefile').read_text()
-assert 'Sources/NFBSwitcher.m' in (root / 'Makefile').read_text(), 'Update the root Makefile for 0.38.0.'
+assert 'Sources/NFBSwitcher.m' in (root / 'Makefile').read_text(), 'Update the root Makefile for 0.39.0.'
 assert 'Sources/NFBKeyboard.m' in (root / 'Makefile').read_text(), 'Update the root Makefile for the keyboard watcher.'
 assert 'Sources/NFBTrollOpen.m' in (root / 'Makefile').read_text(), 'Update the root Makefile for TrollOpen integration.'
 assert 'Sources/NFBAppExit.m' in (root / 'Makefile').read_text(), 'Update the root Makefile for the exit helper.'
