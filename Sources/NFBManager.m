@@ -317,7 +317,7 @@ static double NFBNumber(NSString *key, double fallback) {
     if (!UIAccessibilityIsReduceMotionEnabled()) {
         CAKeyframeAnimation *shake = [CAKeyframeAnimation animationWithKeyPath:@"transform.translation.x"];
         shake.duration = 2.0;
-        shake.values = @[@0, @(-8), @8, @(-7), @7, @(-6), @6, @(-5), @5, @(-4), @4, @(-3), @3, @(-2), @2, @0];
+        shake.values = @[@0, @(-6), @6, @(-5.25), @5.25, @(-4.5), @4.5, @(-3.75), @3.75, @(-3), @3, @(-2.25), @2.25, @(-1.5), @1.5, @0];
         shake.keyTimes = @[@0, @(1.0/15), @(2.0/15), @(3.0/15), @(4.0/15), @(5.0/15), @(6.0/15), @(7.0/15),
                            @(8.0/15), @(9.0/15), @(10.0/15), @(11.0/15), @(12.0/15), @(13.0/15), @(14.0/15), @1.0];
         shake.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionLinear];
@@ -644,7 +644,12 @@ static double NFBNumber(NSString *key, double fallback) {
     CGFloat side = diameter + 14;
     CGFloat step = storedCount ? diameter + 8 : side + 4;
     CGFloat available = MAX(side, bounds.size.height - top - MAX(safe.bottom, 20) - 20);
-    CGFloat height = MIN(available, displayApps.count * step);
+    // Reserve space for badge/shadow and the shake's negative excursion.
+    // Compact rows have step < side, so their bottom otherwise clips by 6pt.
+    CGFloat padding = 12;
+    CGFloat railWidth = side + padding;
+    CGFloat contentHeight = displayApps.count * step + padding * 2;
+    CGFloat height = MIN(available, contentHeight);
     // Keyboard outranks every other rule (typing must never be covered): the row
     // shifts to NFBKeyboardPosition in both split view and fullscreen. Otherwise,
     // while an app is in the split view the row shifts down to clear the floating
@@ -658,14 +663,16 @@ static double NFBNumber(NSString *key, double fallback) {
     // the middle), which is not what we want.
     CGFloat anchor = top + available * position;
     // Use the actual screen edge, not safeArea.right, for exactly half exposure.
-    CGRect railFrame = CGRectMake(bounds.size.width - side, anchor + (step - side/2) - height, side, height);
+    CGFloat railY = anchor + (step - side/2) + padding - height;
+    railY = MAX(top, MIN(bounds.size.height - MAX(safe.bottom, 20) - 20 - height, railY));
+    CGRect railFrame = CGRectMake(bounds.size.width - railWidth, railY, railWidth, height);
     if (!CGRectEqualToRect(self.rail.frame, railFrame)) {
         if (CGRectIsEmpty(self.rail.frame)) self.rail.frame = railFrame;
         else [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : NFBMotion delay:0
             options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
             animations:^{ self.rail.frame = railFrame; } completion:nil];
     }
-    self.rail.contentSize = CGSizeMake(side, displayApps.count * step);
+    self.rail.contentSize = CGSizeMake(railWidth, contentHeight);
     CGFloat maxOffset = MAX(0, self.rail.contentSize.height - height);
     if (orderChanged || self.rail.contentOffset.y > maxOffset) self.rail.contentOffset = CGPointMake(0, maxOffset);
     [displayApps enumerateObjectsUsingBlock:^(NSString *appID, NSUInteger index, __unused BOOL *stop) {
@@ -718,7 +725,7 @@ static double NFBNumber(NSString *key, double fallback) {
         CGAffineTransform target = CGAffineTransformMakeTranslation(retraction, 0);
         CGRect targetBounds = CGRectMake(0, 0, side, side);
         CGFloat rowY = NFBRowCenter(displayApps.count, index, step, side);
-        CGPoint targetCenter = CGPointMake(side / 2, rowY);
+        CGPoint targetCenter = CGPointMake(padding + side / 2, padding + rowY);
         if (fresh) {
             button.bounds = targetBounds;
             button.center = targetCenter;

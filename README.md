@@ -1,3 +1,24 @@
+# 0.39.2 收纳按钮与抖动角标裁切修正
+
+- 紧凑排列的行距比按钮高度少 6 点，旧滚动区域按行距计算高度导致底部内容越界。本版在顶部、底部及左侧增加 12 点绘制留白，保持实际图标排列间距不变。
+- 抖动最大幅度由 8 点调整为 6 点，不超过展开图标距屏幕右边缘 7 点的余量。左侧留白用于防止角标左移时被滚动区域裁切。
+- 同步修改内容高度、滚动偏移和中心点，保留右侧收纳位置与点击穿透；列表被限制在屏幕安全区域内。
+- 保留 0.39.1 的 EDGE2 手势诊断，尚未接入未知回调。
+
+上传 Sources、Preferences、scripts 文件夹和 control、README.md 覆盖原仓库即可；Makefile、.github 不变。若从 0.38.0 升级，还需上传 Tests。
+
+本地完成几何范围与文件/压缩包检查，仍需 GitHub 编译及真机验证。
+
+# 0.39.1 边缘手势诊断补充
+
+用户日志确认边缘区域同时绑定 UITapGestureRecognizer 和 UILongPressGestureRecognizer，但 1800 条 EDGE 记录中没有 target/action 输出。不能据此认定接口不存在，也不能确认具体回调。
+
+本版仅增加 EDGE2 日志：手势描述、目标容器类型、条目描述及实际字段名称/类型；不调用这些动作，不改变 0.39.0 的收纳布局或交互。安装重启桌面后打开一次分屏即可记录，不要求反复点击或长按。
+
+从 0.39.0 升级可只上传 Sources/NFBEdgeInspection.h、control、Preferences/Resources/Info.plist、Preferences/Resources/Root.plist。也可覆盖整个 Sources 和 Preferences 文件夹以及 control、README.md。编译工作流不变。
+
+本地仅检查文件与压缩包，尚未运行 Apple 编译及真机测试。
+
 # 0.39.0 收纳外观与间距更新
 
 本版以用户提供的 0.38.0 为基础，保留原有分屏手势、键盘规则和退出逻辑，返回组件仍不构建。

@@ -2,6 +2,7 @@
 #import "NFBDebugLog.h"
 #import <objc/message.h>
 #include <string.h>
+#include <stdlib.h>
 
 static inline id NFBEdgeObject(id object, NSString *name) {
     SEL sel = NSSelectorFromString(name);
@@ -18,8 +19,21 @@ static inline void NFBInspectEdgeView(UIView *view, NSString *path, NSUInteger d
         NFBDebugLog(@"EDGE region=%@ view=%@ gesture=%@ enabled=%d", path, NSStringFromClass(view.class), NSStringFromClass(gesture.class), gesture.enabled);
         @try {
             id targets = [gesture valueForKey:@"_targets"];
-            if (![targets isKindOfClass:NSArray.class]) continue;
-            for (id entry in targets) {
+            NFBDebugLog(@"EDGE2 gestureDescription=%@", gesture.description);
+            NFBDebugLog(@"EDGE2 targetsClass=%@ targets=%@", NSStringFromClass([targets class]), targets);
+            NSArray *entries = [targets isKindOfClass:NSArray.class] ? targets :
+                ([targets isKindOfClass:NSSet.class] ? [targets allObjects] : @[]);
+            if ([targets isKindOfClass:NSOrderedSet.class]) entries = [targets array];
+            for (id entry in entries) {
+                NFBDebugLog(@"EDGE2 entryClass=%@ description=%@", NSStringFromClass([entry class]), entry);
+                // Report actual ivar names/types instead of silently requiring one layout.
+                for (Class cls = [entry class]; cls && cls != NSObject.class; cls = class_getSuperclass(cls)) {
+                    unsigned int count = 0;
+                    Ivar *vars = class_copyIvarList(cls, &count);
+                    for (unsigned int i = 0; i < count; i++)
+                        NFBDebugLog(@"EDGE2 ivar=%s type=%s", ivar_getName(vars[i]), ivar_getTypeEncoding(vars[i]));
+                    free(vars);
+                }
                 Ivar targetVar = class_getInstanceVariable([entry class], "_target");
                 Ivar actionVar = class_getInstanceVariable([entry class], "_action");
                 if (!targetVar || !actionVar || ivar_getTypeEncoding(targetVar)[0] != '@' || strcmp(ivar_getTypeEncoding(actionVar), ":") != 0) continue;
