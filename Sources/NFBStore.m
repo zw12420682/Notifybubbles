@@ -24,7 +24,12 @@ static NSDate *NFBRequestDate(id request) {
 }
 - (NSUInteger)count { return self.records.count; }
 - (NSArray<NSString *> *)appIDs { return self.pins.array; }
-- (void)pinApp:(NSString *)appID { if (appID.length) [self.pins addObject:appID]; }
+- (void)pinApp:(NSString *)appID {
+    // Switcher cards append ABOVE the existing bubbles: the first bubble stays
+    // anchored at the bottom (index 0 = lowest) and never moves, while each new
+    // bubble stacks upward on top of it.
+    if (appID.length) [self.pins addObject:appID];
+}
 - (void)promoteApp:(NSString *)appID {
     if (![self.pins containsObject:appID]) return;
     [self.pins removeObject:appID]; [self.pins insertObject:appID atIndex:0];
@@ -47,11 +52,12 @@ static NSDate *NFBRequestDate(id request) {
     record.request = request; record.destination = destination;
     record.timestamp = date ?: [NSDate date]; record.revision = revision;
     [self.records addObject:record];
-    // A brand-new app joins the BOTTOM of the row: with NFBRowCenter's
-    // "first icon is lowest" geometry, index 0 is the lowest bubble, so the row
-    // grows from the bottom upward and every new bubble pushes the rest up.
-    // An app that already has a bubble keeps its position (no re-promotion).
-    if (![self.pins containsObject:appID]) [self.pins insertObject:appID atIndex:0];
+    // A brand-new app joins ABOVE the existing bubbles (append): the first
+    // bubble keeps its spot at the bottom (index 0 = lowest, per NFBRowCenter's
+    // "first icon is lowest" geometry) and never moves, while each new bubble
+    // stacks upward on top of it. An app that already has a bubble keeps its
+    // position (no re-promotion).
+    if (![self.pins containsObject:appID]) [self.pins addObject:appID];
     if (self.records.count > 512) [self.records removeObjectAtIndex:0];
     return YES;
 }

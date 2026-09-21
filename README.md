@@ -1,4 +1,4 @@
-# 通知悬浮气泡 · 0.32.0 测试工程
+# 通知悬浮气泡 · 0.34.0 测试工程
 
 目标：iPhone 14、iOS 16.0.3、Dopamine RootHide，搭配 TrollOpenJB 1.5.2 隐根版。
 
@@ -12,7 +12,7 @@
 - Makefile、control、README.md。
 - `NotifyBubbles.plist`（注入过滤器）。`NotifyBubblesBack.plist` 已随返回组件一起停用，不再需要上传。
 
-另外将 `.github/workflows/build.yml` 替换为新版。提交后在 Actions 查看最新构建，成功后下载 Artifacts 中 NotifyBubbles-RootHide，解压安装 0.32.0 的 deb 并重启桌面。
+另外将 `.github/workflows/build.yml` 替换为新版。提交后在 Actions 查看最新构建，成功后下载 Artifacts 中 NotifyBubbles-RootHide，解压安装 0.34.0 的 deb 并重启桌面。
 
 **本版只注入 SpringBoard。** 单击关闭分屏窗口、长按退出 App 都在桌面进程内完成，不再需要目标 App 注入，因此无需在 App 内允许插件，也不用为了生效而重启目标 App。
 
@@ -98,6 +98,17 @@
 1. **键盘弹出时气泡下移位置由 0.54 改为 0.49**（`NFBKeyboardPosition`），分屏/全屏仍通用。
 2. **分屏新消息抖动时长延长到 2 秒**：`shakeBubble:` 的水平关键帧动画 duration 由 0.6 秒改为 2.0 秒（衰减抖动，7 个来回），高亮时长同步延长到约 2.2 秒。
 3. **气泡从下往上增**：新出现的 App 气泡改为插入列表首位（`NFBStore putApp` 的 `insertObject:atIndex:0`），配合 `NFBRowCenter`「第一个在最下面」的几何，新气泡从屏幕下方冒出、把已有气泡往上顶，不再是追加到最上面。
+
+自 0.33.0 起，把「从下往上增」补全到**所有**新增气泡路径：
+
+- 0.32.0 只改了「收到新通知的新 App」（`putApp`）；**switcher 同步出来的新 App（`pinApp`）仍是追加到最上面**。
+- 现 `pinApp` 同样改为 `insertObject:atIndex:0`，并在 `tick` 里把 switcher 遍历改成**倒序**（`current.reverseObjectEnumerator`），这样一批 switcher 卡片同时出现时，最近使用的那个最后被 pin、落在最下面，保持 switcher 顺序且最下面为最新。
+
+自 0.34.0 起，纠正「从下往上增」的语义（0.32.0/0.33.0 理解反了）：
+
+- 正确语义是：**第一个（最早）气泡固定在屏幕下方不动，后续新气泡依次加在它上面（往上叠）**，即数据上「追加到末尾」。
+- 0.32.0/0.33.0 把 `putApp`/`pinApp` 改成 `insertObject:atIndex:0`（新气泡抢最下面、把第一个顶上去），方向反了。
+- 现 `putApp`、`pinApp` 都改回 `addObject`（追加），`tick` 的 switcher 遍历改回正序；新气泡加在已有气泡上方，第一个气泡位置不再变动。`promoteApp`（前台 App 提升贴底）保持不变。
 
 ## 返回功能范围（0.18.0 起停用）
 

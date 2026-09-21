@@ -22,7 +22,7 @@ int main(void) {
         [s putApp:@"chat" notification:@"new" request:Request(300) destination:destination];
         [s putApp:@"mail" notification:@"1" request:Request(250) destination:destination];
         [s putApp:@"chat" notification:@"old" request:Request(100) destination:destination];
-        Check([s.appIDs isEqual:@[@"mail", @"chat", @"switcherOnly"]], @"New app joins at the bottom of the row, pushing existing bubbles up");
+        Check([s.appIDs isEqual:@[@"switcherOnly", @"chat", @"mail"]], @"New app stacks above the existing bubbles, keeping the first one in place");
         Check([[s latestForApp:@"chat"].notificationID isEqual:@"new"], @"Queue sorts by notification timestamp, not delivery timing");
         Check([s countForApp:@"chat"] == 2 && [s countForApp:@"mail"] == 1 && [s countForApp:@"switcherOnly"] == 0, @"Badge count reflects only unread notifications, not pins");
         Check(![s putApp:@"chat" notification:@"new" request:Request(300) destination:destination] && s.count == 3, @"Duplicate system delivery is not a second notification");
