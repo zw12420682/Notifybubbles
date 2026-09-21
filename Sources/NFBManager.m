@@ -27,7 +27,7 @@ static const CGFloat NFBFloatingPosition = 0.80;
 // Vertical position the row shifts to while the keyboard is up, so the bubbles
 // clear the keyboard. Applies in BOTH split view and fullscreen, and outranks
 // every other position rule.
-static const CGFloat NFBKeyboardPosition = 0.54;
+static const CGFloat NFBKeyboardPosition = 0.49;
 // Synthetic bubble id that rides at the top of the row while an app is in the
 // split view. Tapping it clears every background app at once. It never enters
 // the store or the switcher ordering.
@@ -293,11 +293,11 @@ static double NFBNumber(NSString *key, double fallback) {
     button.accessibilityLabel = @"一键清理后台";
     button.accessibilityHint = @"点击终止所有后台应用";
 }
-// Reminder for a fresh notification while an app sits in the split view: a quick
-// horizontal shake plus a temporary full-opacity highlight, then the bubble
-// settles back to whatever opacity the split-view layout assigns it. The button's
-// transform is identity here (split view keeps every bubble expanded), so a layer
-// translation never fights the retraction offset.
+// Reminder for a fresh notification while an app sits in the split view: a
+// 2-second decaying horizontal shake plus a temporary full-opacity highlight,
+// then the bubble settles back to whatever opacity the split-view layout assigns
+// it. The button's transform is identity here (split view keeps every bubble
+// expanded), so a layer translation never fights the retraction offset.
 - (void)shakeBubble:(NFBBubble *)button {
     if (!button || !button.superview) return;
     NSString *appID = button.appID;
@@ -305,16 +305,17 @@ static double NFBNumber(NSString *key, double fallback) {
     [button.layer removeAnimationForKey:@"NFBShake"];
     if (!UIAccessibilityIsReduceMotionEnabled()) {
         CAKeyframeAnimation *shake = [CAKeyframeAnimation animationWithKeyPath:@"transform.translation.x"];
-        shake.duration = 0.6;
-        shake.values = @[@0, @(-7), @7, @(-5), @5, @(-3), @3, @0];
-        shake.keyTimes = @[@0, @(1.0/7), @(2.0/7), @(3.0/7), @(4.0/7), @(5.0/7), @(6.0/7), @1.0];
-        shake.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
+        shake.duration = 2.0;
+        shake.values = @[@0, @(-8), @8, @(-7), @7, @(-6), @6, @(-5), @5, @(-4), @4, @(-3), @3, @(-2), @2, @0];
+        shake.keyTimes = @[@0, @(1.0/15), @(2.0/15), @(3.0/15), @(4.0/15), @(5.0/15), @(6.0/15), @(7.0/15),
+                           @(8.0/15), @(9.0/15), @(10.0/15), @(11.0/15), @(12.0/15), @(13.0/15), @(14.0/15), @1.0];
+        shake.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionLinear];
         shake.removedOnCompletion = YES;
         [button.layer addAnimation:shake forKey:@"NFBShake"];
     }
     [UIView animateWithDuration:0.15 animations:^{ button.alpha = 1.0; } completion:nil];
     __weak NFBManager *weakSelf = self;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.7 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [weakSelf.shakingApps removeObject:appID];
         [weakSelf refresh];
     });

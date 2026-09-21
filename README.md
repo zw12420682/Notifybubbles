@@ -1,4 +1,4 @@
-# 通知悬浮气泡 · 0.31.0 测试工程
+# 通知悬浮气泡 · 0.32.0 测试工程
 
 目标：iPhone 14、iOS 16.0.3、Dopamine RootHide，搭配 TrollOpenJB 1.5.2 隐根版。
 
@@ -12,7 +12,7 @@
 - Makefile、control、README.md。
 - `NotifyBubbles.plist`（注入过滤器）。`NotifyBubblesBack.plist` 已随返回组件一起停用，不再需要上传。
 
-另外将 `.github/workflows/build.yml` 替换为新版。提交后在 Actions 查看最新构建，成功后下载 Artifacts 中 NotifyBubbles-RootHide，解压安装 0.31.0 的 deb 并重启桌面。
+另外将 `.github/workflows/build.yml` 替换为新版。提交后在 Actions 查看最新构建，成功后下载 Artifacts 中 NotifyBubbles-RootHide，解压安装 0.32.0 的 deb 并重启桌面。
 
 **本版只注入 SpringBoard。** 单击关闭分屏窗口、长按退出 App 都在桌面进程内完成，不再需要目标 App 注入，因此无需在 App 内允许插件，也不用为了生效而重启目标 App。
 
@@ -92,6 +92,12 @@
 
 1. **键盘弹出时气泡整体下移到 0.54**（`NFBKeyboardPosition`）：键盘优先级最高，分屏还是全屏都生效，整排气泡避开键盘；键盘收起后恢复原位置（分屏的 0.80 或设置里的「整组图标上下位置」滑杆值）。
 2. **分屏时收到新消息，对应气泡加入抖动动画作为提醒**（`shakeBubble:`，水平 CAKeyframeAnimation 抖动约 0.6 秒），抖动期间该气泡**保持完全不透明高亮**（`shakingApps` 集合临时强制 alpha 1.0），结束后恢复到分屏下的正常透明度（浮窗 App 1.0 / 其余 `NFBFloatingDim` 0.3）。
+
+自 0.32.0 起，改动三点：
+
+1. **键盘弹出时气泡下移位置由 0.54 改为 0.49**（`NFBKeyboardPosition`），分屏/全屏仍通用。
+2. **分屏新消息抖动时长延长到 2 秒**：`shakeBubble:` 的水平关键帧动画 duration 由 0.6 秒改为 2.0 秒（衰减抖动，7 个来回），高亮时长同步延长到约 2.2 秒。
+3. **气泡从下往上增**：新出现的 App 气泡改为插入列表首位（`NFBStore putApp` 的 `insertObject:atIndex:0`），配合 `NFBRowCenter`「第一个在最下面」的几何，新气泡从屏幕下方冒出、把已有气泡往上顶，不再是追加到最上面。
 
 ## 返回功能范围（0.18.0 起停用）
 

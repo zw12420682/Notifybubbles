@@ -47,9 +47,11 @@ static NSDate *NFBRequestDate(id request) {
     record.request = request; record.destination = destination;
     record.timestamp = date ?: [NSDate date]; record.revision = revision;
     [self.records addObject:record];
-    // A new notification no longer pulls the app to the top of the row: it keeps
-    // whatever position it already had, and a brand-new app simply joins the end.
-    if (![self.pins containsObject:appID]) [self.pins addObject:appID];
+    // A brand-new app joins the BOTTOM of the row: with NFBRowCenter's
+    // "first icon is lowest" geometry, index 0 is the lowest bubble, so the row
+    // grows from the bottom upward and every new bubble pushes the rest up.
+    // An app that already has a bubble keeps its position (no re-promotion).
+    if (![self.pins containsObject:appID]) [self.pins insertObject:appID atIndex:0];
     if (self.records.count > 512) [self.records removeObjectAtIndex:0];
     return YES;
 }
