@@ -24,6 +24,10 @@ static const CGFloat NFBFloatingDim = 0.3;
 // Vertical position (0 = top, 1 = bottom) the whole row shifts to while an app
 // is in the split view, so it clears the floating window. Restores on exit.
 static const CGFloat NFBFloatingPosition = 0.80;
+// Vertical position the row shifts to while the keyboard is up, so the bubbles
+// clear the keyboard. Applies in BOTH split view and fullscreen, and outranks
+// every other position rule.
+static const CGFloat NFBKeyboardPosition = 0.54;
 // Synthetic bubble id that rides at the top of the row while an app is in the
 // split view. Tapping it clears every background app at once. It never enters
 // the store or the switcher ordering.
@@ -140,6 +144,9 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic) BOOL keyboardUp;
 // Bubbles that were out when the keyboard rose; restored when it falls.
 @property(nonatomic, strong) NSMutableSet<NSString *> *keyboardSuspended;
+// Apps whose bubble is mid-shake (a new message arrived while an app sits in
+// the split view). Kept full opacity for the shake's duration.
+@property(nonatomic, strong) NSMutableSet<NSString *> *shakingApps;
 - (void)refresh;
 - (void)beginRetracting:(NSString *)app;
 - (void)syncFloatingWatch:(NSString *)floating;
@@ -158,6 +165,7 @@ static double NFBNumber(NSString *key, double fallback) {
 - (void)clearBackground;
 - (void)clearAllTapped:(UITapGestureRecognizer *)gesture;
 - (void)styleClearAllButton:(NFBBubble *)button;
+- (void)shakeBubble:(NFBBubble *)button;
 @end
 
 @implementation NFBManager
@@ -180,6 +188,7 @@ static double NFBNumber(NSString *key, double fallback) {
         _needsReveal = [NSMutableSet set];
         _lastBadges = [NSMutableDictionary dictionary];
         _keyboardSuspended = [NSMutableSet set];
+        _shakingApps = [NSMutableSet set];
         __weak NFBManager *weakSelf = self;
         NFBKeyboardInstall(^{ [weakSelf refresh]; });
         [self reloadPreferences];
@@ -216,6 +225,11 @@ static double NFBNumber(NSString *key, double fallback) {
     [self refresh];
     NFBBubble *updated = self.buttons[appID];
     if (!self.window.hidden && updated) {
+        // New message while an app sits in the split view: shake that bubble as
+        // a reminder and keep it highlighted, since it is otherwise dimmed.
+        if (NFBTrollVisibleApp().length > 0 && ![appID isEqualToString:NFBClearAllID]) {
+            [self shakeBubble:updated];
+        }
         CGRect row = CGRectMake(0, updated.center.y - updated.bounds.size.height / 2, self.rail.bounds.size.width, updated.bounds.size.height);
         [self.rail scrollRectToVisible:row animated:!UIAccessibilityIsReduceMotionEnabled()];
     }
@@ -278,6 +292,32 @@ static double NFBNumber(NSString *key, double fallback) {
     button.imageView.backgroundColor = UIColor.secondarySystemBackgroundColor;
     button.accessibilityLabel = @"一键清理后台";
     button.accessibilityHint = @"点击终止所有后台应用";
+}
+// Reminder for a fresh notification while an app sits in the split view: a quick
+// horizontal shake plus a temporary full-opacity highlight, then the bubble
+// settles back to whatever opacity the split-view layout assigns it. The button's
+// transform is identity here (split view keeps every bubble expanded), so a layer
+// translation never fights the retraction offset.
+- (void)shakeBubble:(NFBBubble *)button {
+    if (!button || !button.superview) return;
+    NSString *appID = button.appID;
+    [self.shakingApps addObject:appID];
+    [button.layer removeAnimationForKey:@"NFBShake"];
+    if (!UIAccessibilityIsReduceMotionEnabled()) {
+        CAKeyframeAnimation *shake = [CAKeyframeAnimation animationWithKeyPath:@"transform.translation.x"];
+        shake.duration = 0.6;
+        shake.values = @[@0, @(-7), @7, @(-5), @5, @(-3), @3, @0];
+        shake.keyTimes = @[@0, @(1.0/7), @(2.0/7), @(3.0/7), @(4.0/7), @(5.0/7), @(6.0/7), @1.0];
+        shake.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
+        shake.removedOnCompletion = YES;
+        [button.layer addAnimation:shake forKey:@"NFBShake"];
+    }
+    [UIView animateWithDuration:0.15 animations:^{ button.alpha = 1.0; } completion:nil];
+    __weak NFBManager *weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.7 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [weakSelf.shakingApps removeObject:appID];
+        [weakSelf refresh];
+    });
 }
 - (BOOL)isLocked {
     id lock = NFBSingleton(@"SBLockScreenManager");
@@ -566,10 +606,11 @@ static double NFBNumber(NSString *key, double fallback) {
     CGFloat step = side + 4;
     CGFloat available = MAX(side, bounds.size.height - top - MAX(safe.bottom, 20) - 20);
     CGFloat height = MIN(available, displayApps.count * step);
-    // While an app is in the split view the whole row shifts down to clear the
-    // floating window (NFBFloatingPosition), then returns to the user's slider
-    // setting once the split view closes.
-    CGFloat position = floatingApp.length > 0 ? NFBFloatingPosition : self.verticalPosition;
+    // Keyboard outranks every other rule (typing must never be covered): the row
+    // shifts to NFBKeyboardPosition in both split view and fullscreen. Otherwise,
+    // while an app is in the split view the row shifts down to clear the floating
+    // window (NFBFloatingPosition), then returns to the user's slider setting.
+    CGFloat position = keyboardUp ? NFBKeyboardPosition : (floatingApp.length > 0 ? NFBFloatingPosition : self.verticalPosition);
     // Use the actual screen edge, not safeArea.right, for exactly half exposure.
     CGRect railFrame = CGRectMake(bounds.size.width - side, top + (available - height) * position, side, height);
     if (!CGRectEqualToRect(self.rail.frame, railFrame)) {
@@ -645,6 +686,9 @@ static double NFBNumber(NSString *key, double fallback) {
                 alpha = NFBFloatingDim;
             }
         }
+        // A bubble mid-shake (fresh notification during split view) stays fully
+        // opaque for the reminder's duration, whatever its normal state is.
+        if ([self.shakingApps containsObject:appID]) alpha = 1.0;
         BOOL changed = fresh || !CGRectEqualToRect(button.bounds, targetBounds) ||
             !CGPointEqualToPoint(button.center, targetCenter) ||
             !CGAffineTransformEqualToTransform(button.transform, target) ||
