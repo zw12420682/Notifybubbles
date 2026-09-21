@@ -1,4 +1,4 @@
-# 通知悬浮气泡 · 0.34.0 测试工程
+# 通知悬浮气泡 · 0.35.0 测试工程
 
 目标：iPhone 14、iOS 16.0.3、Dopamine RootHide，搭配 TrollOpenJB 1.5.2 隐根版。
 
@@ -12,7 +12,7 @@
 - Makefile、control、README.md。
 - `NotifyBubbles.plist`（注入过滤器）。`NotifyBubblesBack.plist` 已随返回组件一起停用，不再需要上传。
 
-另外将 `.github/workflows/build.yml` 替换为新版。提交后在 Actions 查看最新构建，成功后下载 Artifacts 中 NotifyBubbles-RootHide，解压安装 0.34.0 的 deb 并重启桌面。
+另外将 `.github/workflows/build.yml` 替换为新版。提交后在 Actions 查看最新构建，成功后下载 Artifacts 中 NotifyBubbles-RootHide，解压安装 0.35.0 的 deb 并重启桌面。
 
 **本版只注入 SpringBoard。** 单击关闭分屏窗口、长按退出 App 都在桌面进程内完成，不再需要目标 App 注入，因此无需在 App 内允许插件，也不用为了生效而重启目标 App。
 
@@ -109,6 +109,12 @@
 - 正确语义是：**第一个（最早）气泡固定在屏幕下方不动，后续新气泡依次加在它上面（往上叠）**，即数据上「追加到末尾」。
 - 0.32.0/0.33.0 把 `putApp`/`pinApp` 改成 `insertObject:atIndex:0`（新气泡抢最下面、把第一个顶上去），方向反了。
 - 现 `putApp`、`pinApp` 都改回 `addObject`（追加），`tick` 的 switcher 遍历改回正序；新气泡加在已有气泡上方，第一个气泡位置不再变动。`promoteApp`（前台 App 提升贴底）保持不变。
+
+自 0.35.0 起，真正实现「第一个气泡固定不动」：
+
+- 0.34.0 只修正了数据顺序（新气泡往上加），但布局仍按「rail 顶部」定位（`top + (available-height)*position`），气泡增多时 rail 顶部往上、底部往下，表现为「中间向上下扩散」。
+- 现改为**锚定 rail 底部**：`railFrame.y = anchor + (step - side/2) - height`，其中 `anchor = top + available*position`。第一个气泡（index 0）的中心恒等于 `anchor`（不随数量变化），新气泡依次往上叠，整排只向上生长、不再向下扩散。
+- `position`（「整组图标上下位置」滑杆 / 分屏 0.80 / 键盘 0.49）语义从「整组位置」变为「第一个气泡中心在可用空间的 0=顶/1=底 位置」。
 
 ## 返回功能范围（0.18.0 起停用）
 

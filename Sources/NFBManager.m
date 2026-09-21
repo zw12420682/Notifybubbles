@@ -612,8 +612,15 @@ static double NFBNumber(NSString *key, double fallback) {
     // while an app is in the split view the row shifts down to clear the floating
     // window (NFBFloatingPosition), then returns to the user's slider setting.
     CGFloat position = keyboardUp ? NFBKeyboardPosition : (floatingApp.length > 0 ? NFBFloatingPosition : self.verticalPosition);
+    // Anchor the FIRST bubble (index 0, the lowest one) to a fixed screen Y so it
+    // never moves: each new bubble stacks upward on top of it. The first bubble's
+    // center sits (step - side/2) above the rail's bottom edge, so fixing the
+    // rail's bottom edge fixes the first bubble. Anchoring the top edge instead
+    // would make the row grow both up and down as bubbles arrive (spreading from
+    // the middle), which is not what we want.
+    CGFloat anchor = top + available * position;
     // Use the actual screen edge, not safeArea.right, for exactly half exposure.
-    CGRect railFrame = CGRectMake(bounds.size.width - side, top + (available - height) * position, side, height);
+    CGRect railFrame = CGRectMake(bounds.size.width - side, anchor + (step - side/2) - height, side, height);
     if (!CGRectEqualToRect(self.rail.frame, railFrame)) {
         if (CGRectIsEmpty(self.rail.frame)) self.rail.frame = railFrame;
         else [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : NFBMotion delay:0
