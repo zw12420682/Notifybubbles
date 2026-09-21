@@ -31,6 +31,10 @@ static const CGFloat NFBKeyboardPosition = 0.49;
 // How long the folded (no-unread) bubbles stay spread out after a tap on the
 // stack edge, before folding back into a thin stack.
 static const NSTimeInterval NFBStackHold = 20.0;
+// Vertical stagger between adjacent folded bubbles, so a folded stack reads as
+// a deck of half-hidden icons instead of collapsing every bubble onto the same
+// row and leaving only the topmost one visible.
+static const CGFloat NFBStackFan = 10.0;
 // Synthetic bubble id that rides at the top of the row while an app is in the
 // split view. Tapping it clears every background app at once. It never enters
 // the store or the switcher ordering.
@@ -519,6 +523,25 @@ static double NFBNumber(NSString *key, double fallback) {
 }
 - (void)refresh {
     NSAssert(NSThread.isMainThread, @"UI must be on main thread");
+    // A dismissed app (long-press exit or one-click clear) is only marked
+    // "dismissed" so its bubble doesn't instantly reappear while the process is
+    // still being torn down — iOS keeps a stale switcher card for a killed app,
+    // so the switcher never reports it gone and the marker would linger forever.
+    // If that app is now genuinely active again (frontmost, or the TrollOpen
+    // floating app), it was deliberately re-opened: drop the marker and re-pin it
+    // so its bubble returns right away instead of staying hidden until the user
+    // manually swipes the stale card away and reopens a second time.
+    NSString *reopened = NFBTrollVisibleApp();
+    if (!reopened.length) {
+        id springboard = UIApplication.sharedApplication;
+        BOOL atHome = [springboard respondsToSelector:@selector(isShowingHomescreen)] && [springboard isShowingHomescreen];
+        if (!atHome) reopened = NFBString(NFBGet(NFBGet(springboard, @"_accessibilityFrontMostApplication"), @"bundleIdentifier"));
+    }
+    if (reopened.length && [self.dismissedSwitcher containsObject:reopened]) {
+        NFBDebugLog(@"refresh: dismissed app %@ reopened -> re-pin", reopened);
+        [self.dismissedSwitcher removeObject:reopened];
+        if (![self.store.appIDs containsObject:reopened]) [self.store pinApp:reopened];
+    }
     NSMutableArray<NSString *> *apps = [NSMutableArray array];
     for (NSString *app in self.store.appIDs) {
         BOOL fromSwitcher = [self.lastSwitcher containsObject:app];
@@ -640,6 +663,9 @@ static double NFBNumber(NSString *key, double fallback) {
     // unread stay spread out; once the timer lapses they fold back into a thin
     // stack at the bottom edge.
     BOOL stackOpen = self.stackUntil > CACurrentMediaTime();
+    // Folded bubbles fan out slightly (each a few points higher) so the stack
+    // reads as a deck of retracted icons instead of a single lonely bubble.
+    __block NSInteger stackedCount = 0;
     [displayApps enumerateObjectsUsingBlock:^(NSString *appID, NSUInteger index, __unused BOOL *stop) {
         BOOL isClearAll = [appID isEqualToString:NFBClearAllID];
         NFBBubble *button = self.buttons[appID];
@@ -688,11 +714,18 @@ static double NFBNumber(NSString *key, double fallback) {
         CGFloat retraction = expanded ? 0 : NFBRetraction(diameter);
         CGAffineTransform target = CGAffineTransformMakeTranslation(retraction, 0);
         CGRect targetBounds = CGRectMake(0, 0, side, side);
-        // A folded bubble collapses onto the first bubble's row (the bottom edge),
-        // so every no-unread bubble overlaps into a single stack.
+        // A folded bubble collapses toward the first bubble's row (the bottom
+        // edge), then each one fans a little higher than the one below it, so
+        // every no-unread bubble peeks out as a deck instead of hiding behind the
+        // single topmost bubble.
         CGFloat rowY = NFBRowCenter(displayApps.count, index, step, side);
         CGFloat stackY = NFBRowCenter(displayApps.count, 0, step, side);
-        CGPoint targetCenter = CGPointMake(side / 2, stacked ? stackY : rowY);
+        CGFloat foldedY = stackY;
+        if (stacked) {
+            foldedY = stackY - stackedCount * NFBStackFan;
+            stackedCount += 1;
+        }
+        CGPoint targetCenter = CGPointMake(side / 2, stacked ? foldedY : rowY);
         if (fresh) {
             button.bounds = targetBounds;
             button.center = targetCenter;
