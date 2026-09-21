@@ -1,4 +1,4 @@
-# 通知悬浮气泡 · 0.36.0 测试工程
+# 通知悬浮气泡 · 0.37.0 测试工程
 
 目标：iPhone 14、iOS 16.0.3、Dopamine RootHide，搭配 TrollOpenJB 1.5.2 隐根版。
 
@@ -12,7 +12,7 @@
 - Makefile、control、README.md。
 - `NotifyBubbles.plist`（注入过滤器）。`NotifyBubblesBack.plist` 已随返回组件一起停用，不再需要上传。
 
-另外将 `.github/workflows/build.yml` 替换为新版。提交后在 Actions 查看最新构建，成功后下载 Artifacts 中 NotifyBubbles-RootHide，解压安装 0.36.0 的 deb 并重启桌面。
+另外将 `.github/workflows/build.yml` 替换为新版。提交后在 Actions 查看最新构建，成功后下载 Artifacts 中 NotifyBubbles-RootHide，解压安装 0.37.0 的 deb 并重启桌面。
 
 **本版只注入 SpringBoard。** 单击关闭分屏窗口、长按退出 App 都在桌面进程内完成，不再需要目标 App 注入，因此无需在 App 内允许插件，也不用为了生效而重启目标 App。
 
@@ -122,6 +122,11 @@
 - **点击细边 → 散开**：无未读气泡展开，可正常点击操作；**20 秒无动作 → 自动收起**（`NFBStackHold`）。散开期间任何点击都会重新计时。
 - 分屏时仍保持所有气泡伸出的原行为（`stacked` 仅在非分屏生效）。
 - 实现：新增 `stackUntil` 计时（0 = 折叠）、常量 `NFBStackHold=20`/`NFBStackEdge=8`；布局循环按 `stacked` 决定缩回量和堆叠位置；`tapped:` 折叠态点击转散开，`acceptGesture` 散开期间重置计时。
+
+自 0.37.0 起，修正两点：
+
+1. **有未读的气泡不再被收纳**：0.36.0 用 `expandedUntil`（只持续约 1.6 秒的计时）判断「有未读」，计时一到气泡就被误判为无未读、折叠收纳。现改为用 store 里的未读计数 `countForApp: > 0` 判断——只要还有未读记录，气泡就一直正常伸出显示，直到打开 App 消费（或系统角标归零兜底清理）后才收纳。
+2. **收纳后的气泡恢复「露出一半」**：0.36.0 收纳后只留约 8pt 细边（`NFBStackEdge`），太细不好看/不好点。现收纳的气泡改回用 `NFBRetraction(diameter)`（和以前缩回一样露出半个圆），仍然堆叠在最下面、重叠成一摞，只是露出程度恢复为一半。删除了不再使用的 `NFBStackEdge` 常量。
 
 ## 返回功能范围（0.18.0 起停用）
 
