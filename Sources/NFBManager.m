@@ -130,6 +130,7 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic) CGFloat verticalPosition;
 @property(nonatomic, copy) NSString *lastActiveApp;
 @property(nonatomic, copy) NSArray *lastLayoutApps;
+@property(nonatomic, copy) NSArray<NSString *> *storedApps;
 @property(nonatomic) CGFloat iconSize;
 @property(nonatomic) CGFloat iconOpacity;
 @property(nonatomic) BOOL enabled;
@@ -595,10 +596,14 @@ static double NFBNumber(NSString *key, double fallback) {
     if (floatingApp.length > 0) [displayApps addObject:NFBClearAllID];
     BOOL stackOpen = self.stackUntil > CACurrentMediaTime();
     NSUInteger storedCount = 0;
+    self.storedApps = @[];
     if (!floatingApp.length && !stackOpen) {
         displayApps = NFBFoldedRows(apps, NFBStorageID, ^NSUInteger(NSString *app) {
             return [self.store countForApp:app];
         }, &storedCount);
+        NSMutableArray *stored = [NSMutableArray array];
+        for (NSString *app in apps) if ([self.store countForApp:app] == 0) [stored addObject:app];
+        self.storedApps = [stored copy];
     }
     BOOL orderChanged = ![self.lastLayoutApps isEqualToArray:displayApps];
     self.lastLayoutApps = [displayApps copy];
@@ -685,6 +690,10 @@ static double NFBNumber(NSString *key, double fallback) {
             button.appID = appID;
             if (isStorage) {
                 UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(storageTapped:)];
+                UILongPressGestureRecognizer *hold = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(storageLongPressed:)];
+                hold.minimumPressDuration = 0.45;
+                [tap requireGestureRecognizerToFail:hold];
+                [button addGestureRecognizer:hold];
                 [button addGestureRecognizer:tap];
             } else if (isClearAll) {
                 UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(clearAllTapped:)];
@@ -909,6 +918,44 @@ static double NFBNumber(NSString *key, double fallback) {
     button.badge.layer.cornerRadius = 9;
     button.accessibilityLabel = [NSString stringWithFormat:@"收纳了 %lu 个应用", (unsigned long)count];
     button.accessibilityHint = @"点击展开，20 秒无操作后自动收起";
+}
+- (void)storageLongPressed:(UILongPressGestureRecognizer *)gesture {
+    if (gesture.state != UIGestureRecognizerStateBegan) return;
+    if (self.buttons[NFBStorageID] != gesture.view || ![self acceptGesture]) return;
+    NSArray<NSString *> *targets = [self.storedApps copy];
+    NSDictionary *versions = [self.generations copy];
+    [targets enumerateObjectsUsingBlock:^(NSString *app, NSUInteger index, __unused BOOL *stop) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(index * 0.16 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if ([self.generations[app] unsignedIntegerValue] != [versions[app] unsignedIntegerValue] ||
+                [self.store countForApp:app] || ![self.store.appIDs containsObject:app]) return;
+            id sb = UIApplication.sharedApplication;
+            BOOL home = [sb respondsToSelector:@selector(isShowingHomescreen)] && [sb isShowingHomescreen];
+            NSString *front = NFBString(NFBGet(NFBGet(sb, @"_accessibilityFrontMostApplication"), @"bundleIdentifier"));
+            if ((!home && [front isEqual:app]) || [NFBTrollVisibleApp() isEqual:app]) return;
+            // Keep termination and removal in one main-queue turn.
+            BOOL accepted = NFBTerminateApp(app);
+            NFBDebugLog(@"storage: terminate %@ accepted=%d", app, accepted);
+            [self.dismissedSwitcher addObject:app];
+            [self.store closeApp:app];
+            [self.needsReveal removeObject:app];
+            if ([self.pendingRecord.appID isEqual:app]) self.pendingRecord = nil;
+            NFBBubble *tray = self.buttons[NFBStorageID];
+            if (tray) {
+                NFBBubble *effect = [[NFBBubble alloc] initWithFrame:tray.bounds];
+                effect.center = tray.center;
+                effect.imageView.frame = tray.imageView.frame;
+                effect.imageView.image = [UIImage systemImageNamed:@"square.stack.3d.up.fill"];
+                effect.imageView.contentMode = UIViewContentModeCenter;
+                effect.imageView.tintColor = UIColor.labelColor;
+                effect.alpha = tray.alpha;
+                effect.transform = tray.transform;
+                effect.userInteractionEnabled = NO;
+                [self.rail addSubview:effect];
+                [self burstBubble:effect];
+            }
+            [self refresh];
+        });
+    }];
 }
 - (void)storageTapped:(UITapGestureRecognizer *)gesture {
     if (gesture.state != UIGestureRecognizerStateEnded || ![self acceptGesture]) return;

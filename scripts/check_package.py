@@ -13,6 +13,6 @@ for argument in sys.argv[1:]:
     # NotifyBubblesBack is retired (see the Makefile comment), so it must not be
     # packaged any more: it would inject into every UIKit app for no gesture.
     assert 'NotifyBubblesBack.dylib' not in payload, 'Retired app-side helper is still in the DEB.'
-    for suffix in ['NotifyBubbles.dylib', 'NotifyBubbles.plist', 'NFBPreferences.bundle/NFBPreferences', 'NFBPreferences.bundle/Root.plist']:
+    for suffix in ['NotifyBubblesKeyboard.dylib', 'NotifyBubblesKeyboard.plist', 'NotifyBubbles.dylib', 'NotifyBubbles.plist', 'NFBPreferences.bundle/NFBPreferences', 'NFBPreferences.bundle/Root.plist']:
         assert suffix in payload, f'Missing payload: {suffix}'
     print(f'PASS: {path.name} ({architecture}), tweak and preferences present')

@@ -4,7 +4,7 @@ import plistlib
 
 root = Path(__file__).resolve().parents[1]
 required = [
-    'Sources/NFBStorageLayout.h', 'Sources/NFBEdgeInspection.h', 'Makefile', 'control', 'Sources/NFBAppExit.h', 'Sources/NFBAppExit.m',
+    'Sources/NFBDarkKeyboard.m', 'NotifyBubblesKeyboard.plist', 'Sources/NFBStorageLayout.h', 'Sources/NFBEdgeInspection.h', 'Makefile', 'control', 'Sources/NFBAppExit.h', 'Sources/NFBAppExit.m',
     # Retired app-side back helper: kept on disk so it can be restored, but the
     # Makefile must not build it (see the assertions below).
     'NotifyBubblesBack.plist', 'Sources/NFBAppBack.m',
@@ -32,7 +32,7 @@ assert not control_bytes.startswith(b'\xef\xbb\xbf'), 'control must be UTF-8 wit
 control = dict(line.split(': ', 1) for line in control_bytes.decode('utf-8').splitlines() if ': ' in line)
 assert control['Architecture'] == 'iphoneos-arm64e'
 assert 'THEOS_PACKAGE_SCHEME = roothide' in (root / 'Makefile').read_text()
-assert 'Sources/NFBSwitcher.m' in (root / 'Makefile').read_text(), 'Update the root Makefile for 0.39.2.'
+assert 'Sources/NFBSwitcher.m' in (root / 'Makefile').read_text(), 'Update the root Makefile for 0.40.0.'
 assert 'Sources/NFBKeyboard.m' in (root / 'Makefile').read_text(), 'Update the root Makefile for the keyboard watcher.'
 assert 'Sources/NFBTrollOpen.m' in (root / 'Makefile').read_text(), 'Update the root Makefile for TrollOpen integration.'
 assert 'Sources/NFBAppExit.m' in (root / 'Makefile').read_text(), 'Update the root Makefile for the exit helper.'
@@ -40,10 +40,10 @@ assert 'Sources/NFBAppExit.m' in (root / 'Makefile').read_text(), 'Update the ro
 # loaded into every app, and no gesture drives it any more.
 assert 'NotifyBubblesBack_FILES' not in (root / 'Makefile').read_text(), \
     'NotifyBubblesBack is retired; do not build it into every app again.'
-assert 'TWEAK_NAME = NotifyBubbles\n' in (root / 'Makefile').read_text(), \
-    'TWEAK_NAME must only build NotifyBubbles (the app-side back helper is retired).'
+assert 'TWEAK_NAME = NotifyBubbles NotifyBubblesKeyboard\n' in (root / 'Makefile').read_text(), \
+    'Build only the bubble and keyboard components; the back helper stays retired.'
 prefs = plistlib.loads((root / 'Preferences/Resources/Root.plist').read_bytes())
-assert {x['key'] for x in prefs['items'] if 'key' in x} == {'Enabled','ShowOnLock','ShowOnHome','ShowInApps','IconSize','IconOpacity','VerticalPosition'}
+assert {x['key'] for x in prefs['items'] if 'key' in x} == {'Enabled','ShowOnLock','ShowOnHome','ShowInApps','IconSize','IconOpacity','VerticalPosition','DarkKeyboard'}
 filter_ = plistlib.loads((root / 'NotifyBubbles.plist').read_bytes())
 assert filter_['Filter']['Bundles'] == ['com.apple.springboard']
 print('PASS: required files, property lists, RootHide configuration, preference keys and injection filter')
