@@ -1,6 +1,6 @@
-# 0.45.3
+# 0.46.0
 
-See UPDATE-0.45.3.md for badge, gap, half-retraction and keyboard changes.
+See UPDATE-0.46.0.md for badge, gap, half-retraction and keyboard changes.
 
 # 0.45.2
 
