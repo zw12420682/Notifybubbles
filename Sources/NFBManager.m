@@ -14,13 +14,6 @@
 #import "NFBEdgeInspection.h"
 
 static const NSTimeInterval NFBMotion = 0.6;
-// Spring damping for the bubble and rail motion. 1.0 is critically damped — a
-// flat, lifeless glide with no overshoot. A value just below 1.0 adds the subtle
-// iOS-native settle (a tiny overshoot that reads as "alive") without turning the
-// motion into a bouncy spring. Bubbles get a touch more liveliness than the rail
-// container, which stays calmer so the whole row never wobbles.
-static const CGFloat NFBBubbleSpring = 0.85;
-static const CGFloat NFBRailSpring = 0.9;
 // How long a bubble stays expanded after an unread arrives.
 static const NSTimeInterval NFBHold = 1.0;
 // Double-tap is intentionally inert, so a single tap no longer has to wait for a
@@ -330,6 +323,16 @@ static double NFBNumber(NSString *key, double fallback) {
 - (void)shakeBubble:(NFBBubble *)button {
     if (!button || !button.superview) return;
     NSString *appID = button.appID;
+    if (self.rail.containerMode) {
+        [button.layer removeAnimationForKey:@"NFBShake"];
+        if (!UIAccessibilityIsReduceMotionEnabled()) {
+            CAKeyframeAnimation *pulse = [CAKeyframeAnimation animationWithKeyPath:@"transform.scale"];
+            pulse.values = @[@1, @0.94, @1, @0.97, @1];
+            pulse.duration = 0.65;
+            [button.imageView.layer addAnimation:pulse forKey:@"NFBContainerPulse"];
+        }
+        return;
+    }
     [self.shakingApps addObject:appID];
     [button.layer removeAnimationForKey:@"NFBShake"];
     if (!UIAccessibilityIsReduceMotionEnabled()) {
@@ -519,6 +522,8 @@ static double NFBNumber(NSString *key, double fallback) {
     // system icon's badge number. That keeps the badge visible for every app
     // with a pending notification (including in split view) and lets it clear
     // the moment the record is consumed — i.e. when the app is opened.
+    button.badge.font = [UIFont boldSystemFontOfSize:12];
+    button.badge.layer.cornerRadius = 10;
     NSUInteger unread = [self.store countForApp:button.appID];
     NSString *text = unread > 0 ? [NSString stringWithFormat:@"%lu", (unsigned long)unread] : nil;
     button.badge.hidden = !text.length;
@@ -578,6 +583,7 @@ static double NFBNumber(NSString *key, double fallback) {
         if (fromSwitcher || notificationsAllowed) [apps addObject:app];
     }
     NSString *floatingApp = NFBTrollVisibleApp();
+    if ([self.retracting containsObject:floatingApp ?: @""]) floatingApp = nil;
     NFBObserveSplitSwitch(floatingApp, NFBPreference(@"ClosePreviousSplit", YES));
     NFBObserveSplitPlacement(floatingApp);
     // Keep the fast watcher in step with reality every time we recompute layout.
@@ -693,6 +699,14 @@ static double NFBNumber(NSString *key, double fallback) {
     BOOL attachmentChanged = attached != self.splitRailActive;
     self.splitRailActive = attached;
     CGFloat diameter = self.iconSize;
+    // Reserve a real gap outside the split window; never change its scale.
+    // Only horizontal space constrains icon size, not app count or keyboard height.
+    const CGFloat splitGap = 8;
+    const CGFloat screenMargin = 4;
+    if (attached) {
+        CGFloat room = CGRectGetWidth(bounds) - CGRectGetMaxX(splitFrame) - splitGap - screenMargin;
+        diameter = MIN(diameter, MAX(1, room - 14));
+    }
     NSTimeInterval layoutDuration = UIAccessibilityIsReduceMotionEnabled() ? 0 : (attachmentChanged ? 0.35 : (attached ? 0.16 : NFBMotion));
     CGFloat side = diameter + 14;
     CGFloat step = containerMode ? diameter + 9 : (storedCount ? diameter + 8 : side + 4);
@@ -724,14 +738,13 @@ static double NFBNumber(NSString *key, double fallback) {
         CGFloat y = MAX(safe.top, CGRectGetMinY(splitFrame));
         CGFloat bottom = MIN(CGRectGetHeight(bounds) - safe.bottom, CGRectGetMaxY(splitFrame));
         height = MAX(1, bottom - y);
-        CGFloat x = CGRectGetMaxX(splitFrame) + 4 - 7;
-        x = MAX(0, MIN(CGRectGetWidth(bounds) - railWidth, x));
+        CGFloat x = CGRectGetMaxX(splitFrame) + splitGap;
         railFrame = CGRectMake(x, y, railWidth, height);
     }
     CGFloat clearCenterY = railFrame.origin.y - 8 - side / 2;
     if (containerMode) {
         CGFloat ceiling = MAX(safe.top, 12);
-        CGFloat floor = keyboardUp ? NFBKeyboardTopInView(root) - 12 : CGRectGetHeight(bounds) - MAX(safe.bottom, 12);
+        CGFloat floor = keyboardUp ? NFBKeyboardTopInView(root) - 12 - step : CGRectGetHeight(bounds) - MAX(safe.bottom, 12);
         // Align the visible clear icon's top, not its padded hit area, to the window.
         CGFloat desiredTop = attached ? CGRectGetMinY(splitFrame) : railFrame.origin.y;
         CGFloat clearTop = MAX(ceiling, MIN(desiredTop, floor - diameter - 9));
@@ -742,20 +755,16 @@ static double NFBNumber(NSString *key, double fallback) {
         railFrame = CGRectMake(railFrame.origin.x, y, railWidth, height);
     }
     self.rail.containerMode = containerMode;
+    self.rail.layer.cornerRadius = containerMode ? MIN(14, railWidth / 4) : 0;
     self.rail.alwaysBounceVertical = containerMode && contentHeight > height;
     self.rail.showsVerticalScrollIndicator = NO;
     if (!CGRectEqualToRect(self.rail.frame, railFrame) || self.railMaterial.alpha != (containerMode ? 0.55 : 0)) {
         if (CGRectIsEmpty(self.rail.frame)) self.rail.frame = railFrame;
-        // The container's corner radius and frosted backdrop change with the
-        // frame (rounded + material in split view, flat + clear on desktop), so
-        // animate them together with a calm spring for one smooth settle instead
-        // of a hard pop in/out of container mode.
         [UIView animateWithDuration:layoutDuration delay:0
-            usingSpringWithDamping:NFBRailSpring initialSpringVelocity:0
-            options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
+            options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseInOut
             animations:^{
                 self.rail.frame = railFrame;
-                self.rail.layer.cornerRadius = containerMode ? 20 : 0;
+                self.railMaterial.layer.cornerRadius = MIN(14, railWidth / 4);
                 self.railMaterial.frame = railFrame;
                 self.railMaterial.alpha = containerMode ? 0.55 : 0;
             } completion:nil];
@@ -817,6 +826,15 @@ static double NFBNumber(NSString *key, double fallback) {
 
         }
         else [self updateBubble:button record:[self.store latestForApp:appID]];
+        if (containerMode && !isClearAll) {
+            CGFloat badgeHeight = MIN(16, diameter * 0.5);
+            CGFloat badgeWidth = MIN(diameter, MAX(badgeHeight, CGRectGetWidth(button.badge.frame) * 0.8));
+            button.badge.frame = CGRectMake(7, 7, badgeWidth, badgeHeight);
+            button.badge.layer.cornerRadius = badgeHeight / 2;
+            button.badge.font = [UIFont boldSystemFontOfSize:MIN(11, badgeHeight * 0.7)];
+            button.badge.adjustsFontSizeToFitWidth = YES;
+            button.badge.minimumScaleFactor = 0.65;
+        }
         // A bubble we already started retracting must not be re-expanded by the
         // stale "window still visible" reading taken mid-transition.
         BOOL retracting = [self.retracting containsObject:appID];
@@ -828,8 +846,9 @@ static double NFBNumber(NSString *key, double fallback) {
         // instead of only that app's, so the whole row is reachable at a glance.
         // Outside split view, bubbles with no unread fold into a stack unless the
         // stack is currently spread open (stackOpen).
-        BOOL expanded = !keyboardUp && !retracting && (floatingApp.length > 0 || hasUnread || stackOpen || [keepRecent containsObject:appID]);
-        CGFloat retraction = containerMode ? 0 : ((isStorage && !keyboardUp) ? 0 : (expanded ? 0 : NFBRetraction(diameter)));
+        BOOL expanded = !keyboardUp && !retracting && (floatingApp.length > 0 || [self.expandedUntil[appID] doubleValue] > CACurrentMediaTime());
+        (void)hasUnread;
+        CGFloat retraction = containerMode ? 0 : (expanded ? 0 : NFBRetraction(diameter));
         CGAffineTransform target = CGAffineTransformMakeTranslation(retraction, 0);
         CGRect targetBounds = CGRectMake(0, 0, side, side);
         // Keep the same bottom-first app ordering on desktop and in split view.
@@ -863,7 +882,7 @@ static double NFBNumber(NSString *key, double fallback) {
             fabs(button.alpha - alpha) > 0.001;
         if (changed) {
             [UIView animateWithDuration:layoutDuration
-                delay:0 usingSpringWithDamping:NFBBubbleSpring initialSpringVelocity:0
+                delay:0 usingSpringWithDamping:1.0 initialSpringVelocity:0
                 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
                 animations:^{
                     // Bounds/center remain valid even while the view is transformed.
@@ -961,7 +980,7 @@ static double NFBNumber(NSString *key, double fallback) {
     ring.layer.borderColor = UIColor.systemTealColor.CGColor;
     ring.alpha = self.iconOpacity;
     [root addSubview:ring];
-    [UIView animateWithDuration:0.55 delay:0 options:UIViewAnimationOptionCurveEaseOut animations:^{
+    [UIView animateWithDuration:0.55 animations:^{
         ring.transform = CGAffineTransformMakeScale(1.65, 1.65); ring.alpha = 0;
     } completion:^(__unused BOOL done) { [ring removeFromSuperview]; }];
     for (NSInteger i = 0; i < 12; i++) {
@@ -977,7 +996,7 @@ static double NFBNumber(NSString *key, double fallback) {
             drop.alpha = 0; drop.transform = CGAffineTransformMakeScale(0.15, 0.15);
         } completion:^(__unused BOOL done) { [drop removeFromSuperview]; }];
     }
-    [UIView animateWithDuration:0.18 delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseIn animations:^{
+    [UIView animateWithDuration:0.18 delay:0 options:UIViewAnimationOptionBeginFromCurrentState animations:^{
         button.transform = CGAffineTransformScale(button.transform, 1.16, 1.16); button.alpha = 0;
     } completion:^(__unused BOOL done) { [button removeFromSuperview]; }];
 }
@@ -1096,7 +1115,7 @@ static double NFBNumber(NSString *key, double fallback) {
         MAX(root.safeAreaInsets.top, 44) + 12, width, 76);
     [root addSubview:notice];
     UIAccessibilityPostNotification(UIAccessibilityAnnouncementNotification, message);
-    [UIView animateWithDuration:0.2 delay:2.8 options:UIViewAnimationOptionCurveEaseIn animations:^{ notice.alpha = 0; }
+    [UIView animateWithDuration:0.2 delay:2.8 options:0 animations:^{ notice.alpha = 0; }
         completion:^(__unused BOOL done) { [notice removeFromSuperview]; }];
 }
 - (void)openApp:(NSString *)app {

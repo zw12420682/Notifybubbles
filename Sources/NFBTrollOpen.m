@@ -212,6 +212,13 @@ static id NFBTrollObject(id object, NSString *name) {
 NSString *NFBTrollVisibleApp(void) {
     if (!NSThread.isMainThread) return nil;
     id window = NFBTrollObject(NSClassFromString(@"TOJBBarGestureBridge"), @"currentVisibleFloatingWindow");
+    // Stop following the window as soon as its keep-alive close begins.
+    SEL closing = NSSelectorFromString(@"isClosingWithKeepAliveAnimation");
+    @try {
+        NSMethodSignature *sig = [window methodSignatureForSelector:closing];
+        if (sig.numberOfArguments == 2 && (sig.methodReturnType[0] == 'B' || sig.methodReturnType[0] == 'c') &&
+            ((BOOL (*)(id, SEL))objc_msgSend)(window, closing)) return nil;
+    } @catch (__unused NSException *error) { return nil; }
     // A reduced mini-window is no longer the expanded split window.
     SEL mini = NSSelectorFromString(@"miniWindowModeEnabled");
     @try {

@@ -1,6 +1,6 @@
 # 0.45.3
 
-All motion tuned for a more natural, fluid feel. See UPDATE-0.45.3.md for the animation changes.
+See UPDATE-0.45.3.md for badge, gap, half-retraction and keyboard changes.
 
 # 0.45.2
 
