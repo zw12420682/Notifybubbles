@@ -4,7 +4,7 @@ import plistlib
 
 root = Path(__file__).resolve().parents[1]
 required = [
-    'Sources/NFBDarkKeyboard.m', 'NotifyBubblesKeyboard.plist', 'Sources/NFBStorageLayout.h', 'Sources/NFBEdgeInspection.h', 'Makefile', 'control', 'Sources/NFBAppExit.h', 'Sources/NFBAppExit.m',
+    'Sources/NFBKeyboardState.h', 'Sources/NFBDarkKeyboard.m', 'NotifyBubblesKeyboard.plist', 'Sources/NFBStorageLayout.h', 'Sources/NFBEdgeInspection.h', 'Makefile', 'control', 'Sources/NFBAppExit.h', 'Sources/NFBAppExit.m',
     # Retired app-side back helper: kept on disk so it can be restored, but the
     # Makefile must not build it (see the assertions below).
     'NotifyBubblesBack.plist', 'Sources/NFBAppBack.m',
@@ -47,3 +47,6 @@ assert {x['key'] for x in prefs['items'] if 'key' in x} == {'Enabled','ShowOnLoc
 filter_ = plistlib.loads((root / 'NotifyBubbles.plist').read_bytes())
 assert filter_['Filter']['Bundles'] == ['com.apple.springboard']
 print('PASS: required files, property lists, RootHide configuration, preference keys and injection filter')
+
+keyboard_filter = plistlib.loads((root / "NotifyBubblesKeyboard.plist").read_bytes())
+assert keyboard_filter["Filter"]["Bundles"] == ["com.apple.UIKit"]

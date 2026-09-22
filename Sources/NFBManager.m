@@ -8,6 +8,7 @@
 #import "NFBNotificationPolicy.h"
 #import "NFBAppExit.h"
 #import "NFBKeyboard.h"
+#import "NFBKeyboardState.h"
 #import "NFBDebugLog.h"
 #import "NFBEdgeInspection.h"
 
@@ -209,6 +210,7 @@ static double NFBNumber(NSString *key, double fallback) {
 - (void)reloadPreferences {
     NSAssert(NSThread.isMainThread, @"UI must be on main thread");
     CFPreferencesAppSynchronize(NFBDomain);
+    NFBPublishKeyboardState(NFBPreference(@"DarkKeyboard", NO));
     self.verticalPosition = NFBPosition(NFBNumber(@"VerticalPosition", 0.7));
     self.iconSize = NFBSize(NFBNumber(@"IconSize", 48));
     self.iconOpacity = NFBOpacity(NFBNumber(@"IconOpacity", 1));

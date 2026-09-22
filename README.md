@@ -1,3 +1,7 @@
+# 0.40.1
+
+See UPDATE-0.40.1.md for the dark keyboard fix and installation checks.
+
 # 0.40.0
 
 See UPDATE-0.40.0.md for the new keyboard toggle, storage long-press cleanup, upload steps and device checks.
