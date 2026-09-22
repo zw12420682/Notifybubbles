@@ -1,3 +1,11 @@
+# 0.44.3
+
+See UPDATE-0.44.3.md for mini-window preservation.
+
+# 0.44.2
+
+See UPDATE-0.44.2.md for transition changes and remaining device checks.
+
 # 0.44.1
 
 See UPDATE-0.44.1.md for the desktop/split ordering fix.

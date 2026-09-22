@@ -1,5 +1,6 @@
 #import "NFBWindowControls.h"
 #import "NFBTrollOpen.h"
+#import "NFBSplitClosePolicy.h"
 #import "NFBDebugLog.h"
 #import <UIKit/UIKit.h>
 #import <objc/message.h>
@@ -31,10 +32,20 @@ static NSInteger orientationOf(id window, NSString *name) {
     if (sig.numberOfArguments != 2 || strcmp(sig.methodReturnType, @encode(NSInteger))) return 0;
     return ((NSInteger (*)(id, SEL))objc_msgSend)(window, selector);
 }
+static NSInteger boolStateOf(id window, NSString *name) {
+    SEL selector = NSSelectorFromString(name);
+    NSMethodSignature *sig = [window methodSignatureForSelector:selector];
+    if (sig.numberOfArguments != 2 ||
+        (sig.methodReturnType[0] != 'B' && sig.methodReturnType[0] != 'c')) return -1;
+    return ((BOOL (*)(id, SEL))objc_msgSend)(window, selector) ? 1 : 0;
+}
 void NFBObserveSplitSwitch(NSString *app, BOOL enabled) {
     static __weak UIView *previousWindow;
     static NSString *previousApp;
-    if (!NSThread.isMainThread || !app.length) return;
+    if (!NSThread.isMainThread) return;
+    // Minimizing removes the app from the expanded-window observer. Do not keep
+    // an old candidate around to close when a different app opens later.
+    if (!app.length) { previousWindow = nil; previousApp = nil; return; }
     @try {
         id object = currentWindow();
         if (![object isKindOfClass:UIView.class]) return;
@@ -44,9 +55,13 @@ void NFBObserveSplitSwitch(NSString *app, BOOL enabled) {
         if (!enabled || !previous || previous == object || [oldApp isEqual:app]) return;
         NSInteger scene = orientationOf(previous, @"sceneOrientation");
         NSInteger container = orientationOf(previous, @"containerOrientation");
-        // Preserve landscape and unknown states instead of guessing from frame size.
-        if (!((scene == 1 || scene == 2) && (container == 1 || container == 2))) {
-            NFBDebugLog(@"split-switch: preserve %@ scene=%ld container=%ld", oldApp, (long)scene, (long)container);
+        NSInteger mini = boolStateOf(previous, @"miniWindowModeEnabled");
+        NSInteger transitioning = boolStateOf(previous, @"isTransitioningFromMiniMode");
+        // Recheck the old object directly: a quick mini -> other-app switch may
+        // happen between observer ticks. Never use stale portrait state to close it.
+        if (!NFBShouldClosePreviousSplit(mini, transitioning, scene, container)) {
+            NFBDebugLog(@"split-switch: preserve %@ mini=%ld transition=%ld scene=%ld container=%ld",
+                oldApp, (long)mini, (long)transitioning, (long)scene, (long)container);
             return;
         }
         SEL close = NSSelectorFromString(@"closeWindowWithoutTerminatingProcessWithoutAnimation");

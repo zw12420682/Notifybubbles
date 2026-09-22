@@ -1,3 +1,4 @@
+#import "NFBSplitClosePolicy.h"
 #import "NFBStorageLayout.h"
 #import <Foundation/Foundation.h>
 #import "NFBStore.h"
@@ -77,6 +78,11 @@ int main(void) {
             }, &hidden);
         Check([folded isEqual:@[@"tray", @"recent1", @"recent2", @"unread"]] && hidden == 1,
               @"Two recently used apps and unread survive folding; only old read app is stored");
+        Check(NFBShouldClosePreviousSplit(0, 0, 1, 1), @"Expanded portrait can close");
+        Check(!NFBShouldClosePreviousSplit(1, 0, 1, 1), @"Corner mini portrait survives app switch");
+        Check(!NFBShouldClosePreviousSplit(0, 1, 1, 1), @"Mini transition survives app switch");
+        Check(!NFBShouldClosePreviousSplit(0, 0, 3, 1) && !NFBShouldClosePreviousSplit(0, 0, 1, 4), @"Landscape scene or container survives");
+        Check(!NFBShouldClosePreviousSplit(-1, 0, 1, 1) && !NFBShouldClosePreviousSplit(0, -1, 1, 1) && !NFBShouldClosePreviousSplit(0, 0, 0, 1), @"Unknown state is preserved");
         NSLog(@"PASS: queue chronology, per-app isolation, deduplication, consumption, switcher pins and geometry");
     }
     return 0;

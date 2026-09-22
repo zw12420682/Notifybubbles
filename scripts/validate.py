@@ -4,7 +4,7 @@ import plistlib
 
 root = Path(__file__).resolve().parents[1]
 required = [
-    'Sources/NFBWindowControls.h', 'Sources/NFBWindowControls.m', 'Sources/NFBKeyboardState.h', 'Sources/NFBDarkKeyboard.m', 'NotifyBubblesKeyboard.plist', 'Sources/NFBStorageLayout.h', 'Sources/NFBEdgeInspection.h', 'Makefile', 'control', 'Sources/NFBAppExit.h', 'Sources/NFBAppExit.m',
+    'Sources/NFBSplitClosePolicy.h', 'Sources/NFBWindowControls.h', 'Sources/NFBWindowControls.m', 'Sources/NFBKeyboardState.h', 'Sources/NFBDarkKeyboard.m', 'NotifyBubblesKeyboard.plist', 'Sources/NFBStorageLayout.h', 'Sources/NFBEdgeInspection.h', 'Makefile', 'control', 'Sources/NFBAppExit.h', 'Sources/NFBAppExit.m',
     # Retired app-side back helper: kept on disk so it can be restored, but the
     # Makefile must not build it (see the assertions below).
     'NotifyBubblesBack.plist', 'Sources/NFBAppBack.m',

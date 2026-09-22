@@ -154,6 +154,7 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, strong) NSTimer *floatingWatch;
 @property(nonatomic) CGRect observedSplitFrame;
 @property(nonatomic) BOOL splitRailActive;
+@property(nonatomic) CGFloat splitRailDiameter;
 @property(nonatomic, copy) NSString *watchedFloating;
 // Previous keyboard state, so refresh can spot the up/down edges.
 @property(nonatomic) BOOL keyboardUp;
@@ -675,7 +676,13 @@ static double NFBNumber(NSString *key, double fallback) {
     BOOL attachmentChanged = attached != self.splitRailActive;
     self.splitRailActive = attached;
     CGFloat diameter = self.iconSize;
-    if (attached) diameter = MIN(diameter, MAX(28, CGRectGetWidth(bounds) - CGRectGetMaxX(splitFrame) - 11));
+    if (attached) {
+        // Do not resize every icon while TrollOpen moves its window for the keyboard.
+        if (attachmentChanged || self.splitRailDiameter <= 0)
+            self.splitRailDiameter = MIN(diameter, MAX(28, CGRectGetWidth(bounds) - CGRectGetMaxX(splitFrame) - 11));
+        diameter = MIN(diameter, self.splitRailDiameter);
+    }
+    NSTimeInterval layoutDuration = UIAccessibilityIsReduceMotionEnabled() ? 0 : (attachmentChanged ? 0.35 : (attached ? 0.16 : NFBMotion));
     CGFloat side = diameter + 14;
     CGFloat step = storedCount ? diameter + 8 : side + 4;
     CGFloat available = MAX(side, bounds.size.height - top - MAX(safe.bottom, 20) - 20);
@@ -712,17 +719,25 @@ static double NFBNumber(NSString *key, double fallback) {
     self.rail.alwaysBounceVertical = attached && contentHeight > height;
     self.rail.showsVerticalScrollIndicator = attached && contentHeight > height;
     if (!CGRectEqualToRect(self.rail.frame, railFrame)) {
-        if (attached || CGRectIsEmpty(self.rail.frame)) self.rail.frame = railFrame;
-        else [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : NFBMotion delay:0
-            options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
+        if (CGRectIsEmpty(self.rail.frame)) self.rail.frame = railFrame;
+        else [UIView animateWithDuration:layoutDuration delay:0
+            options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseOut
             animations:^{ self.rail.frame = railFrame; } completion:nil];
     }
     self.rail.contentSize = CGSizeMake(railWidth, contentHeight);
     CGFloat maxOffset = MAX(0, self.rail.contentSize.height - height);
-    if (attachmentChanged) self.rail.contentOffset = CGPointMake(0, maxOffset);
+    if (attachmentChanged && !self.rail.dragging && !self.rail.decelerating) {
+        [UIView animateWithDuration:layoutDuration delay:0
+            options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseOut
+            animations:^{ self.rail.contentOffset = CGPointMake(0, maxOffset); } completion:nil];
+    }
     else if (!self.rail.dragging && !self.rail.decelerating) {
         if (!attached && orderChanged) self.rail.contentOffset = CGPointMake(0, maxOffset);
-        else if (self.rail.contentOffset.y > maxOffset) self.rail.contentOffset = CGPointMake(0, maxOffset);
+        else if (self.rail.contentOffset.y > maxOffset) {
+            [UIView animateWithDuration:layoutDuration delay:0
+                options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseOut
+                animations:^{ self.rail.contentOffset = CGPointMake(0, maxOffset); } completion:nil];
+        }
     }
     [displayApps enumerateObjectsUsingBlock:^(NSString *appID, NSUInteger index, __unused BOOL *stop) {
         BOOL isClearAll = [appID isEqualToString:NFBClearAllID];
@@ -809,8 +824,8 @@ static double NFBNumber(NSString *key, double fallback) {
             !CGAffineTransformEqualToTransform(button.transform, target) ||
             fabs(button.alpha - alpha) > 0.001;
         if (changed) {
-            [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : NFBMotion
-                delay:0 usingSpringWithDamping:0.86 initialSpringVelocity:0
+            [UIView animateWithDuration:layoutDuration
+                delay:0 usingSpringWithDamping:1.0 initialSpringVelocity:0
                 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
                 animations:^{
                     // Bounds/center remain valid even while the view is transformed.
