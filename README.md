@@ -1,3 +1,7 @@
+# 0.41.0
+
+See UPDATE-0.41.0.md for rotation and initial split placement.
+
 # 0.40.1
 
 See UPDATE-0.40.1.md for the dark keyboard fix and installation checks.

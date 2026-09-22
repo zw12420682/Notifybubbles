@@ -5,6 +5,7 @@
 #import "NFBStorageLayout.h"
 #import "NFBSwitcher.h"
 #import "NFBTrollOpen.h"
+#import "NFBWindowControls.h"
 #import "NFBNotificationPolicy.h"
 #import "NFBAppExit.h"
 #import "NFBKeyboard.h"
@@ -38,6 +39,7 @@ static const NSTimeInterval NFBStackHold = 20.0;
 // split view. Tapping it clears every background app at once. It never enters
 // the store or the switcher ordering.
 static NSString * const NFBStorageID = @"__notifybubbles.storage__";
+static NSString * const NFBRotateID = @"__notifybubbles.rotate__";
 static NSString * const NFBClearAllID = @"__notifybubbles.clearall__";
 #import <QuartzCore/QuartzCore.h>
 
@@ -174,6 +176,7 @@ static double NFBNumber(NSString *key, double fallback) {
 - (void)showOpenNotice:(NSString *)message;
 - (BOOL)isLocked;
 - (void)clearBackground;
+- (void)rotateTapped:(UITapGestureRecognizer *)gesture;
 - (void)clearAllTapped:(UITapGestureRecognizer *)gesture;
 - (void)styleClearAllButton:(NFBBubble *)button;
 - (void)styleStorageButton:(NFBBubble *)button count:(NSUInteger)count;
@@ -260,6 +263,7 @@ static double NFBNumber(NSString *key, double fallback) {
     NSMutableOrderedSet *apps = [NSMutableOrderedSet orderedSetWithArray:self.lastLayoutApps ?: @[]];
     [apps addObjectsFromArray:self.store.appIDs];
     [apps removeObject:NFBClearAllID];
+    [apps removeObject:NFBRotateID];
     [apps removeObject:NFBStorageID];
     return apps.array;
 }
@@ -288,6 +292,11 @@ static double NFBNumber(NSString *key, double fallback) {
             [self refresh];
         });
     }];
+}
+- (void)rotateTapped:(UITapGestureRecognizer *)gesture {
+    if (gesture.state != UIGestureRecognizerStateEnded || ![self acceptGesture]) return;
+    if (self.buttons[NFBRotateID] != gesture.view) return;
+    if (!NFBRotateSplitWindow()) [self showOpenNotice:@"TrollOpen 未接受横竖屏切换，请提供调试日志"];
 }
 - (void)clearAllTapped:(UITapGestureRecognizer *)gesture {
     if (gesture.state != UIGestureRecognizerStateEnded) return;
@@ -553,6 +562,7 @@ static double NFBNumber(NSString *key, double fallback) {
         if (fromSwitcher || notificationsAllowed) [apps addObject:app];
     }
     NSString *floatingApp = NFBTrollVisibleApp();
+    NFBObserveSplitPlacement(floatingApp);
     // Keep the fast watcher in step with reality every time we recompute layout.
     [self syncFloatingWatch:floatingApp];
     // A keyboard outranks everything else: typing is the one moment the bubbles
@@ -595,7 +605,10 @@ static double NFBNumber(NSString *key, double fallback) {
     // rides at the very top of the row. It is layout-only: never in the store,
     // never promoted, and dropped the moment the split view closes.
     NSMutableArray<NSString *> *displayApps = [apps mutableCopy];
-    if (floatingApp.length > 0) [displayApps addObject:NFBClearAllID];
+    if (floatingApp.length > 0) {
+        [displayApps addObject:NFBRotateID];
+        [displayApps addObject:NFBClearAllID];
+    }
     BOOL stackOpen = self.stackUntil > CACurrentMediaTime();
     NSUInteger storedCount = 0;
     self.storedApps = @[];
@@ -683,7 +696,8 @@ static double NFBNumber(NSString *key, double fallback) {
     CGFloat maxOffset = MAX(0, self.rail.contentSize.height - height);
     if (orderChanged || self.rail.contentOffset.y > maxOffset) self.rail.contentOffset = CGPointMake(0, maxOffset);
     [displayApps enumerateObjectsUsingBlock:^(NSString *appID, NSUInteger index, __unused BOOL *stop) {
-        BOOL isClearAll = [appID isEqualToString:NFBClearAllID];
+        BOOL isRotate = [appID isEqualToString:NFBRotateID];
+        BOOL isClearAll = [appID isEqualToString:NFBClearAllID] || isRotate;
         BOOL isStorage = [appID isEqualToString:NFBStorageID];
         NFBBubble *button = self.buttons[appID];
         BOOL fresh = !button;
@@ -698,7 +712,7 @@ static double NFBNumber(NSString *key, double fallback) {
                 [button addGestureRecognizer:hold];
                 [button addGestureRecognizer:tap];
             } else if (isClearAll) {
-                UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(clearAllTapped:)];
+                UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:(isRotate ? @selector(rotateTapped:) : @selector(clearAllTapped:))];
                 tap.numberOfTapsRequired = 1;
                 [button addGestureRecognizer:tap];
             } else {
@@ -718,7 +732,15 @@ static double NFBNumber(NSString *key, double fallback) {
             [self.rail addSubview:button];
         }
         if (isStorage) [self styleStorageButton:button count:storedCount];
-        else if (isClearAll) [self styleClearAllButton:button];
+        else if (isClearAll) {
+            [self styleClearAllButton:button];
+            if (isRotate) {
+                button.imageView.image = [UIImage systemImageNamed:@"rotate.right"];
+                button.imageView.tintColor = UIColor.systemBlueColor;
+                button.accessibilityLabel = @"横竖屏切换";
+                button.accessibilityHint = @"切换当前分屏窗口方向";
+            }
+        }
         else [self updateBubble:button record:[self.store latestForApp:appID]];
         // A bubble we already started retracting must not be re-expanded by the
         // stale "window still visible" reading taken mid-transition.
@@ -1008,6 +1030,7 @@ static double NFBNumber(NSString *key, double fallback) {
         completion:^(__unused BOOL done) { [notice removeFromSuperview]; }];
 }
 - (void)openApp:(NSString *)app {
+    NFBResetSplitPlacement();
     if ([self isLocked]) {
         [self showOpenNotice:@"请先解锁，再点击图标通过 TrollOpen 分屏打开"];
         return;
