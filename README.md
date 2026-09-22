@@ -1,3 +1,7 @@
+# 0.45.0
+
+See UPDATE-0.45.0.md for the frosted scrolling container and keyboard avoidance.
+
 # 0.44.3
 
 See UPDATE-0.44.3.md for mini-window preservation.

@@ -55,9 +55,11 @@ static double NFBNumber(NSString *key, double fallback) {
 
 // The transparent strip must not block touches beside a half-hidden bubble.
 @interface NFBRail : UIScrollView
+@property(nonatomic) BOOL containerMode;
 @end
 @implementation NFBRail
 - (BOOL)pointInside:(CGPoint)point withEvent:(UIEvent *)event {
+    if (self.containerMode) return [super pointInside:point withEvent:event];
     if (point.y < CGRectGetMinY(self.bounds) || point.y > CGRectGetMaxY(self.bounds)) return NO;
     for (UIView *view in self.subviews) {
         if (![view isKindOfClass:UIControl.class] || !view.userInteractionEnabled) continue;
@@ -155,6 +157,7 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic) CGRect observedSplitFrame;
 @property(nonatomic) BOOL splitRailActive;
 @property(nonatomic) CGFloat splitRailDiameter;
+@property(nonatomic, strong) UIVisualEffectView *railMaterial;
 @property(nonatomic, copy) NSString *watchedFloating;
 // Previous keyboard state, so refresh can spot the up/down edges.
 @property(nonatomic) BOOL keyboardUp;
@@ -488,6 +491,12 @@ static double NFBNumber(NSString *key, double fallback) {
     self.rail.backgroundColor = UIColor.clearColor;
     self.rail.showsVerticalScrollIndicator = NO;
     self.rail.alwaysBounceVertical = NO;
+    self.railMaterial = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterial]];
+    self.railMaterial.userInteractionEnabled = NO;
+    self.railMaterial.layer.cornerRadius = 20;
+    self.railMaterial.clipsToBounds = YES;
+    self.railMaterial.alpha = 0;
+    [self.window.rootViewController.view addSubview:self.railMaterial];
     [self.window.rootViewController.view addSubview:self.rail];
     // Never take the key window; keyboard and app focus belong to the system.
 }
@@ -673,6 +682,7 @@ static double NFBNumber(NSString *key, double fallback) {
     CGFloat top = MAX(safe.top, 48) + 30;
     CGRect splitFrame = floatingApp.length ? NFBSplitFrameInView(root) : CGRectNull;
     BOOL attached = !NFBCurrentSplitLandscape() && floatingApp.length && !CGRectIsNull(splitFrame) && !CGRectIsEmpty(splitFrame);
+    BOOL containerMode = floatingApp.length > 0;
     BOOL attachmentChanged = attached != self.splitRailActive;
     self.splitRailActive = attached;
     CGFloat diameter = self.iconSize;
@@ -690,7 +700,8 @@ static double NFBNumber(NSString *key, double fallback) {
     // Compact rows have step < side, so their bottom otherwise clips by 6pt.
     CGFloat padding = 12;
     CGFloat railWidth = side + padding;
-    CGFloat contentHeight = displayApps.count * step + padding * 2;
+    NSUInteger rowCount = displayApps.count - (containerMode ? 1 : 0);
+    CGFloat contentHeight = rowCount * step + (containerMode ? 0 : padding * 2);
     CGFloat height = MIN(available, contentHeight);
     // Keyboard outranks every other rule (typing must never be covered): the row
     // shifts to NFBKeyboardPosition in both split view and fullscreen. Otherwise,
@@ -716,13 +727,28 @@ static double NFBNumber(NSString *key, double fallback) {
         x = MAX(0, MIN(CGRectGetWidth(bounds) - railWidth, x));
         railFrame = CGRectMake(x, y, railWidth, height);
     }
-    self.rail.alwaysBounceVertical = attached && contentHeight > height;
-    self.rail.showsVerticalScrollIndicator = attached && contentHeight > height;
-    if (!CGRectEqualToRect(self.rail.frame, railFrame)) {
+    if (containerMode) {
+        CGFloat ceiling = MAX(safe.top, 12);
+        CGFloat floor = keyboardUp ? NFBKeyboardTopInView(root) - 12 : CGRectGetHeight(bounds) - MAX(safe.bottom, 12);
+        CGFloat clearSpace = side + 8;
+        CGFloat availableHeight = MAX(0, floor - ceiling - clearSpace);
+        height = MIN(MIN(7 * step, contentHeight), availableHeight);
+        CGFloat y = MAX(ceiling + clearSpace, MIN(railFrame.origin.y, floor - height));
+        railFrame = CGRectMake(railFrame.origin.x, y, railWidth, height);
+    }
+    self.rail.containerMode = containerMode;
+    self.rail.layer.cornerRadius = containerMode ? 20 : 0;
+    self.rail.alwaysBounceVertical = containerMode && contentHeight > height;
+    self.rail.showsVerticalScrollIndicator = containerMode && contentHeight > height;
+    if (!CGRectEqualToRect(self.rail.frame, railFrame) || self.railMaterial.alpha != (containerMode ? 1 : 0)) {
         if (CGRectIsEmpty(self.rail.frame)) self.rail.frame = railFrame;
-        else [UIView animateWithDuration:layoutDuration delay:0
-            options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseOut
-            animations:^{ self.rail.frame = railFrame; } completion:nil];
+        [UIView animateWithDuration:layoutDuration delay:0
+            options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseInOut
+            animations:^{
+                self.rail.frame = railFrame;
+                self.railMaterial.frame = railFrame;
+                self.railMaterial.alpha = containerMode ? 1 : 0;
+            } completion:nil];
     }
     self.rail.contentSize = CGSizeMake(railWidth, contentHeight);
     CGFloat maxOffset = MAX(0, self.rail.contentSize.height - height);
@@ -772,7 +798,8 @@ static double NFBNumber(NSString *key, double fallback) {
                 [button addGestureRecognizer:hold];
             }
             self.buttons[appID] = button;
-            [self.rail addSubview:button];
+            if (isClearAll) [root addSubview:button];
+            else [self.rail addSubview:button];
         }
         if (isStorage) [self styleStorageButton:button count:storedCount];
         else if (isClearAll) {
@@ -792,14 +819,15 @@ static double NFBNumber(NSString *key, double fallback) {
         // Outside split view, bubbles with no unread fold into a stack unless the
         // stack is currently spread open (stackOpen).
         BOOL expanded = !keyboardUp && !retracting && (floatingApp.length > 0 || hasUnread || stackOpen || [keepRecent containsObject:appID]);
-        CGFloat retraction = attached ? 0 : ((isStorage && !keyboardUp) ? 0 : (expanded ? 0 : NFBRetraction(diameter)));
+        CGFloat retraction = containerMode ? 0 : ((isStorage && !keyboardUp) ? 0 : (expanded ? 0 : NFBRetraction(diameter)));
         CGAffineTransform target = CGAffineTransformMakeTranslation(retraction, 0);
         CGRect targetBounds = CGRectMake(0, 0, side, side);
         // Keep the same bottom-first app ordering on desktop and in split view.
         // The clear action is appended last and therefore stays above all apps.
-        CGFloat rowY = NFBRowCenter(displayApps.count, index, step, side);
-        CGFloat corner = attached && !isClearAll ? diameter * 0.23 : (isStorage ? diameter * 0.32 : diameter / 2);
-        CGPoint targetCenter = CGPointMake(padding + side / 2, padding + rowY);
+        CGFloat rowY = isClearAll ? side / 2 : NFBRowCenter(rowCount, index, step, side);
+        CGFloat corner = containerMode && !isClearAll ? diameter * 0.23 : (isStorage ? diameter * 0.32 : diameter / 2);
+        CGPoint targetCenter = isClearAll ? CGPointMake(railFrame.origin.x + padding + side / 2, railFrame.origin.y - 8 - side / 2)
+            : CGPointMake(padding + side / 2, (containerMode ? 0 : padding) + rowY);
         if (fresh) {
             button.bounds = targetBounds;
             button.center = targetCenter;

@@ -5,6 +5,17 @@
 
 // Set from the notifications, which only cover keyboards SpringBoard hosts.
 static BOOL NFBKeyboardNotified = NO;
+static CGRect NFBKeyboardScreenFrame;
+CGFloat NFBKeyboardTopInView(UIView *root) {
+    if (!NFBKeyboardVisible()) return CGRectGetHeight(root.bounds);
+    if (!CGRectIsEmpty(NFBKeyboardScreenFrame)) {
+        CGRect frame = [root convertRect:NFBKeyboardScreenFrame fromView:nil];
+        if (CGRectIntersectsRect(root.bounds, frame)) return MAX(0, CGRectGetMinY(frame));
+    }
+    // Remote keyboards may not publish their frame to SpringBoard. Keep the
+    // entire lower 60% free rather than pretending the keyboard has a known height.
+    return CGRectGetHeight(root.bounds) * 0.40;
+}
 static void (^NFBKeyboardChange)(void);
 
 // A keyboard window among SpringBoard's own windows. Conservative: the window
@@ -94,8 +105,20 @@ void NFBKeyboardInstall(void (^onChange)(void)) {
         NFBKeyboardChange = [onChange copy];
         NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
         NSOperationQueue *main = NSOperationQueue.mainQueue;
-        void (^show)(NSNotification *) = ^(__unused NSNotification *note) { NFBKeyboardSet(YES); };
-        void (^hide)(NSNotification *) = ^(__unused NSNotification *note) { NFBKeyboardSet(NO); };
+        void (^show)(NSNotification *) = ^(NSNotification *note) {
+            NSValue *value = note.userInfo[UIKeyboardFrameEndUserInfoKey];
+            if (value) NFBKeyboardScreenFrame = value.CGRectValue;
+            NFBKeyboardSet(YES);
+            if (NFBKeyboardChange) NFBKeyboardChange();
+        };
+        void (^hide)(NSNotification *) = ^(__unused NSNotification *note) {
+            NFBKeyboardScreenFrame = CGRectZero; NFBKeyboardSet(NO);
+        };
+        [center addObserverForName:UIKeyboardWillChangeFrameNotification object:nil queue:main usingBlock:^(NSNotification *note) {
+            NSValue *value = note.userInfo[UIKeyboardFrameEndUserInfoKey];
+            if (value) NFBKeyboardScreenFrame = value.CGRectValue;
+            if (NFBKeyboardChange) NFBKeyboardChange();
+        }];
         [center addObserverForName:UIKeyboardWillShowNotification object:nil queue:main usingBlock:show];
         [center addObserverForName:UIKeyboardDidShowNotification object:nil queue:main usingBlock:show];
         [center addObserverForName:UIKeyboardWillHideNotification object:nil queue:main usingBlock:hide];

@@ -1,4 +1,6 @@
 #import <Foundation/Foundation.h>
+#import <UIKit/UIKit.h>
+CGFloat NFBKeyboardTopInView(UIView *root);
 
 // Whether a keyboard is on screen, as far as the SpringBoard process can tell.
 //
