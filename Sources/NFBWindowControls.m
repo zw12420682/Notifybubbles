@@ -30,6 +30,16 @@ BOOL NFBRotateSplitWindow(void) {
         NFBDebugLog(@"rotation: %@", exception); return NO;
     }
 }
+CGRect NFBSplitFrameInView(UIView *root) {
+    if (!NSThread.isMainThread || !root.window) return CGRectNull;
+    @try {
+        id object = currentWindow();
+        if (![object isKindOfClass:UIView.class]) return CGRectNull;
+        UIView *view = object;
+        if (!view.window || view.hidden || CGRectIsEmpty(view.bounds)) return CGRectNull;
+        return [view convertRect:view.bounds toView:root];
+    } @catch (__unused NSException *exception) { return CGRectNull; }
+}
 void NFBResetSplitPlacement(void) {
     lastApp = nil; lastWindow = nil; placementGeneration++;
 }

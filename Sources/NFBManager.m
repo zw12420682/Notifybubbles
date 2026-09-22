@@ -24,7 +24,7 @@ static const NSTimeInterval NFBGestureCooldown = 0.25;
 // independent of the user's opacity slider) and every other bubble drops to this
 // fraction, so the split-view app reads as the active one without being pulled
 // to the top of the row.
-static const CGFloat NFBFloatingDim = 0.3;
+
 // Vertical position (0 = top, 1 = bottom) the whole row shifts to while an app
 // is in the split view, so it clears the floating window. Restores on exit.
 static const CGFloat NFBFloatingPosition = 0.80;
@@ -152,6 +152,8 @@ static double NFBNumber(NSString *key, double fallback) {
 // window dismissed outside the plugin (TrollOpen's own bar, app crash, exit) is
 // picked up in ~one frame rather than on the next 0.5s poll.
 @property(nonatomic, strong) NSTimer *floatingWatch;
+@property(nonatomic) CGRect observedSplitFrame;
+@property(nonatomic) BOOL splitRailActive;
 @property(nonatomic, copy) NSString *watchedFloating;
 // Previous keyboard state, so refresh can spot the up/down edges.
 @property(nonatomic) BOOL keyboardUp;
@@ -391,7 +393,11 @@ static double NFBNumber(NSString *key, double fallback) {
 }
 - (void)floatingWatchFired {
     NSString *now = NFBTrollVisibleApp();
-    if (now == self.watchedFloating || [now isEqualToString:self.watchedFloating]) return;
+    CGRect frame = NFBSplitFrameInView(self.window.rootViewController.view);
+    BOOL sameFrame = CGRectEqualToRect(frame, self.observedSplitFrame) ||
+        (CGRectIsNull(frame) && CGRectIsNull(self.observedSplitFrame));
+    if ((now == self.watchedFloating || [now isEqualToString:self.watchedFloating]) && sameFrame) return;
+    self.observedSplitFrame = frame;
     self.watchedFloating = now;
     [self refresh];
 }
@@ -660,7 +666,12 @@ static double NFBNumber(NSString *key, double fallback) {
     CGRect bounds = root.bounds;
     UIEdgeInsets safe = root.safeAreaInsets;
     CGFloat top = MAX(safe.top, 48) + 30;
+    CGRect splitFrame = floatingApp.length ? NFBSplitFrameInView(root) : CGRectNull;
+    BOOL attached = floatingApp.length && !CGRectIsNull(splitFrame) && !CGRectIsEmpty(splitFrame);
+    BOOL attachmentChanged = attached != self.splitRailActive;
+    self.splitRailActive = attached;
     CGFloat diameter = self.iconSize;
+    if (attached) diameter = MIN(diameter, MAX(28, CGRectGetWidth(bounds) - CGRectGetMaxX(splitFrame) - 11));
     CGFloat side = diameter + 14;
     CGFloat step = storedCount ? diameter + 8 : side + 4;
     CGFloat available = MAX(side, bounds.size.height - top - MAX(safe.bottom, 20) - 20);
@@ -686,15 +697,29 @@ static double NFBNumber(NSString *key, double fallback) {
     CGFloat railY = anchor + (step - side/2) + padding - height;
     railY = MAX(top, MIN(bounds.size.height - MAX(safe.bottom, 20) - 20 - height, railY));
     CGRect railFrame = CGRectMake(bounds.size.width - railWidth, railY, railWidth, height);
+    if (attached) {
+        CGFloat y = MAX(safe.top, CGRectGetMinY(splitFrame));
+        CGFloat bottom = MIN(CGRectGetHeight(bounds) - safe.bottom, CGRectGetMaxY(splitFrame));
+        height = MAX(1, bottom - y);
+        CGFloat x = CGRectGetMaxX(splitFrame) + 4 - padding - 7;
+        x = MAX(0, MIN(CGRectGetWidth(bounds) - railWidth, x));
+        railFrame = CGRectMake(x, y, railWidth, height);
+    }
+    self.rail.alwaysBounceVertical = attached && contentHeight > height;
+    self.rail.showsVerticalScrollIndicator = attached && contentHeight > height;
     if (!CGRectEqualToRect(self.rail.frame, railFrame)) {
-        if (CGRectIsEmpty(self.rail.frame)) self.rail.frame = railFrame;
+        if (attached || CGRectIsEmpty(self.rail.frame)) self.rail.frame = railFrame;
         else [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : NFBMotion delay:0
             options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
             animations:^{ self.rail.frame = railFrame; } completion:nil];
     }
     self.rail.contentSize = CGSizeMake(railWidth, contentHeight);
     CGFloat maxOffset = MAX(0, self.rail.contentSize.height - height);
-    if (orderChanged || self.rail.contentOffset.y > maxOffset) self.rail.contentOffset = CGPointMake(0, maxOffset);
+    if (attachmentChanged) self.rail.contentOffset = CGPointMake(0, attached ? 0 : maxOffset);
+    else if (!self.rail.dragging && !self.rail.decelerating) {
+        if (!attached && orderChanged) self.rail.contentOffset = CGPointMake(0, maxOffset);
+        else if (self.rail.contentOffset.y > maxOffset) self.rail.contentOffset = CGPointMake(0, maxOffset);
+    }
     [displayApps enumerateObjectsUsingBlock:^(NSString *appID, NSUInteger index, __unused BOOL *stop) {
         BOOL isRotate = [appID isEqualToString:NFBRotateID];
         BOOL isClearAll = [appID isEqualToString:NFBClearAllID] || isRotate;
@@ -754,16 +779,22 @@ static double NFBNumber(NSString *key, double fallback) {
         // Outside split view, bubbles with no unread fold into a stack unless the
         // stack is currently spread open (stackOpen).
         BOOL expanded = !keyboardUp && !retracting && (floatingApp.length > 0 || hasUnread || stackOpen);
-        CGFloat retraction = (isStorage && !keyboardUp) ? 0 : (expanded ? 0 : NFBRetraction(diameter));
+        CGFloat retraction = attached ? 0 : ((isStorage && !keyboardUp) ? 0 : (expanded ? 0 : NFBRetraction(diameter)));
         CGAffineTransform target = CGAffineTransformMakeTranslation(retraction, 0);
         CGRect targetBounds = CGRectMake(0, 0, side, side);
-        CGFloat rowY = NFBRowCenter(displayApps.count, index, step, side);
+        NSUInteger visualIndex = index;
+        if (attached) {
+            if (isRotate) visualIndex = displayApps.count - 1;
+            else if (isClearAll) visualIndex = displayApps.count - 2;
+        }
+        CGFloat rowY = attached ? side / 2 + visualIndex * step : NFBRowCenter(displayApps.count, index, step, side);
+        CGFloat corner = attached && !isClearAll ? diameter * 0.23 : (isStorage ? diameter * 0.32 : diameter / 2);
         CGPoint targetCenter = CGPointMake(padding + side / 2, padding + rowY);
         if (fresh) {
             button.bounds = targetBounds;
             button.center = targetCenter;
             button.imageView.frame = CGRectMake(7, 7, diameter, diameter);
-            button.imageView.layer.cornerRadius = isStorage ? diameter * 0.32 : diameter / 2;
+            button.imageView.layer.cornerRadius = corner;
             button.transform = CGAffineTransformMakeTranslation(side + 10, 0);
             button.alpha = 0;
         }
@@ -773,21 +804,12 @@ static double NFBNumber(NSString *key, double fallback) {
         if (isClearAll) {
             alpha = 1.0;
         } else if (floatingApp.length > 0) {
-            if ([floatingApp isEqualToString:appID]) {
-                // The split-view app's bubble must read clearly even when the
-                // user has the opacity slider down low, so pin it to full alpha.
-                alpha = 1.0;
-            } else {
-                // The dimmed bubbles use a fixed fraction independent of the
-                // opacity slider; otherwise a low slider would push them nearly
-                // invisible.
-                alpha = NFBFloatingDim;
-            }
+            alpha = 1.0;
         }
         // A bubble mid-shake (fresh notification during split view) stays fully
         // opaque for the reminder's duration, whatever its normal state is.
         if ([self.shakingApps containsObject:appID]) alpha = 1.0;
-        BOOL changed = fresh || !CGRectEqualToRect(button.bounds, targetBounds) ||
+        BOOL changed = fresh || fabs(button.imageView.layer.cornerRadius - corner) > 0.01 || !CGRectEqualToRect(button.bounds, targetBounds) ||
             !CGPointEqualToPoint(button.center, targetCenter) ||
             !CGAffineTransformEqualToTransform(button.transform, target) ||
             fabs(button.alpha - alpha) > 0.001;
@@ -800,7 +822,7 @@ static double NFBNumber(NSString *key, double fallback) {
                     button.bounds = targetBounds;
                     button.center = targetCenter;
                     button.imageView.frame = CGRectMake(7, 7, diameter, diameter);
-                    button.imageView.layer.cornerRadius = isStorage ? diameter * 0.32 : diameter / 2;
+                    button.imageView.layer.cornerRadius = corner;
                     button.transform = target;
                     button.alpha = alpha;
                 } completion:nil];

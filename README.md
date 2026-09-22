@@ -1,3 +1,7 @@
+# 0.42.0
+
+See UPDATE-0.42.0.md for the window-attached scrolling icon rail.
+
 # 0.41.0
 
 See UPDATE-0.41.0.md for rotation and initial split placement.
