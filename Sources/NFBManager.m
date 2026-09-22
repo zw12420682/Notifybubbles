@@ -701,7 +701,7 @@ static double NFBNumber(NSString *key, double fallback) {
     CGFloat diameter = self.iconSize;
     // Reserve a real gap outside the split window; never change its scale.
     // Only horizontal space constrains icon size, not app count or keyboard height.
-    const CGFloat splitGap = 8;
+    const CGFloat splitGap = 4;
     const CGFloat screenMargin = 4;
     if (attached) {
         CGFloat room = CGRectGetWidth(bounds) - CGRectGetMaxX(splitFrame) - splitGap - screenMargin;
@@ -745,8 +745,9 @@ static double NFBNumber(NSString *key, double fallback) {
     if (containerMode) {
         CGFloat ceiling = MAX(safe.top, 12);
         CGFloat floor = keyboardUp ? NFBKeyboardTopInView(root) - 12 - step : CGRectGetHeight(bounds) - MAX(safe.bottom, 12);
-        // Align the visible clear icon's top, not its padded hit area, to the window.
-        CGFloat desiredTop = attached ? CGRectGetMinY(splitFrame) : railFrame.origin.y;
+        // Move the clear action and rail together by 10% of screen height.
+        // The floor below still reserves keyboard/input space.
+        CGFloat desiredTop = (attached ? CGRectGetMinY(splitFrame) : railFrame.origin.y) + CGRectGetHeight(bounds) * 0.10;
         CGFloat clearTop = MAX(ceiling, MIN(desiredTop, floor - diameter - 9));
         clearCenterY = clearTop + diameter / 2;
         CGFloat y = clearTop + diameter + 9;
