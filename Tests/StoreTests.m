@@ -71,6 +71,12 @@ int main(void) {
         Check([folded isEqual:@[@"tray"]] && hidden == 2, @"All read apps form one row");
         folded = NFBFoldedRows(@[@"a", @"b"], @"tray", ^NSUInteger(__unused NSString *app) { return 1; }, &hidden);
         Check([folded isEqual:@[@"a", @"b"]] && hidden == 0, @"Unread-only list preserves order without empty tray");
+        folded = NFBFoldedRowsKeeping(@[@"recent1", @"old", @"recent2", @"unread"], @"tray",
+            [NSSet setWithArray:@[@"recent1", @"recent2"]], ^NSUInteger(NSString *app) {
+                return [app isEqual:@"unread"] ? 1 : 0;
+            }, &hidden);
+        Check([folded isEqual:@[@"tray", @"recent1", @"recent2", @"unread"]] && hidden == 1,
+              @"Two recently used apps and unread survive folding; only old read app is stored");
         NSLog(@"PASS: queue chronology, per-app isolation, deduplication, consumption, switcher pins and geometry");
     }
     return 0;

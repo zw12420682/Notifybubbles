@@ -34,7 +34,7 @@ static const CGFloat NFBFloatingPosition = 0.80;
 static const CGFloat NFBKeyboardPosition = 0.49;
 // How long the folded (no-unread) bubbles stay spread out after a tap on the
 // stack edge, before folding back into a thin stack.
-static const NSTimeInterval NFBStackHold = 20.0;
+static const NSTimeInterval NFBStackHold = 5.0;
 // Synthetic bubble id that rides at the top of the row while an app is in the
 // split view. Tapping it clears every background app at once. It never enters
 // the store or the switcher ordering.
@@ -131,6 +131,7 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic) NSUInteger emptyReads;
 @property(nonatomic) CGFloat verticalPosition;
 @property(nonatomic, copy) NSString *lastActiveApp;
+@property(nonatomic, strong) NSMutableArray<NSString *> *recentUsedApps;
 @property(nonatomic, copy) NSArray *lastLayoutApps;
 @property(nonatomic, copy) NSArray<NSString *> *storedApps;
 @property(nonatomic) CGFloat iconSize;
@@ -598,6 +599,17 @@ static double NFBNumber(NSString *key, double fallback) {
         [apps removeObject:active]; [apps insertObject:active atIndex:0];
         if (![self.lastActiveApp isEqual:active]) [self.store promoteApp:active];
     }
+    if (!self.recentUsedApps) self.recentUsedApps = [NSMutableArray array];
+    if (active.length && ![self.lastActiveApp isEqual:active]) {
+        [self.recentUsedApps removeObject:active];
+        [self.recentUsedApps insertObject:active atIndex:0];
+        if (self.recentUsedApps.count > 20) [self.recentUsedApps removeLastObject];
+    }
+    NSMutableSet<NSString *> *keepRecent = [NSMutableSet set];
+    for (NSString *recent in self.recentUsedApps) {
+        if ([apps containsObject:recent]) [keepRecent addObject:recent];
+        if (keepRecent.count == 2) break;
+    }
     self.lastActiveApp = active;
     if (floatingApp.length) NFBInspectTrollEdges();
     // While an app is in the split view, a synthetic "clear background" bubble
@@ -611,11 +623,11 @@ static double NFBNumber(NSString *key, double fallback) {
     NSUInteger storedCount = 0;
     self.storedApps = @[];
     if (!floatingApp.length && !stackOpen) {
-        displayApps = NFBFoldedRows(apps, NFBStorageID, ^NSUInteger(NSString *app) {
+        displayApps = NFBFoldedRowsKeeping(apps, NFBStorageID, keepRecent, ^NSUInteger(NSString *app) {
             return [self.store countForApp:app];
         }, &storedCount);
         NSMutableArray *stored = [NSMutableArray array];
-        for (NSString *app in apps) if ([self.store countForApp:app] == 0) [stored addObject:app];
+        for (NSString *app in apps) if ([self.store countForApp:app] == 0 && ![keepRecent containsObject:app]) [stored addObject:app];
         self.storedApps = [stored copy];
     }
     BOOL orderChanged = ![self.lastLayoutApps isEqualToArray:displayApps];
@@ -659,7 +671,7 @@ static double NFBNumber(NSString *key, double fallback) {
     UIEdgeInsets safe = root.safeAreaInsets;
     CGFloat top = MAX(safe.top, 48) + 30;
     CGRect splitFrame = floatingApp.length ? NFBSplitFrameInView(root) : CGRectNull;
-    BOOL attached = floatingApp.length && !CGRectIsNull(splitFrame) && !CGRectIsEmpty(splitFrame);
+    BOOL attached = !NFBCurrentSplitLandscape() && floatingApp.length && !CGRectIsNull(splitFrame) && !CGRectIsEmpty(splitFrame);
     BOOL attachmentChanged = attached != self.splitRailActive;
     self.splitRailActive = attached;
     CGFloat diameter = self.iconSize;
@@ -764,13 +776,13 @@ static double NFBNumber(NSString *key, double fallback) {
         // instead of only that app's, so the whole row is reachable at a glance.
         // Outside split view, bubbles with no unread fold into a stack unless the
         // stack is currently spread open (stackOpen).
-        BOOL expanded = !keyboardUp && !retracting && (floatingApp.length > 0 || hasUnread || stackOpen);
+        BOOL expanded = !keyboardUp && !retracting && (floatingApp.length > 0 || hasUnread || stackOpen || [keepRecent containsObject:appID]);
         CGFloat retraction = attached ? 0 : ((isStorage && !keyboardUp) ? 0 : (expanded ? 0 : NFBRetraction(diameter)));
         CGAffineTransform target = CGAffineTransformMakeTranslation(retraction, 0);
         CGRect targetBounds = CGRectMake(0, 0, side, side);
         NSUInteger visualIndex = index;
         if (attached) {
-            if (isClearAll) visualIndex = displayApps.count - 1;
+            visualIndex = isClearAll ? 0 : index + 1;
         }
         CGFloat rowY = attached ? side / 2 + visualIndex * step : NFBRowCenter(displayApps.count, index, step, side);
         CGFloat corner = attached && !isClearAll ? diameter * 0.23 : (isStorage ? diameter * 0.32 : diameter / 2);
@@ -821,7 +833,7 @@ static double NFBNumber(NSString *key, double fallback) {
     if (now - self.lastGestureAt < NFBGestureCooldown) return NO;
     self.lastGestureAt = now;
     // While the folded stack is spread open, any tap keeps it open for another
-    // NFBStackHold seconds — only 20 seconds of no action folds it back.
+    // NFBStackHold seconds — only 5 seconds of no action folds it back.
     if (self.stackUntil > now) self.stackUntil = now + NFBStackHold;
     return YES;
 }
@@ -948,7 +960,7 @@ static double NFBNumber(NSString *key, double fallback) {
     button.badge.font = [UIFont systemFontOfSize:10 weight:UIFontWeightSemibold];
     button.badge.layer.cornerRadius = 9;
     button.accessibilityLabel = [NSString stringWithFormat:@"收纳了 %lu 个应用", (unsigned long)count];
-    button.accessibilityHint = @"点击展开，20 秒无操作后自动收起";
+    button.accessibilityHint = @"点击展开，5 秒无操作后自动收起";
 }
 - (void)storageLongPressed:(UILongPressGestureRecognizer *)gesture {
     if (gesture.state != UIGestureRecognizerStateBegan) return;

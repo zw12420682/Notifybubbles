@@ -57,6 +57,15 @@ void NFBObserveSplitSwitch(NSString *app, BOOL enabled) {
         NFBDebugLog(@"split-switch: closed old portrait window %@; new=%@", oldApp, app);
     } @catch (NSException *exception) { NFBDebugLog(@"split-switch: %@", exception); }
 }
+BOOL NFBCurrentSplitLandscape(void) {
+    if (!NSThread.isMainThread) return NO;
+    @try {
+        id window = currentWindow();
+        NSInteger scene = orientationOf(window, @"sceneOrientation");
+        NSInteger container = orientationOf(window, @"containerOrientation");
+        return scene == 3 || scene == 4 || container == 3 || container == 4;
+    } @catch (__unused NSException *exception) { return NO; }
+}
 void NFBResetSplitPlacement(void) {
     lastApp = nil; lastWindow = nil; placementGeneration++;
 }
@@ -73,7 +82,8 @@ void NFBObserveSplitPlacement(NSString *app) {
         __weak UIView *weakWindow = view;
         // Let TrollOpen finish restoring its previous layout before applying ours.
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.75 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            UIView *window = weakWindow;
+                UIView *window = weakWindow;
+            if (NFBCurrentSplitLandscape()) return;
             if (!window || generation != placementGeneration || currentWindow() != window ||
                 ![NFBTrollVisibleApp() isEqual:app] ||
                 (!window.superview && ![window isKindOfClass:UIWindow.class])) return;
