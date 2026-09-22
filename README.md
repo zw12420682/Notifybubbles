@@ -1,3 +1,7 @@
+# 0.43.0
+
+See UPDATE-0.43.0.md for edge alignment and the portrait-window replacement switch.
+
 # 0.42.0
 
 See UPDATE-0.42.0.md for the window-attached scrolling icon rail.
