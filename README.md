@@ -1,3 +1,7 @@
+# 0.44.1
+
+See UPDATE-0.44.1.md for the desktop/split ordering fix.
+
 # 0.44.0
 
 See UPDATE-0.44.0.md for current behavior.

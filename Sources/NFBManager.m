@@ -719,7 +719,7 @@ static double NFBNumber(NSString *key, double fallback) {
     }
     self.rail.contentSize = CGSizeMake(railWidth, contentHeight);
     CGFloat maxOffset = MAX(0, self.rail.contentSize.height - height);
-    if (attachmentChanged) self.rail.contentOffset = CGPointMake(0, attached ? 0 : maxOffset);
+    if (attachmentChanged) self.rail.contentOffset = CGPointMake(0, maxOffset);
     else if (!self.rail.dragging && !self.rail.decelerating) {
         if (!attached && orderChanged) self.rail.contentOffset = CGPointMake(0, maxOffset);
         else if (self.rail.contentOffset.y > maxOffset) self.rail.contentOffset = CGPointMake(0, maxOffset);
@@ -780,11 +780,9 @@ static double NFBNumber(NSString *key, double fallback) {
         CGFloat retraction = attached ? 0 : ((isStorage && !keyboardUp) ? 0 : (expanded ? 0 : NFBRetraction(diameter)));
         CGAffineTransform target = CGAffineTransformMakeTranslation(retraction, 0);
         CGRect targetBounds = CGRectMake(0, 0, side, side);
-        NSUInteger visualIndex = index;
-        if (attached) {
-            visualIndex = isClearAll ? 0 : index + 1;
-        }
-        CGFloat rowY = attached ? side / 2 + visualIndex * step : NFBRowCenter(displayApps.count, index, step, side);
+        // Keep the same bottom-first app ordering on desktop and in split view.
+        // The clear action is appended last and therefore stays above all apps.
+        CGFloat rowY = NFBRowCenter(displayApps.count, index, step, side);
         CGFloat corner = attached && !isClearAll ? diameter * 0.23 : (isStorage ? diameter * 0.32 : diameter / 2);
         CGPoint targetCenter = CGPointMake(padding + side / 2, padding + rowY);
         if (fresh) {
