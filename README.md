@@ -1,3 +1,7 @@
+# 0.45.1
+
+Fix the rail property type to NFBRail so the containerMode property compiles. No behavior changes from 0.45.0. Native compilation must be confirmed by GitHub Actions.
+
 # 0.45.0
 
 See UPDATE-0.45.0.md for the frosted scrolling container and keyboard avoidance.

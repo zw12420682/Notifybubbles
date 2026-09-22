@@ -117,7 +117,7 @@ static double NFBNumber(NSString *key, double fallback) {
 @interface NFBManager ()
 @property(nonatomic, strong) NFBStore *store;
 @property(nonatomic, strong) NFBWindow *window;
-@property(nonatomic, strong) UIScrollView *rail;
+@property(nonatomic, strong) NFBRail *rail;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NFBBubble *> *buttons;
 @property(nonatomic, strong) NSTimer *timer;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *expandedUntil;
