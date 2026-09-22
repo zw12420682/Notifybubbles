@@ -1,3 +1,7 @@
+# 0.45.3
+
+All motion tuned for a more natural, fluid feel. See UPDATE-0.45.3.md for the animation changes.
+
 # 0.45.2
 
 See UPDATE-0.45.2.md for container sizing and opacity.

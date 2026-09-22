@@ -14,6 +14,13 @@
 #import "NFBEdgeInspection.h"
 
 static const NSTimeInterval NFBMotion = 0.6;
+// Spring damping for the bubble and rail motion. 1.0 is critically damped — a
+// flat, lifeless glide with no overshoot. A value just below 1.0 adds the subtle
+// iOS-native settle (a tiny overshoot that reads as "alive") without turning the
+// motion into a bouncy spring. Bubbles get a touch more liveliness than the rail
+// container, which stays calmer so the whole row never wobbles.
+static const CGFloat NFBBubbleSpring = 0.85;
+static const CGFloat NFBRailSpring = 0.9;
 // How long a bubble stays expanded after an unread arrives.
 static const NSTimeInterval NFBHold = 1.0;
 // Double-tap is intentionally inert, so a single tap no longer has to wait for a
@@ -735,15 +742,20 @@ static double NFBNumber(NSString *key, double fallback) {
         railFrame = CGRectMake(railFrame.origin.x, y, railWidth, height);
     }
     self.rail.containerMode = containerMode;
-    self.rail.layer.cornerRadius = containerMode ? 20 : 0;
     self.rail.alwaysBounceVertical = containerMode && contentHeight > height;
     self.rail.showsVerticalScrollIndicator = NO;
     if (!CGRectEqualToRect(self.rail.frame, railFrame) || self.railMaterial.alpha != (containerMode ? 0.55 : 0)) {
         if (CGRectIsEmpty(self.rail.frame)) self.rail.frame = railFrame;
+        // The container's corner radius and frosted backdrop change with the
+        // frame (rounded + material in split view, flat + clear on desktop), so
+        // animate them together with a calm spring for one smooth settle instead
+        // of a hard pop in/out of container mode.
         [UIView animateWithDuration:layoutDuration delay:0
-            options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseInOut
+            usingSpringWithDamping:NFBRailSpring initialSpringVelocity:0
+            options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
             animations:^{
                 self.rail.frame = railFrame;
+                self.rail.layer.cornerRadius = containerMode ? 20 : 0;
                 self.railMaterial.frame = railFrame;
                 self.railMaterial.alpha = containerMode ? 0.55 : 0;
             } completion:nil];
@@ -851,7 +863,7 @@ static double NFBNumber(NSString *key, double fallback) {
             fabs(button.alpha - alpha) > 0.001;
         if (changed) {
             [UIView animateWithDuration:layoutDuration
-                delay:0 usingSpringWithDamping:1.0 initialSpringVelocity:0
+                delay:0 usingSpringWithDamping:NFBBubbleSpring initialSpringVelocity:0
                 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
                 animations:^{
                     // Bounds/center remain valid even while the view is transformed.
@@ -949,7 +961,7 @@ static double NFBNumber(NSString *key, double fallback) {
     ring.layer.borderColor = UIColor.systemTealColor.CGColor;
     ring.alpha = self.iconOpacity;
     [root addSubview:ring];
-    [UIView animateWithDuration:0.55 animations:^{
+    [UIView animateWithDuration:0.55 delay:0 options:UIViewAnimationOptionCurveEaseOut animations:^{
         ring.transform = CGAffineTransformMakeScale(1.65, 1.65); ring.alpha = 0;
     } completion:^(__unused BOOL done) { [ring removeFromSuperview]; }];
     for (NSInteger i = 0; i < 12; i++) {
@@ -965,7 +977,7 @@ static double NFBNumber(NSString *key, double fallback) {
             drop.alpha = 0; drop.transform = CGAffineTransformMakeScale(0.15, 0.15);
         } completion:^(__unused BOOL done) { [drop removeFromSuperview]; }];
     }
-    [UIView animateWithDuration:0.18 delay:0 options:UIViewAnimationOptionBeginFromCurrentState animations:^{
+    [UIView animateWithDuration:0.18 delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseIn animations:^{
         button.transform = CGAffineTransformScale(button.transform, 1.16, 1.16); button.alpha = 0;
     } completion:^(__unused BOOL done) { [button removeFromSuperview]; }];
 }
@@ -1084,7 +1096,7 @@ static double NFBNumber(NSString *key, double fallback) {
         MAX(root.safeAreaInsets.top, 44) + 12, width, 76);
     [root addSubview:notice];
     UIAccessibilityPostNotification(UIAccessibilityAnnouncementNotification, message);
-    [UIView animateWithDuration:0.2 delay:2.8 options:0 animations:^{ notice.alpha = 0; }
+    [UIView animateWithDuration:0.2 delay:2.8 options:UIViewAnimationOptionCurveEaseIn animations:^{ notice.alpha = 0; }
         completion:^(__unused BOOL done) { [notice removeFromSuperview]; }];
 }
 - (void)openApp:(NSString *)app {
