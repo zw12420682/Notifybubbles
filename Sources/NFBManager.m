@@ -686,22 +686,16 @@ static double NFBNumber(NSString *key, double fallback) {
     BOOL attachmentChanged = attached != self.splitRailActive;
     self.splitRailActive = attached;
     CGFloat diameter = self.iconSize;
-    if (attached) {
-        // Do not resize every icon while TrollOpen moves its window for the keyboard.
-        if (attachmentChanged || self.splitRailDiameter <= 0)
-            self.splitRailDiameter = MIN(diameter, MAX(28, CGRectGetWidth(bounds) - CGRectGetMaxX(splitFrame) - 11));
-        diameter = MIN(diameter, self.splitRailDiameter);
-    }
     NSTimeInterval layoutDuration = UIAccessibilityIsReduceMotionEnabled() ? 0 : (attachmentChanged ? 0.35 : (attached ? 0.16 : NFBMotion));
     CGFloat side = diameter + 14;
-    CGFloat step = storedCount ? diameter + 8 : side + 4;
+    CGFloat step = containerMode ? diameter + 9 : (storedCount ? diameter + 8 : side + 4);
     CGFloat available = MAX(side, bounds.size.height - top - MAX(safe.bottom, 20) - 20);
     // Reserve space for badge/shadow and the shake's negative excursion.
     // Compact rows have step < side, so their bottom otherwise clips by 6pt.
     CGFloat padding = 12;
-    CGFloat railWidth = side + padding;
+    CGFloat railWidth = containerMode ? side : side + padding;
     NSUInteger rowCount = displayApps.count - (containerMode ? 1 : 0);
-    CGFloat contentHeight = rowCount * step + (containerMode ? 0 : padding * 2);
+    CGFloat contentHeight = containerMode ? (rowCount ? (rowCount - 1) * step + side : 0) : rowCount * step + padding * 2;
     CGFloat height = MIN(available, contentHeight);
     // Keyboard outranks every other rule (typing must never be covered): the row
     // shifts to NFBKeyboardPosition in both split view and fullscreen. Otherwise,
@@ -723,31 +717,35 @@ static double NFBNumber(NSString *key, double fallback) {
         CGFloat y = MAX(safe.top, CGRectGetMinY(splitFrame));
         CGFloat bottom = MIN(CGRectGetHeight(bounds) - safe.bottom, CGRectGetMaxY(splitFrame));
         height = MAX(1, bottom - y);
-        CGFloat x = CGRectGetMaxX(splitFrame) + 4 - padding - 7;
+        CGFloat x = CGRectGetMaxX(splitFrame) + 4 - 7;
         x = MAX(0, MIN(CGRectGetWidth(bounds) - railWidth, x));
         railFrame = CGRectMake(x, y, railWidth, height);
     }
+    CGFloat clearCenterY = railFrame.origin.y - 8 - side / 2;
     if (containerMode) {
         CGFloat ceiling = MAX(safe.top, 12);
         CGFloat floor = keyboardUp ? NFBKeyboardTopInView(root) - 12 : CGRectGetHeight(bounds) - MAX(safe.bottom, 12);
-        CGFloat clearSpace = side + 8;
-        CGFloat availableHeight = MAX(0, floor - ceiling - clearSpace);
-        height = MIN(MIN(7 * step, contentHeight), availableHeight);
-        CGFloat y = MAX(ceiling + clearSpace, MIN(railFrame.origin.y, floor - height));
+        // Align the visible clear icon's top, not its padded hit area, to the window.
+        CGFloat desiredTop = attached ? CGRectGetMinY(splitFrame) : railFrame.origin.y;
+        CGFloat clearTop = MAX(ceiling, MIN(desiredTop, floor - diameter - 9));
+        clearCenterY = clearTop + diameter / 2;
+        CGFloat y = clearTop + diameter + 9;
+        CGFloat availableHeight = MAX(0, floor - y);
+        height = MIN(MIN(6 * step + side, contentHeight), availableHeight);
         railFrame = CGRectMake(railFrame.origin.x, y, railWidth, height);
     }
     self.rail.containerMode = containerMode;
     self.rail.layer.cornerRadius = containerMode ? 20 : 0;
     self.rail.alwaysBounceVertical = containerMode && contentHeight > height;
-    self.rail.showsVerticalScrollIndicator = containerMode && contentHeight > height;
-    if (!CGRectEqualToRect(self.rail.frame, railFrame) || self.railMaterial.alpha != (containerMode ? 1 : 0)) {
+    self.rail.showsVerticalScrollIndicator = NO;
+    if (!CGRectEqualToRect(self.rail.frame, railFrame) || self.railMaterial.alpha != (containerMode ? 0.55 : 0)) {
         if (CGRectIsEmpty(self.rail.frame)) self.rail.frame = railFrame;
         [UIView animateWithDuration:layoutDuration delay:0
             options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseInOut
             animations:^{
                 self.rail.frame = railFrame;
                 self.railMaterial.frame = railFrame;
-                self.railMaterial.alpha = containerMode ? 1 : 0;
+                self.railMaterial.alpha = containerMode ? 0.55 : 0;
             } completion:nil];
     }
     self.rail.contentSize = CGSizeMake(railWidth, contentHeight);
@@ -826,8 +824,8 @@ static double NFBNumber(NSString *key, double fallback) {
         // The clear action is appended last and therefore stays above all apps.
         CGFloat rowY = isClearAll ? side / 2 : NFBRowCenter(rowCount, index, step, side);
         CGFloat corner = containerMode && !isClearAll ? diameter * 0.23 : (isStorage ? diameter * 0.32 : diameter / 2);
-        CGPoint targetCenter = isClearAll ? CGPointMake(railFrame.origin.x + padding + side / 2, railFrame.origin.y - 8 - side / 2)
-            : CGPointMake(padding + side / 2, (containerMode ? 0 : padding) + rowY);
+        CGPoint targetCenter = isClearAll ? CGPointMake(CGRectGetMidX(railFrame), clearCenterY)
+            : CGPointMake(containerMode ? railWidth / 2 : padding + side / 2, (containerMode ? 0 : padding) + rowY);
         if (fresh) {
             button.bounds = targetBounds;
             button.center = targetCenter;
@@ -841,12 +839,12 @@ static double NFBNumber(NSString *key, double fallback) {
         CGFloat alpha = self.iconOpacity;
         if (isClearAll) {
             alpha = 1.0;
-        } else if (floatingApp.length > 0) {
+        } else if ([floatingApp isEqualToString:appID]) {
             alpha = 1.0;
         }
         // A bubble mid-shake (fresh notification during split view) stays fully
         // opaque for the reminder's duration, whatever its normal state is.
-        if ([self.shakingApps containsObject:appID]) alpha = 1.0;
+        if (!containerMode && [self.shakingApps containsObject:appID]) alpha = 1.0;
         BOOL changed = fresh || fabs(button.imageView.layer.cornerRadius - corner) > 0.01 || !CGRectEqualToRect(button.bounds, targetBounds) ||
             !CGPointEqualToPoint(button.center, targetCenter) ||
             !CGAffineTransformEqualToTransform(button.transform, target) ||

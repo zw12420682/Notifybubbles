@@ -1,3 +1,7 @@
+# 0.45.2
+
+See UPDATE-0.45.2.md for container sizing and opacity.
+
 # 0.45.1
 
 Fix the rail property type to NFBRail so the containerMode property compiles. No behavior changes from 0.45.0. Native compilation must be confirmed by GitHub Actions.
