@@ -84,8 +84,12 @@ static UIView *attachmentWindow(void) {
     if (!NSThread.isMainThread) return nil;
     @try {
         id current = currentWindow();
-        // Keep normal current-window layout, including the existing landscape rule.
-        if (NFBTrollVisibleApp().length && [current isKindOfClass:UIView.class] && visibleView(current)) return current;
+        // Only expanded portrait windows may own the rail. A current landscape
+        // window yields attachment to the frontmost remaining portrait window.
+        if (NFBTrollVisibleApp().length && [current isKindOfClass:UIView.class] && visibleView(current) &&
+            NFBShouldClosePreviousSplit(boolStateOf(current, @"miniWindowModeEnabled"),
+                boolStateOf(current, @"isTransitioningFromMiniMode"),
+                orientationOf(current, @"sceneOrientation"), orientationOf(current, @"containerOrientation"))) return current;
         Class floatingClass = NSClassFromString(@"TOJBClass012");
         if (!floatingClass) return nil;
         NSMutableOrderedSet<UIWindow *> *windows = [NSMutableOrderedSet orderedSet];
@@ -198,7 +202,10 @@ void NFBObserveSplitPlacement(NSString *app) {
         // Let TrollOpen finish restoring its previous layout before applying ours.
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.75 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                 UIView *window = weakWindow;
-            if (NFBCurrentSplitLandscape()) return;
+            // Placement follows the actual current window, not the rail fallback.
+            NSInteger scene = orientationOf(window, @"sceneOrientation");
+            NSInteger container = orientationOf(window, @"containerOrientation");
+            if (scene == 3 || scene == 4 || container == 3 || container == 4) return;
             if (!window || generation != placementGeneration || currentWindow() != window ||
                 ![NFBTrollVisibleApp() isEqual:app] ||
                 (!window.superview && ![window isKindOfClass:UIWindow.class])) return;

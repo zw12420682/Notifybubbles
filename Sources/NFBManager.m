@@ -594,7 +594,9 @@ static double NFBNumber(NSString *key, double fallback) {
     floatingApp = NFBSplitAttachmentApp();
     if ([self.retracting containsObject:floatingApp ?: @""]) floatingApp = nil;
     // Keep the fast watcher in step with reality every time we recompute layout.
-    [self syncFloatingWatch:floatingApp];
+    // Continue observing orientation even when a lone landscape window has no
+    // portrait attachment target and its rail has returned to the screen edge.
+    [self syncFloatingWatch:floatingApp ?: NFBTrollVisibleApp()];
     // A keyboard outranks everything else: typing is the one moment the bubbles
     // must be out of the way, so it pulls them all back in no matter what. The
     // ones it pulled in are remembered and popped back out the moment typing
