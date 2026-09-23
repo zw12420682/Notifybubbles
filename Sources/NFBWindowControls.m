@@ -42,34 +42,57 @@ static NSInteger boolStateOf(id window, NSString *name) {
 void NFBObserveSplitSwitch(NSString *app, BOOL enabled) {
     static __weak UIView *previousWindow;
     static NSString *previousApp;
+    static __weak UIView *pendingWindow;
+    static NSString *pendingApp;
+    static NSTimeInterval portraitSince;
     if (!NSThread.isMainThread) return;
-    // Minimizing removes the app from the expanded-window observer. Do not keep
-    // an old candidate around to close when a different app opens later.
-    if (!app.length) { previousWindow = nil; previousApp = nil; return; }
+    // A minimized/dismissed current window ends this switch session.
+    if (!app.length) {
+        previousWindow = nil; previousApp = nil;
+        pendingWindow = nil; pendingApp = nil; portraitSince = 0;
+        return;
+    }
     @try {
         id object = currentWindow();
         if (![object isKindOfClass:UIView.class]) return;
-        UIView *previous = previousWindow;
-        NSString *oldApp = previousApp;
-        previousWindow = object; previousApp = [app copy];
-        if (!enabled || !previous || previous == object || [oldApp isEqual:app]) return;
-        NSInteger scene = orientationOf(previous, @"sceneOrientation");
-        NSInteger container = orientationOf(previous, @"containerOrientation");
-        NSInteger mini = boolStateOf(previous, @"miniWindowModeEnabled");
-        NSInteger transitioning = boolStateOf(previous, @"isTransitioningFromMiniMode");
-        // Recheck the old object directly: a quick mini -> other-app switch may
-        // happen between observer ticks. Never use stale portrait state to close it.
-        if (!NFBShouldClosePreviousSplit(mini, transitioning, scene, container)) {
-            NFBDebugLog(@"split-switch: preserve %@ mini=%ld transition=%ld scene=%ld container=%ld",
-                oldApp, (long)mini, (long)transitioning, (long)scene, (long)container);
+        BOOL changed = previousWindow != object || ![previousApp isEqual:app];
+        if (changed) {
+            // Keep only the immediately preceding window for this current app.
+            pendingWindow = enabled && previousWindow != object && ![previousApp isEqual:app]
+                ? previousWindow : nil;
+            pendingApp = pendingWindow ? previousApp : nil;
+            portraitSince = 0;
+            previousWindow = object; previousApp = [app copy];
+        }
+        if (!enabled) { pendingWindow = nil; pendingApp = nil; portraitSince = 0; return; }
+        UIView *previous = pendingWindow;
+        if (!previous || previous == object) return;
+        NSInteger scene = orientationOf(object, @"sceneOrientation");
+        NSInteger container = orientationOf(object, @"containerOrientation");
+        // Landscape or unknown current orientation defers closing the old window.
+        // Require stable portrait so opening/rotation intermediate states cannot
+        // briefly report portrait and prematurely close the previous app.
+        if (!NFBShouldClosePreviousSplit(boolStateOf(object, @"miniWindowModeEnabled"),
+                boolStateOf(object, @"isTransitioningFromMiniMode"), scene, container)) {
+            portraitSince = 0;
             return;
         }
+        NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
+        if (!portraitSince) { portraitSince = now; return; }
+        if (now - portraitSince < 0.35) return;
+        NSString *oldApp = pendingApp;
+        pendingWindow = nil; pendingApp = nil; portraitSince = 0;
+        // Preserve the existing protection for old landscape and corner windows.
+        if (!NFBShouldClosePreviousSplit(boolStateOf(previous, @"miniWindowModeEnabled"),
+                boolStateOf(previous, @"isTransitioningFromMiniMode"),
+                orientationOf(previous, @"sceneOrientation"),
+                orientationOf(previous, @"containerOrientation"))) return;
         SEL close = NSSelectorFromString(@"closeWindowWithoutTerminatingProcessWithoutAnimation");
         NSMethodSignature *sig = [previous methodSignatureForSelector:close];
         if (sig.numberOfArguments != 2 || strcmp(sig.methodReturnType, @encode(void))) return;
-        // Target the captured OLD window, never the bridge's current-window action.
+        // Always target the saved previous window; never close the current app.
         ((void (*)(id, SEL))objc_msgSend)(previous, close);
-        NFBDebugLog(@"split-switch: closed old portrait window %@; new=%@", oldApp, app);
+        NFBDebugLog(@"split-switch: current %@ settled portrait; closed previous %@", app, oldApp);
     } @catch (NSException *exception) { NFBDebugLog(@"split-switch: %@", exception); }
 }
 BOOL NFBCurrentSplitLandscape(void) {

@@ -400,6 +400,9 @@ static double NFBNumber(NSString *key, double fallback) {
 }
 - (void)floatingWatchFired {
     NSString *now = NFBTrollVisibleApp();
+    // Orientation can change while app identity and window frame stay the same.
+    NSString *switchApp = [self.retracting containsObject:now ?: @""] ? nil : now;
+    NFBObserveSplitSwitch(switchApp, self.enabled && NFBPreference(@"ClosePreviousSplit", YES));
     CGRect frame = NFBSplitFrameInView(self.window.rootViewController.view);
     BOOL sameFrame = CGRectEqualToRect(frame, self.observedSplitFrame) ||
         (CGRectIsNull(frame) && CGRectIsNull(self.observedSplitFrame));
