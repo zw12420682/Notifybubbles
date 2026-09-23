@@ -3,6 +3,7 @@
 #import "NFBSplitClosePolicy.h"
 #import "NFBDebugLog.h"
 #import <UIKit/UIKit.h>
+#import <QuartzCore/QuartzCore.h>
 #import <objc/message.h>
 #include <string.h>
 
@@ -16,10 +17,11 @@ static id currentWindow(void) {
     if (sig.numberOfArguments != 2 || sig.methodReturnType[0] != '@') return nil;
     return ((id (*)(id, SEL))objc_msgSend)(bridge, sel);
 }
+static UIView *attachmentWindow(void);
 CGRect NFBSplitFrameInView(UIView *root) {
     if (!NSThread.isMainThread || !root.window) return CGRectNull;
     @try {
-        id object = currentWindow();
+        id object = attachmentWindow();
         if (![object isKindOfClass:UIView.class]) return CGRectNull;
         UIView *view = object;
         if (!view.window || view.hidden || CGRectIsEmpty(view.bounds)) return CGRectNull;
@@ -38,6 +40,81 @@ static NSInteger boolStateOf(id window, NSString *name) {
     if (sig.numberOfArguments != 2 ||
         (sig.methodReturnType[0] != 'B' && sig.methodReturnType[0] != 'c')) return -1;
     return ((BOOL (*)(id, SEL))objc_msgSend)(window, selector) ? 1 : 0;
+}
+// Search the actual visible view hierarchy, front to back. No window activation
+// or lifecycle action is performed while choosing an attachment target.
+static NSString *appOfWindow(UIView *view) {
+    SEL selector = NSSelectorFromString(@"bundleID");
+    NSMethodSignature *sig = [view methodSignatureForSelector:selector];
+    if (sig.numberOfArguments != 2 || sig.methodReturnType[0] != '@') return nil;
+    id app = ((id (*)(id, SEL))objc_msgSend)(view, selector);
+    return [app isKindOfClass:NSString.class] ? app : nil;
+}
+static BOOL visibleView(UIView *view) {
+    if (!view.window || CGRectIsEmpty(view.bounds)) return NO;
+    for (UIView *ancestor = view; ancestor; ancestor = ancestor.superview)
+        if (ancestor.hidden || ancestor.alpha < 0.01) return NO;
+    CGRect rect = [view convertRect:view.bounds toView:view.window];
+    return CGRectIntersectsRect(rect, view.window.bounds);
+}
+static UIView *portraitInTree(UIView *view, Class floatingClass) {
+    if (view.hidden || view.alpha < 0.01) return nil;
+    // A floating window is a candidate as a whole; its app content need not be scanned.
+    if ([view isKindOfClass:floatingClass]) {
+        if (!visibleView(view) || !appOfWindow(view).length ||
+            boolStateOf(view, @"isClosingWithKeepAliveAnimation") == 1) return nil;
+        return NFBShouldClosePreviousSplit(boolStateOf(view, @"miniWindowModeEnabled"),
+            boolStateOf(view, @"isTransitioningFromMiniMode"),
+            orientationOf(view, @"sceneOrientation"), orientationOf(view, @"containerOrientation")) ? view : nil;
+    }
+    // zPosition overrides subview order; reversed stable order breaks ties.
+    NSArray<UIView *> *frontFirst = [[view.subviews reverseObjectEnumerator].allObjects
+        sortedArrayWithOptions:NSSortStable usingComparator:^NSComparisonResult(UIView *a, UIView *b) {
+            if (a.layer.zPosition > b.layer.zPosition) return NSOrderedAscending;
+            if (a.layer.zPosition < b.layer.zPosition) return NSOrderedDescending;
+            return NSOrderedSame;
+        }];
+    for (UIView *child in frontFirst) {
+        UIView *found = portraitInTree(child, floatingClass);
+        if (found) return found;
+    }
+    return nil;
+}
+static UIView *attachmentWindow(void) {
+    if (!NSThread.isMainThread) return nil;
+    @try {
+        id current = currentWindow();
+        // Keep normal current-window layout, including the existing landscape rule.
+        if (NFBTrollVisibleApp().length && [current isKindOfClass:UIView.class] && visibleView(current)) return current;
+        Class floatingClass = NSClassFromString(@"TOJBClass012");
+        if (!floatingClass) return nil;
+        NSMutableOrderedSet<UIWindow *> *windows = [NSMutableOrderedSet orderedSet];
+        for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+            if (![scene isKindOfClass:UIWindowScene.class] || scene.activationState == UISceneActivationStateBackground ||
+                scene.activationState == UISceneActivationStateUnattached) continue;
+            [windows addObjectsFromArray:((UIWindowScene *)scene).windows];
+        }
+        // SpringBoard may also own windows outside a foreground UIWindowScene.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        [windows addObjectsFromArray:UIApplication.sharedApplication.windows];
+#pragma clang diagnostic pop
+        NSArray<UIWindow *> *frontFirst = [[windows.array reverseObjectEnumerator].allObjects
+            sortedArrayWithOptions:NSSortStable usingComparator:^NSComparisonResult(UIWindow *a, UIWindow *b) {
+                if (a.windowLevel > b.windowLevel) return NSOrderedAscending;
+                if (a.windowLevel < b.windowLevel) return NSOrderedDescending;
+                return NSOrderedSame;
+            }];
+        for (UIWindow *window in frontFirst) {
+            UIView *candidate = portraitInTree(window, floatingClass);
+            if (candidate) return candidate;
+        }
+    } @catch (NSException *exception) { NFBDebugLog(@"attachment lookup: %@", exception); }
+    return nil;
+}
+NSString *NFBSplitAttachmentApp(void) {
+    @try { return appOfWindow(attachmentWindow()); }
+    @catch (__unused NSException *exception) { return nil; }
 }
 void NFBObserveSplitSwitch(NSString *app, BOOL enabled) {
     static __weak UIView *previousWindow;
@@ -98,7 +175,7 @@ void NFBObserveSplitSwitch(NSString *app, BOOL enabled) {
 BOOL NFBCurrentSplitLandscape(void) {
     if (!NSThread.isMainThread) return NO;
     @try {
-        id window = currentWindow();
+        id window = attachmentWindow();
         NSInteger scene = orientationOf(window, @"sceneOrientation");
         NSInteger container = orientationOf(window, @"containerOrientation");
         return scene == 3 || scene == 4 || container == 3 || container == 4;

@@ -11,9 +11,9 @@
 	<key>CFBundlePackageType</key>
 	<string>BNDL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.46.2</string>
+	<string>0.46.3</string>
 	<key>CFBundleVersion</key>
-	<string>55</string>
+	<string>56</string>
 	<key>NSPrincipalClass</key>
 	<string>NFBPreferences</string>
 </dict>

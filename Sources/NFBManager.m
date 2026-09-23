@@ -399,9 +399,10 @@ static double NFBNumber(NSString *key, double fallback) {
     [NSRunLoop.mainRunLoop addTimer:self.floatingWatch forMode:NSRunLoopCommonModes];
 }
 - (void)floatingWatchFired {
-    NSString *now = NFBTrollVisibleApp();
+    NSString *now = NFBSplitAttachmentApp();
+    NSString *currentApp = NFBTrollVisibleApp();
     // Orientation can change while app identity and window frame stay the same.
-    NSString *switchApp = [self.retracting containsObject:now ?: @""] ? nil : now;
+    NSString *switchApp = [self.retracting containsObject:currentApp ?: @""] ? nil : currentApp;
     NFBObserveSplitSwitch(switchApp, self.enabled && NFBPreference(@"ClosePreviousSplit", YES));
     CGRect frame = NFBSplitFrameInView(self.window.rootViewController.view);
     BOOL sameFrame = CGRectEqualToRect(frame, self.observedSplitFrame) ||
@@ -589,6 +590,9 @@ static double NFBNumber(NSString *key, double fallback) {
     if ([self.retracting containsObject:floatingApp ?: @""]) floatingApp = nil;
     NFBObserveSplitSwitch(floatingApp, NFBPreference(@"ClosePreviousSplit", YES));
     NFBObserveSplitPlacement(floatingApp);
+    // An attachment fallback is layout-only: do not treat it as an app switch.
+    floatingApp = NFBSplitAttachmentApp();
+    if ([self.retracting containsObject:floatingApp ?: @""]) floatingApp = nil;
     // Keep the fast watcher in step with reality every time we recompute layout.
     [self syncFloatingWatch:floatingApp];
     // A keyboard outranks everything else: typing is the one moment the bubbles

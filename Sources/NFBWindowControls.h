@@ -5,3 +5,6 @@ BOOL NFBCurrentSplitLandscape(void);
 void NFBObserveSplitSwitch(NSString *app, BOOL enabled);
 void NFBObserveSplitPlacement(NSString *app);
 void NFBResetSplitPlacement(void);
+
+// Layout target only; does not change TrollOpen action or close targets.
+NSString *NFBSplitAttachmentApp(void);
