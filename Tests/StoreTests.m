@@ -1,3 +1,4 @@
+#import "NFBEdgeLayout.h"
 #import "NFBSplitClosePolicy.h"
 #import "NFBStorageLayout.h"
 #import <Foundation/Foundation.h>
@@ -18,6 +19,20 @@ static void Check(BOOL value, NSString *message) {
 }
 int main(void) {
     @autoreleasepool {
+        NSArray *edgeApps = @[@"a", @"b", @"c", @"d", @"e"];
+        NSArray *recent = @[@"gone", @"e", @"b", @"a"];
+        NSArray *groups = NFBEdgeGroups(edgeApps, recent, ^NSUInteger(NSString *app) {
+            return [app isEqual:@"b"] ? 2 : 0;
+        });
+        Check([groups[0] isEqual:@[@"e", @"a", @"c", @"d"]], @"Unread recent app leaves rail; fourth app is retained for scrolling");
+        Check([groups[1] isEqual:@[@"b"]], @"Unread app appears only outside rail");
+        groups = NFBEdgeGroups(edgeApps, recent, ^NSUInteger(__unused NSString *app) { return 0; });
+        Check([groups[0] isEqual:@[@"e", @"b", @"a", @"c", @"d"]] && [groups[1] count] == 0,
+            @"Consumed unread returns to its recent-use position without duplicates");
+        groups = NFBEdgeGroups(edgeApps, recent, ^NSUInteger(__unused NSString *app) { return 1; });
+        Check([groups[0] count] == 0 && [groups[1] count] == 5, @"All unread remains reachable with empty rail");
+        groups = NFBEdgeGroups(@[], recent, ^NSUInteger(__unused NSString *app) { return 0; });
+        Check([groups[0] count] == 0 && [groups[1] count] == 0, @"Removed apps do not survive through recent history");
         NFBStore *s = [NFBStore new]; id destination = [NSObject new];
         [s pinApp:@"switcherOnly"];
         Check(s.count == 0 && ![s latestForApp:@"switcherOnly"], @"Switcher card pins app without fabricating unread messages");
