@@ -72,24 +72,6 @@
 		</dict>
 		<dict>
 			<key>cell</key>
-			<string>PSSliderCell</string>
-			<key>label</key>
-			<string>整组图标上下位置</string>
-			<key>key</key>
-			<string>VerticalPosition</string>
-			<key>defaults</key>
-			<string>local.notifybubbles</string>
-			<key>default</key>
-			<real>0.7</real>
-			<key>min</key>
-			<real>0.0</real>
-			<key>max</key>
-			<real>1.0</real>
-			<key>showValue</key>
-			<true/>
-		</dict>
-		<dict>
-			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
 			<string>图标外观</string>
@@ -138,7 +120,7 @@
 			<key>label</key>
 			<string>气泡与角标</string>
 			<key>footerText</key>
-			<string>图标从下往上排列，最下面是第一位；当前 App 自动排在第一位。位置滑块 0 为顶部、1 为底部。当前浮窗图标保持伸出：无待处理通知时点击返回 App 内上一页（等同边缘右滑返回），有通知时优先打开通知；长按当前浮窗图标切换窗口方向（竖屏/横屏），等同绿色交互条长按旋转；双击当前浮窗图标关闭该分屏窗口，双击其它图标无操作。系统关闭通知的 App 不显示通知来源图标，切换器图标不受影响。</string>
+			<string>边缘容器最多显示 3 个图标，可上下滑动；未读图标在容器外单独显示。长按任意边缘图标后上下拖动，可调整整组位置，松手保存。双击图标关闭气泡和对应 App 后台；单击保留原来的打开操作。伸出后停留 1 秒再缩回。</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -147,32 +129,6 @@
 			<string>清除全部气泡</string>
 			<key>action</key>
 			<string>clearBubbles</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>label</key>
-			<string>键盘外观</string>
-			<key>footerText</key>
-			<string>独立于悬浮气泡总开关。开启后系统键盘使用深色外观，App 页面仍跟随原来的外观。更改后收起并重新打开键盘；若未刷新，请重新打开对应 App。第三方自绘键盘可能不受影响。</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>label</key>
-			<string>始终使用深色键盘</string>
-			<key>key</key>
-			<string>DarkKeyboard</string>
-			<key>default</key>
-			<false/>
-			<key>defaults</key>
-			<string>local.notifybubbles</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>footerText</key>
-			<string>长按收纳图标：清空收纳内的气泡及对应后台 App。未读气泡和当前正在使用的 App 不清理。</string>
 		</dict>
 		<dict>
 			<key>cell</key>

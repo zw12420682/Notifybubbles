@@ -4,7 +4,7 @@ import plistlib
 
 root = Path(__file__).resolve().parents[1]
 required = [
-    'Sources/NFBSplitClosePolicy.h', 'Sources/NFBWindowControls.h', 'Sources/NFBWindowControls.m', 'Sources/NFBKeyboardState.h', 'Sources/NFBDarkKeyboard.m', 'NotifyBubblesKeyboard.plist', 'Sources/NFBStorageLayout.h', 'Sources/NFBEdgeInspection.h', 'Makefile', 'control', 'Sources/NFBAppExit.h', 'Sources/NFBAppExit.m',
+    'Sources/NFBSplitClosePolicy.h', 'Sources/NFBWindowControls.h', 'Sources/NFBWindowControls.m', 'Sources/NFBStorageLayout.h', 'Sources/NFBEdgeInspection.h', 'Makefile', 'control', 'Sources/NFBAppExit.h', 'Sources/NFBAppExit.m',
     # Retired app-side back helper: kept on disk so it can be restored, but the
     # Makefile must not build it (see the assertions below).
     'NotifyBubblesBack.plist', 'Sources/NFBAppBack.m',
@@ -40,13 +40,12 @@ assert 'Sources/NFBAppExit.m' in (root / 'Makefile').read_text(), 'Update the ro
 # loaded into every app, and no gesture drives it any more.
 assert 'NotifyBubblesBack_FILES' not in (root / 'Makefile').read_text(), \
     'NotifyBubblesBack is retired; do not build it into every app again.'
-assert 'TWEAK_NAME = NotifyBubbles NotifyBubblesKeyboard\n' in (root / 'Makefile').read_text(), \
-    'Build only the bubble and keyboard components; the back helper stays retired.'
+assert 'TWEAK_NAME = NotifyBubbles\n' in (root / 'Makefile').read_text(), \
+    'Build only the SpringBoard component; app-side helpers stay retired.'
 prefs = plistlib.loads((root / 'Preferences/Resources/Root.plist').read_bytes())
-assert {x['key'] for x in prefs['items'] if 'key' in x} == {'Enabled','ShowOnLock','ShowOnHome','ShowInApps','IconSize','IconOpacity','VerticalPosition','DarkKeyboard','ClosePreviousSplit'}
+assert {x['key'] for x in prefs['items'] if 'key' in x} == {'Enabled','ShowOnLock','ShowOnHome','ShowInApps','IconSize','IconOpacity','ClosePreviousSplit'}
 filter_ = plistlib.loads((root / 'NotifyBubbles.plist').read_bytes())
 assert filter_['Filter']['Bundles'] == ['com.apple.springboard']
 print('PASS: required files, property lists, RootHide configuration, preference keys and injection filter')
 
-keyboard_filter = plistlib.loads((root / "NotifyBubblesKeyboard.plist").read_bytes())
-assert keyboard_filter["Filter"]["Bundles"] == ["com.apple.UIKit"]
+assert 'NotifyBubblesKeyboard_FILES' not in (root / 'Makefile').read_text()

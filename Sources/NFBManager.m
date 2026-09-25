@@ -9,17 +9,15 @@
 #import "NFBNotificationPolicy.h"
 #import "NFBAppExit.h"
 #import "NFBKeyboard.h"
-#import "NFBKeyboardState.h"
 #import "NFBDebugLog.h"
 #import "NFBEdgeInspection.h"
 #import "NFBEdgeLayout.h"
 
 static const NSTimeInterval NFBMotion = 0.6;
 // How long a bubble stays expanded after an unread arrives.
-static const NSTimeInterval NFBHold = 2.0;
-// Double-tap is intentionally inert, so a single tap no longer has to wait for a
-// possible second tap: the recognizer fires on touch-up with no arbitration lag.
-// This guard only swallows the accidental repeat that follows a real double tap.
+static const NSTimeInterval NFBHold = 1.0;
+// Single taps wait for double-tap failure so a close never opens the app first.
+// Guard against repeated callbacks from the same completed gesture.
 static const NSTimeInterval NFBGestureCooldown = 0.25;
 // While an app sits in the split view its bubble stays fully opaque (alpha 1.0,
 // independent of the user's opacity slider) and every other bubble drops to this
@@ -122,6 +120,15 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, strong) NFBRail *unreadRail;
 @property(nonatomic) NSTimeInterval edgeUntil;
 @property(nonatomic) BOOL edgeMode;
+@property(nonatomic, strong) UITapGestureRecognizer *edgeTap;
+@property(nonatomic) BOOL draggingEdge;
+@property(nonatomic) CGFloat dragStartY;
+@property(nonatomic) CGFloat dragStartPosition;
+@property(nonatomic) CGFloat dragSavedPosition;
+@property(nonatomic) CGFloat edgeAvailable;
+@property(nonatomic) CGFloat resolvedEdgePosition;
+- (void)edgeLongPressed:(UILongPressGestureRecognizer *)gesture;
+- (void)doubleTapped:(UITapGestureRecognizer *)gesture;
 @property(nonatomic, copy) NSArray<NSString *> *lastEdgeReadApps;
 - (void)extendEdgeContainer;
 - (void)edgeContainerTapped:(UITapGestureRecognizer *)gesture;
@@ -225,8 +232,7 @@ static double NFBNumber(NSString *key, double fallback) {
 - (void)reloadPreferences {
     NSAssert(NSThread.isMainThread, @"UI must be on main thread");
     CFPreferencesAppSynchronize(NFBDomain);
-    NFBPublishKeyboardState(NFBPreference(@"DarkKeyboard", NO));
-    self.verticalPosition = NFBPosition(NFBNumber(@"VerticalPosition", 0.7));
+    self.verticalPosition = NFBPosition(NFBNumber(@"EdgeVerticalPosition", NFBNumber(@"VerticalPosition", 0.7)));
     self.iconSize = NFBSize(NFBNumber(@"IconSize", 48));
     self.iconOpacity = NFBOpacity(NFBNumber(@"IconOpacity", 1));
     self.enabled = NFBPreference(@"Enabled", YES);
@@ -258,8 +264,9 @@ static double NFBNumber(NSString *key, double fallback) {
         if (NFBTrollVisibleApp().length > 0 && ![appID isEqualToString:NFBClearAllID]) {
             [self shakeBubble:updated];
         }
-        CGRect row = CGRectMake(0, updated.center.y - updated.bounds.size.height / 2, self.rail.bounds.size.width, updated.bounds.size.height);
-        [self.rail scrollRectToVisible:row animated:!UIAccessibilityIsReduceMotionEnabled()];
+        UIScrollView *owner = [updated.superview isKindOfClass:UIScrollView.class] ? (UIScrollView *)updated.superview : nil;
+        CGRect row = CGRectMake(0, updated.center.y - updated.bounds.size.height / 2, owner.bounds.size.width, updated.bounds.size.height);
+        [owner scrollRectToVisible:row animated:!UIAccessibilityIsReduceMotionEnabled()];
     }
 }
 - (void)withdrawRequest:(id)request {
@@ -512,6 +519,7 @@ static double NFBNumber(NSString *key, double fallback) {
     self.rail.backgroundColor = UIColor.clearColor;
     self.rail.delegate = self;
     UITapGestureRecognizer *edgeTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(edgeContainerTapped:)];
+    self.edgeTap = edgeTap;
     edgeTap.cancelsTouchesInView = NO;
     edgeTap.delegate = self;
     [self.rail addGestureRecognizer:edgeTap];
@@ -726,7 +734,7 @@ static double NFBNumber(NSString *key, double fallback) {
         CGFloat room = CGRectGetWidth(bounds) - CGRectGetMaxX(splitFrame) - splitGap - screenMargin;
         diameter = MIN(diameter, MAX(1, room - 14));
     }
-    NSTimeInterval layoutDuration = UIAccessibilityIsReduceMotionEnabled() ? 0 : (attachmentChanged ? 0.35 : (attached ? 0.16 : NFBMotion));
+    NSTimeInterval layoutDuration = (UIAccessibilityIsReduceMotionEnabled() || self.draggingEdge) ? 0 : (attachmentChanged ? 0.35 : (attached ? 0.16 : NFBMotion));
     CGFloat side = diameter + 14;
     CGFloat step = diameter + 9;
     CGFloat available = MAX(side, bounds.size.height - top - MAX(safe.bottom, 20) - 20);
@@ -741,7 +749,7 @@ static double NFBNumber(NSString *key, double fallback) {
     // shifts to NFBKeyboardPosition in both split view and fullscreen. Otherwise,
     // while an app is in the split view the row shifts down to clear the floating
     // window (NFBFloatingPosition), then returns to the user's slider setting.
-    CGFloat position = keyboardUp ? NFBKeyboardPosition : (floatingApp.length > 0 ? NFBFloatingPosition : self.verticalPosition);
+    CGFloat position = keyboardUp && !self.draggingEdge ? NFBKeyboardPosition : (floatingApp.length > 0 ? NFBFloatingPosition : self.verticalPosition);
     // Anchor the FIRST bubble (index 0, the lowest one) to a fixed screen Y so it
     // never moves: each new bubble stacks upward on top of it. The first bubble's
     // center sits (step - side/2) above the rail's bottom edge, so fixing the
@@ -791,8 +799,10 @@ static double NFBNumber(NSString *key, double fallback) {
         }
         CGFloat total = height + unreadHeight + gap;
         CGFloat bottom = MAX(top + total, MIN(edgeFloor, anchor + step - side / 2 + padding));
+        self.edgeAvailable = available;
+        self.resolvedEdgePosition = (bottom - step + side / 2 - padding - top) / MAX(1, available);
         BOOL edgeExpanded = !keyboardUp && (self.edgeUntil > CACurrentMediaTime() ||
-            self.rail.dragging || self.rail.decelerating);
+            self.rail.dragging || self.rail.decelerating || self.draggingEdge);
         CGFloat x = CGRectGetWidth(bounds) - railWidth + (edgeExpanded ? 0 : NFBRetraction(diameter));
         railFrame = CGRectMake(x, bottom - height, railWidth, height);
         unreadFrame = CGRectMake(CGRectGetWidth(bounds) - side, bottom - total,
@@ -809,6 +819,9 @@ static double NFBNumber(NSString *key, double fallback) {
         if (orderChanged || attachmentChanged || self.unreadRail.contentOffset.y > offset)
             self.unreadRail.contentOffset = CGPointMake(0, offset);
     }
+    // Narrow only the visible edge material. Retain the padded hit/clip area
+    // so icon edges, shadows and the external unread badges stay intact.
+    CGRect materialFrame = edgeMode ? CGRectInset(railFrame, 5, 0) : railFrame;
     self.rail.containerMode = YES;
     self.rail.layer.cornerRadius = MIN(14, railWidth / 4);
     self.rail.alwaysBounceVertical = contentHeight > height;
@@ -820,7 +833,7 @@ static double NFBNumber(NSString *key, double fallback) {
             animations:^{
                 self.rail.frame = railFrame;
                 self.railMaterial.layer.cornerRadius = MIN(14, railWidth / 4);
-                self.railMaterial.frame = railFrame;
+                self.railMaterial.frame = materialFrame;
                 self.railMaterial.alpha = rowCount && height > 0 ? 0.55 : 0;
             } completion:nil];
     }
@@ -862,16 +875,19 @@ static double NFBNumber(NSString *key, double fallback) {
                 tap.numberOfTapsRequired = 1;
                 [button addGestureRecognizer:tap];
             } else {
-                // Double tap is intentionally not installed. Removing it lets the tap
-                // recognizer resolve on touch-up instead of waiting out the multi-tap
-                // window, which is what made the old single tap feel half a beat late.
                 UITapGestureRecognizer *singleTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(singleTapped:)];
-                singleTap.numberOfTapsRequired = 1;
-                [button addGestureRecognizer:singleTap];
-                UILongPressGestureRecognizer *hold = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(longPressed:)];
+                UITapGestureRecognizer *doubleTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(doubleTapped:)];
+                doubleTap.numberOfTapsRequired = 2;
+                UILongPressGestureRecognizer *hold = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(edgeLongPressed:)];
                 hold.minimumPressDuration = 0.45;
-                // Cancel the tap once a hold is recognised, so exit never fires twice.
                 hold.cancelsTouchesInView = YES;
+                hold.delegate = self;
+                [singleTap requireGestureRecognizerToFail:doubleTap];
+                [singleTap requireGestureRecognizerToFail:hold];
+                [self.edgeTap requireGestureRecognizerToFail:doubleTap];
+                [self.edgeTap requireGestureRecognizerToFail:hold];
+                [button addGestureRecognizer:singleTap];
+                [button addGestureRecognizer:doubleTap];
                 [button addGestureRecognizer:hold];
             }
             self.buttons[appID] = button;
@@ -987,21 +1003,10 @@ static double NFBNumber(NSString *key, double fallback) {
     if (!NFBFullscreenCurrentFloatingWindow())
         [self showOpenNotice:@"TrollOpen 全屏接口不可用，请确认已安装适配的 1.5.2 隐根版并重启桌面"];
 }
-- (void)longPressed:(UILongPressGestureRecognizer *)gesture {
-    if (gesture.state != UIGestureRecognizerStateBegan) return;
+- (void)doubleTapped:(UITapGestureRecognizer *)gesture {
+    if (gesture.state != UIGestureRecognizerStateEnded) return;
     NFBBubble *button = (NFBBubble *)gesture.view;
     if (self.buttons[button.appID] != button) return;
-    // Long press on the bubble that owns the floating window shrinks that window
-    // back to its mini size (TrollOpen's "缩小浮窗"), instead of terminating it.
-    if ([self isFloatingBubble:button]) {
-        if (![self acceptGesture]) return;
-        NSString *app = button.appID;
-        NFBDebugLog(@"gesture: long press on floating app %@ -> minimize", app);
-        [self beginRetracting:app];
-        if (!NFBMinimizeCurrentFloatingWindow())
-            [self showOpenNotice:@"TrollOpen 缩小浮窗接口不可用，请确认已安装适配的 1.5.2 隐根版并重启桌面"];
-        return;
-    }
     if (![self acceptGesture]) return;
     NSString *app = button.appID;
     // Suppress touch-up activation while the queued burst removes this control.
@@ -1018,7 +1023,7 @@ static double NFBNumber(NSString *key, double fallback) {
     // Let the burst read first, then terminate the process behind it.
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
-        NFBDebugLog(@"gesture: long press on non-floating app %@ -> terminate", app);
+        NFBDebugLog(@"gesture: double tap on app %@ -> terminate", app);
         NFBTerminateApp(app);
         [self refresh];
     });
@@ -1138,6 +1143,42 @@ static double NFBNumber(NSString *key, double fallback) {
     self.stackUntil = CACurrentMediaTime() + NFBStackHold;
     [self refresh];
 }
+- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gesture {
+    if ([gesture isKindOfClass:UILongPressGestureRecognizer.class]) return self.edgeMode;
+    return YES;
+}
+- (void)edgeLongPressed:(UILongPressGestureRecognizer *)gesture {
+    UIView *root = self.window.rootViewController.view;
+    if (gesture.state == UIGestureRecognizerStateBegan) {
+        if (!self.edgeMode) return;
+        self.draggingEdge = YES;
+        self.dragStartY = [gesture locationInView:root].y;
+        self.dragSavedPosition = self.verticalPosition;
+        self.dragStartPosition = self.resolvedEdgePosition;
+        self.rail.scrollEnabled = NO;
+        self.unreadRail.scrollEnabled = NO;
+        [self extendEdgeContainer];
+    }
+    if (!self.draggingEdge) return;
+    if (!self.edgeMode || gesture.state == UIGestureRecognizerStateCancelled || gesture.state == UIGestureRecognizerStateFailed) {
+        self.verticalPosition = self.dragSavedPosition;
+        self.draggingEdge = NO;
+    } else if (gesture.state == UIGestureRecognizerStateChanged || gesture.state == UIGestureRecognizerStateBegan || gesture.state == UIGestureRecognizerStateEnded) {
+        CGFloat delta = [gesture locationInView:root].y - self.dragStartY;
+        self.verticalPosition = NFBPosition(self.dragStartPosition + delta / MAX(1, self.edgeAvailable));
+        if (gesture.state == UIGestureRecognizerStateEnded) {
+            self.draggingEdge = NO;
+            CFPreferencesSetAppValue(CFSTR("EdgeVerticalPosition"), (__bridge CFPropertyListRef)@(self.verticalPosition), NFBDomain);
+            CFPreferencesAppSynchronize(NFBDomain);
+        }
+    }
+    if (!self.draggingEdge) {
+        self.rail.scrollEnabled = YES;
+        self.unreadRail.scrollEnabled = YES;
+        [self extendEdgeContainer];
+    }
+    [self refresh];
+}
 - (void)extendEdgeContainer {
     NSTimeInterval duration = UIAccessibilityIsReduceMotionEnabled() ? 0 : NFBMotion;
     self.edgeUntil = CACurrentMediaTime() + duration + NFBHold;
@@ -1152,7 +1193,9 @@ static double NFBNumber(NSString *key, double fallback) {
     [self refresh];
 }
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)other {
-    return gesture.view == self.rail || other.view == self.rail;
+    return [gesture isKindOfClass:UITapGestureRecognizer.class] &&
+        [other isKindOfClass:UITapGestureRecognizer.class] &&
+        (gesture == self.edgeTap || other == self.edgeTap);
 }
 - (void)scrollViewWillBeginDragging:(UIScrollView *)scrollView {
     if (scrollView != self.rail || !self.edgeMode) return;
