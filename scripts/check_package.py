@@ -20,5 +20,5 @@ for argument in sys.argv[1:]:
     import io, tarfile
     with tarfile.open(fileobj=io.BytesIO(postinst)) as control_tar:
         member = next((m for m in control_tar.getmembers() if m.name.lstrip('./') == 'postinst'), None)
-        assert member is not None and member.mode & 0o111, 'Missing executable keyboard cleanup postinst'
+        assert member is not None and member.mode & 0o7777 == 0o755, 'Keyboard cleanup postinst must have mode 0755'
     print(f'PASS: {path.name} ({architecture}), tweak and preferences present')

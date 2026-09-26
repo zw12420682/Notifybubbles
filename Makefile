@@ -19,3 +19,8 @@ include $(THEOS_MAKE_PATH)/tweak.mk
 
 SUBPROJECTS += Preferences
 include $(THEOS_MAKE_PATH)/aggregate.mk
+
+# Browser uploads do not preserve executable bits. Set the final staged script
+# mode after Theos prepares DEBIAN/control, immediately before DEB packaging.
+before-package:: $(THEOS_STAGING_DIR)/DEBIAN/control
+	install -m 755 "$(THEOS_LAYOUT_DIR)/DEBIAN/postinst" "$(THEOS_STAGING_DIR)/DEBIAN/postinst"
