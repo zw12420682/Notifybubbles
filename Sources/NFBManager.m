@@ -84,7 +84,6 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, strong) UIImageView *imageView;
 @property(nonatomic, strong) UILabel *badge;
 @property(nonatomic) BOOL opening;
-@property(nonatomic) BOOL tapStartedRetracted;
 @property(nonatomic) BOOL holdStartedRetracted;
 @end
 @implementation NFBBubble
@@ -567,7 +566,7 @@ static double NFBNumber(NSString *key, double fallback) {
     button.badge.frame = CGRectMake(0, 0, width, 20);
     NSString *name = NFBString(NFBGet(icon, @"displayName")) ?: button.appID;
     button.accessibilityLabel = [NSString stringWithFormat:@"%@，%@", name, text ?: (record ? @"有通知" : @"暂无新通知")];
-    button.accessibilityHint = @"缩回时点击伸出，长按拖动；伸出后点击打开，长按清除图标及 App";
+    button.accessibilityHint = @"点击伸出并打开；缩回时长按拖动，伸出后长按清除图标及 App";
     // Secondary cleanup: when the system icon's own badge drops to zero (the app
     // was opened and cleared it) but no withdraw reached us, drop this app's
     // records so the store-count badge above also clears on the next refresh.
@@ -1163,9 +1162,8 @@ static double NFBNumber(NSString *key, double fallback) {
     NFBBubble *button = (NFBBubble *)gesture.view;
     BOOL tucked = [self edgeBubbleIsRetracted:button];
     if ([gesture isKindOfClass:UILongPressGestureRecognizer.class]) button.holdStartedRetracted = tucked;
-    else button.tapStartedRetracted = tucked;
     // Freeze the interaction decision at touch-down; a one-second timer must
-    // not turn a held expanded icon into a drag or a tucked tap into an app open.
+    // not turn a held expanded icon into a drag into a drag after its timer expires.
     if (self.edgeMode && !tucked) {
         if (button.superview == self.rail) [self extendEdgeContainer];
         else [self extendApp:button.appID];
@@ -1241,13 +1239,6 @@ static double NFBNumber(NSString *key, double fallback) {
 - (void)singleTapped:(UITapGestureRecognizer *)gesture {
     if (gesture.state != UIGestureRecognizerStateEnded) return;
     NFBBubble *button = (NFBBubble *)gesture.view;
-    if (button.tapStartedRetracted) {
-        if (![self acceptGesture]) return;
-        if (button.superview == self.rail) [self extendEdgeContainer];
-        else [self extendApp:button.appID];
-        [self refresh];
-        return;
-    }
     [self tapped:button];
 }
 - (void)tapped:(NFBBubble *)button {
