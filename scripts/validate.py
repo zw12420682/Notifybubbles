@@ -4,6 +4,7 @@ import plistlib
 
 root = Path(__file__).resolve().parents[1]
 required = [
+    "Sources/NFBTrollBadges.m", "Sources/NFBTrollBadgeText.h",
     'Sources/NFBSplitClosePolicy.h', 'Sources/NFBWindowControls.h', 'Sources/NFBWindowControls.m', 'Sources/NFBStorageLayout.h', 'Sources/NFBEdgeInspection.h', 'Makefile', 'control', 'Sources/NFBAppExit.h', 'Sources/NFBAppExit.m',
     # Retired app-side back helper: kept on disk so it can be restored, but the
     # Makefile must not build it (see the assertions below).
