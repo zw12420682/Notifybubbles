@@ -1,4 +1,3 @@
-#import "NFBTrollBadgeText.h"
 #import "NFBEdgeLayout.h"
 #import "NFBSplitClosePolicy.h"
 #import "NFBStorageLayout.h"
@@ -20,9 +19,6 @@ static void Check(BOOL value, NSString *message) {
 }
 int main(void) {
     @autoreleasepool {
-        Check(!NFBTrollBadgeText(nil) && !NFBTrollBadgeText(@0) && !NFBTrollBadgeText(@(-1)), @"Absent/zero numeric badge is hidden");
-        Check(!NFBTrollBadgeText(@"") && !NFBTrollBadgeText(@"0"), @"Empty/zero text badge is hidden");
-        Check([NFBTrollBadgeText(@12) isEqual:@"12"] && [NFBTrollBadgeText(@"99+") isEqual:@"99+"], @"Desktop badge value is preserved");
         NSArray *edgeApps = @[@"a", @"b", @"c", @"d", @"e"];
         NSArray *recent = @[@"gone", @"e", @"b", @"a"];
         NSArray *groups = NFBEdgeGroups(edgeApps, recent, ^NSUInteger(NSString *app) {

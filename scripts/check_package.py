@@ -16,4 +16,9 @@ for argument in sys.argv[1:]:
     assert 'NotifyBubblesKeyboard.dylib' not in payload, 'Retired keyboard theme is still in the DEB.'
     for suffix in ['NotifyBubbles.dylib', 'NotifyBubbles.plist', 'NFBPreferences.bundle/NFBPreferences', 'NFBPreferences.bundle/Root.plist']:
         assert suffix in payload, f'Missing payload: {suffix}'
+    postinst = subprocess.check_output(['dpkg-deb', '--ctrl-tarfile', str(path)])
+    import io, tarfile
+    with tarfile.open(fileobj=io.BytesIO(postinst)) as control_tar:
+        member = next((m for m in control_tar.getmembers() if m.name.lstrip('./') == 'postinst'), None)
+        assert member is not None and member.mode & 0o111, 'Missing executable keyboard cleanup postinst'
     print(f'PASS: {path.name} ({architecture}), tweak and preferences present')

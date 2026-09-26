@@ -1,0 +1,41 @@
+#!/bin/sh
+# Remove only retired keyboard files beside THIS package's installed main dylib.
+# Never search or delete across other RootHide bootstraps or other tweak names.
+case "${1-}" in configure) ;; *) exit 0 ;; esac
+if ! command -v dpkg-query >/dev/null 2>&1; then
+    echo "[NotifyBubbles cleanup] dpkg-query unavailable; no files removed."
+    exit 0
+fi
+dpkg-query -L local.notifybubbles 2>/dev/null | while IFS= read -r main; do
+    case "$main" in
+        /*) ;;
+        ./*) main="/${main#./}" ;;
+        *) continue ;;
+    esac
+    case "$main" in
+        */Library/MobileSubstrate/DynamicLibraries/NotifyBubbles.dylib|*/usr/lib/TweakInject/NotifyBubbles.dylib) ;;
+        *) continue ;;
+    esac
+    [ -f "$main" ] || continue
+    folder=${main%/*}
+    for name in NotifyBubblesKeyboard.dylib NotifyBubblesKeyboard.plist NotifyBubblesKeyboard.dylib.disabled NotifyBubblesKeyboard.plist.disabled; do
+        candidate="$folder/$name"
+        if [ -L "$candidate" ]; then
+            echo "[NotifyBubbles cleanup] Skipped symlink: $candidate"
+            continue
+        fi
+        [ -f "$candidate" ] || continue
+        owners=$(dpkg-query -S "$candidate" 2>/dev/null || true)
+        foreign=$(printf '%s\n' "$owners" | sed '/^$/d; /^local\.notifybubbles: /d; /^local\.notifybubbles:iphoneos-arm64e: /d')
+        if [ -n "$foreign" ]; then
+            echo "[NotifyBubbles cleanup] Owned by another package; skipped: $candidate"
+            continue
+        fi
+        if rm -f -- "$candidate"; then
+            echo "[NotifyBubbles cleanup] Removed: $candidate"
+        else
+            echo "[NotifyBubbles cleanup] Could not remove: $candidate"
+        fi
+    done
+done
+exit 0

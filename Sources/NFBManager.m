@@ -16,7 +16,7 @@
 static const NSTimeInterval NFBMotion = 0.6;
 // How long a bubble stays expanded after an unread arrives.
 static const NSTimeInterval NFBHold = 1.0;
-// Single taps wait for double-tap failure so a close never opens the app first.
+// No double-tap recognizer: a short tap resolves on release.
 // Guard against repeated callbacks from the same completed gesture.
 static const NSTimeInterval NFBGestureCooldown = 0.25;
 // While an app sits in the split view its bubble stays fully opaque (alpha 1.0,
@@ -84,6 +84,8 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, strong) UIImageView *imageView;
 @property(nonatomic, strong) UILabel *badge;
 @property(nonatomic) BOOL opening;
+@property(nonatomic) BOOL tapStartedRetracted;
+@property(nonatomic) BOOL holdStartedRetracted;
 @end
 @implementation NFBBubble
 - (instancetype)initWithFrame:(CGRect)frame {
@@ -128,7 +130,8 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic) CGFloat edgeAvailable;
 @property(nonatomic) CGFloat resolvedEdgePosition;
 - (void)edgeLongPressed:(UILongPressGestureRecognizer *)gesture;
-- (void)doubleTapped:(UITapGestureRecognizer *)gesture;
+- (void)closeBubble:(NFBBubble *)button;
+- (BOOL)edgeBubbleIsRetracted:(NFBBubble *)button;
 @property(nonatomic, copy) NSArray<NSString *> *lastEdgeReadApps;
 - (void)extendEdgeContainer;
 - (void)edgeContainerTapped:(UITapGestureRecognizer *)gesture;
@@ -139,6 +142,7 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, strong) NSMutableSet<NSString *> *burstApps;
 @property(nonatomic, strong) NSArray<NSString *> *lastSwitcher;
 @property(nonatomic, strong) NSMutableSet<NSString *> *dismissedSwitcher;
+@property(nonatomic, strong) NSMutableSet<NSString *> *closingApps;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *generations;
 @property(nonatomic, strong) NSMutableSet<NSString *> *needsReveal;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *lastBadges;
@@ -218,6 +222,7 @@ static double NFBNumber(NSString *key, double fallback) {
         _burstApps = [NSMutableSet set];
         _retracting = [NSMutableSet set];
         _dismissedSwitcher = [NSMutableSet set];
+        _closingApps = [NSMutableSet set];
         _generations = [NSMutableDictionary dictionary];
         _needsReveal = [NSMutableSet set];
         _lastBadges = [NSMutableDictionary dictionary];
@@ -480,7 +485,7 @@ static double NFBNumber(NSString *key, double fallback) {
     [apps enumerateObjectsUsingBlock:^(NSString *app, NSUInteger index, __unused BOOL *stop) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(index * 0.16 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             // A notification or reopened switcher card received after this snapshot survives.
-            if (![self.generations[app] isEqual:versions[app]]) return;
+            if (self.generations[app] != versions[app] && ![self.generations[app] isEqual:versions[app]]) return;
             [self.burstApps addObject:app];
             [self.store closeApp:app]; [self.needsReveal removeObject:app];
             if ([self.pendingRecord.appID isEqual:app]) self.pendingRecord = nil;
@@ -562,7 +567,7 @@ static double NFBNumber(NSString *key, double fallback) {
     button.badge.frame = CGRectMake(0, 0, width, 20);
     NSString *name = NFBString(NFBGet(icon, @"displayName")) ?: button.appID;
     button.accessibilityLabel = [NSString stringWithFormat:@"%@，%@", name, text ?: (record ? @"有通知" : @"暂无新通知")];
-    button.accessibilityHint = @"点击打开通知，无通知时通过 TrollOpen 分屏打开，长按关闭图标";
+    button.accessibilityHint = @"缩回时点击伸出，长按拖动；伸出后点击打开，长按清除图标及 App";
     // Secondary cleanup: when the system icon's own badge drops to zero (the app
     // was opened and cleared it) but no withdraw reached us, drop this app's
     // records so the store-count badge above also clears on the next refresh.
@@ -601,7 +606,7 @@ static double NFBNumber(NSString *key, double fallback) {
         BOOL atHome = [springboard respondsToSelector:@selector(isShowingHomescreen)] && [springboard isShowingHomescreen];
         if (!atHome) reopened = NFBString(NFBGet(NFBGet(springboard, @"_accessibilityFrontMostApplication"), @"bundleIdentifier"));
     }
-    if (reopened.length && [self.dismissedSwitcher containsObject:reopened]) {
+    if (reopened.length && ![self.closingApps containsObject:reopened] && [self.dismissedSwitcher containsObject:reopened]) {
         NFBDebugLog(@"refresh: dismissed app %@ reopened -> re-pin", reopened);
         [self.dismissedSwitcher removeObject:reopened];
         if (![self.store.appIDs containsObject:reopened]) [self.store pinApp:reopened];
@@ -876,18 +881,14 @@ static double NFBNumber(NSString *key, double fallback) {
                 [button addGestureRecognizer:tap];
             } else {
                 UITapGestureRecognizer *singleTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(singleTapped:)];
-                UITapGestureRecognizer *doubleTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(doubleTapped:)];
-                doubleTap.numberOfTapsRequired = 2;
+                singleTap.delegate = self;
                 UILongPressGestureRecognizer *hold = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(edgeLongPressed:)];
                 hold.minimumPressDuration = 0.45;
                 hold.cancelsTouchesInView = YES;
                 hold.delegate = self;
-                [singleTap requireGestureRecognizerToFail:doubleTap];
                 [singleTap requireGestureRecognizerToFail:hold];
-                [self.edgeTap requireGestureRecognizerToFail:doubleTap];
                 [self.edgeTap requireGestureRecognizerToFail:hold];
                 [button addGestureRecognizer:singleTap];
-                [button addGestureRecognizer:doubleTap];
                 [button addGestureRecognizer:hold];
             }
             self.buttons[appID] = button;
@@ -1003,9 +1004,7 @@ static double NFBNumber(NSString *key, double fallback) {
     if (!NFBFullscreenCurrentFloatingWindow())
         [self showOpenNotice:@"TrollOpen 全屏接口不可用，请确认已安装适配的 1.5.2 隐根版并重启桌面"];
 }
-- (void)doubleTapped:(UITapGestureRecognizer *)gesture {
-    if (gesture.state != UIGestureRecognizerStateEnded) return;
-    NFBBubble *button = (NFBBubble *)gesture.view;
+- (void)closeBubble:(NFBBubble *)button {
     if (self.buttons[button.appID] != button) return;
     if (![self acceptGesture]) return;
     NSString *app = button.appID;
@@ -1013,6 +1012,7 @@ static double NFBNumber(NSString *key, double fallback) {
     button.opening = YES;
     button.userInteractionEnabled = NO;
     [self.dismissedSwitcher addObject:app];
+    [self.closingApps addObject:app];
     [self closeAppsInOrder:@[app]];
     dispatch_async(dispatch_get_main_queue(), ^{
         // If a new notification cancelled dismissal, leave that surviving icon usable.
@@ -1023,9 +1023,12 @@ static double NFBNumber(NSString *key, double fallback) {
     // Let the burst read first, then terminate the process behind it.
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
-        NFBDebugLog(@"gesture: double tap on app %@ -> terminate", app);
+        NFBDebugLog(@"gesture: long press on app %@ -> terminate", app);
         NFBTerminateApp(app);
         [self refresh];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [self.closingApps removeObject:app];
+        });
     });
 }
 - (void)burstBubble:(NFBBubble *)button {
@@ -1143,14 +1146,40 @@ static double NFBNumber(NSString *key, double fallback) {
     self.stackUntil = CACurrentMediaTime() + NFBStackHold;
     [self refresh];
 }
-- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gesture {
-    if ([gesture isKindOfClass:UILongPressGestureRecognizer.class]) return self.edgeMode;
+- (BOOL)edgeBubbleIsRetracted:(NFBBubble *)button {
+    if (!self.edgeMode) return NO;
+    CALayer *layer = button.imageView.layer.presentationLayer ?: button.imageView.layer;
+    CGRect image = [layer convertRect:layer.bounds toLayer:self.window.rootViewController.view.layer];
+    return CGRectGetMaxX(image) > CGRectGetWidth(self.window.rootViewController.view.bounds) + 0.5;
+}
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldReceiveTouch:(UITouch *)touch {
+    if (gesture == self.edgeTap) {
+        // Bubble taps handle their own reveal. Do not race them with a parent tap.
+        for (UIView *view = touch.view; view && view != self.rail; view = view.superview)
+            if ([view isKindOfClass:NFBBubble.class]) return NO;
+        return YES;
+    }
+    if (![gesture.view isKindOfClass:NFBBubble.class]) return YES;
+    NFBBubble *button = (NFBBubble *)gesture.view;
+    BOOL tucked = [self edgeBubbleIsRetracted:button];
+    if ([gesture isKindOfClass:UILongPressGestureRecognizer.class]) button.holdStartedRetracted = tucked;
+    else button.tapStartedRetracted = tucked;
+    // Freeze the interaction decision at touch-down; a one-second timer must
+    // not turn a held expanded icon into a drag or a tucked tap into an app open.
+    if (self.edgeMode && !tucked) {
+        if (button.superview == self.rail) [self extendEdgeContainer];
+        else [self extendApp:button.appID];
+    }
     return YES;
 }
 - (void)edgeLongPressed:(UILongPressGestureRecognizer *)gesture {
     UIView *root = self.window.rootViewController.view;
     if (gesture.state == UIGestureRecognizerStateBegan) {
-        if (!self.edgeMode) return;
+        NFBBubble *button = (NFBBubble *)gesture.view;
+        if (!self.edgeMode || !button.holdStartedRetracted) {
+            [self closeBubble:button];
+            return;
+        }
         self.draggingEdge = YES;
         self.dragStartY = [gesture locationInView:root].y;
         self.dragSavedPosition = self.verticalPosition;
@@ -1212,6 +1241,13 @@ static double NFBNumber(NSString *key, double fallback) {
 - (void)singleTapped:(UITapGestureRecognizer *)gesture {
     if (gesture.state != UIGestureRecognizerStateEnded) return;
     NFBBubble *button = (NFBBubble *)gesture.view;
+    if (button.tapStartedRetracted) {
+        if (![self acceptGesture]) return;
+        if (button.superview == self.rail) [self extendEdgeContainer];
+        else [self extendApp:button.appID];
+        [self refresh];
+        return;
+    }
     [self tapped:button];
 }
 - (void)tapped:(NFBBubble *)button {
