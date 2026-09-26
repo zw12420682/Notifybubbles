@@ -654,29 +654,33 @@ static double NFBNumber(NSString *key, double fallback) {
     }
     id springboard = UIApplication.sharedApplication;
     BOOL home = [springboard respondsToSelector:@selector(isShowingHomescreen)] && [springboard isShowingHomescreen];
+    BOOL edgeMode = !floatingApp.length;
+    BOOL layoutModeChanged = self.lastLayoutApps != nil && self.edgeMode != edgeMode;
     NSString *active = floatingApp ?: (home ? nil : NFBString(NFBGet(NFBGet(springboard, @"_accessibilityFrontMostApplication"), @"bundleIdentifier")));
     // The split-view app keeps its position and is highlighted by opacity instead
     // of being pulled to the top, so only the plain frontmost app gets promoted.
-    if (!floatingApp.length && active.length && [apps containsObject:active]) {
+    if (!layoutModeChanged && !floatingApp.length && active.length && [apps containsObject:active]) {
         [apps removeObject:active]; [apps insertObject:active atIndex:0];
         if (![self.lastActiveApp isEqual:active]) [self.store promoteApp:active];
     }
     if (!self.recentUsedApps) self.recentUsedApps = [NSMutableArray array];
-    if (active.length && ![self.lastActiveApp isEqual:active]) {
+    if (!layoutModeChanged && active.length && ![self.lastActiveApp isEqual:active]) {
         [self.recentUsedApps removeObject:active];
         [self.recentUsedApps insertObject:active atIndex:0];
 
     }
     self.lastActiveApp = active;
     if (floatingApp.length) NFBInspectTrollEdges();
-    BOOL edgeMode = !floatingApp.length;
     self.edgeMode = edgeMode;
     NSArray<NSArray<NSString *> *> *groups = NFBEdgeGroups(apps, self.recentUsedApps, ^NSUInteger(NSString *app) {
         return [self.store countForApp:app];
     });
     NSArray<NSString *> *readApps = groups[0];
     NSArray<NSString *> *unreadApps = edgeMode ? groups[1] : @[];
-    NSArray<NSString *> *railApps = edgeMode ? readApps : apps;
+    // One bottom-first order in both modes: read rail, then external unread row.
+    // Split mode simply reunites those groups inside its larger viewport.
+    NSArray<NSString *> *sharedOrder = [readApps arrayByAddingObjectsFromArray:groups[1]];
+    NSArray<NSString *> *railApps = edgeMode ? readApps : sharedOrder;
     BOOL edgeReadChanged = ![self.lastEdgeReadApps isEqualToArray:readApps];
     self.lastEdgeReadApps = [readApps copy];
     NSMutableArray<NSString *> *displayApps = [railApps mutableCopy];
@@ -721,6 +725,7 @@ static double NFBNumber(NSString *key, double fallback) {
         [self.needsReveal removeObject:app];
     }
     UIView *root = self.window.rootViewController.view;
+    CGFloat oldBottomOffset = MAX(0, self.rail.contentSize.height - self.rail.bounds.size.height) - self.rail.contentOffset.y;
     CGRect bounds = root.bounds;
     UIEdgeInsets safe = root.safeAreaInsets;
     CGFloat top = MAX(safe.top, 48) + 30;
@@ -846,7 +851,7 @@ static double NFBNumber(NSString *key, double fallback) {
     if (attachmentChanged && !self.rail.dragging && !self.rail.decelerating) {
         [UIView animateWithDuration:layoutDuration delay:0
             options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseOut
-            animations:^{ self.rail.contentOffset = CGPointMake(0, maxOffset); } completion:nil];
+            animations:^{ self.rail.contentOffset = CGPointMake(0, MAX(0, MIN(maxOffset, maxOffset - oldBottomOffset))); } completion:nil];
     }
     else if (!self.rail.dragging && !self.rail.decelerating) {
         if (edgeMode && edgeReadChanged) self.rail.contentOffset = CGPointMake(0, maxOffset);
@@ -1246,8 +1251,6 @@ static double NFBNumber(NSString *key, double fallback) {
     if (self.pendingRecord && [self.pendingRecord.appID isEqual:button.appID]) return;
     if (![self acceptGesture]) return;
     button.opening = YES;
-    [self.recentUsedApps removeObject:button.appID];
-    [self.recentUsedApps insertObject:button.appID atIndex:0];
     if (self.edgeMode && button.superview == self.rail) [self extendEdgeContainer];
     [self extendApp:button.appID];
     [self refresh]; // Starts the same 0.6-second animation used for retraction.
