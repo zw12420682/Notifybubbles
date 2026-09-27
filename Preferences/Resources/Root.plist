@@ -10,7 +10,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
-			<string>通知悬浮气泡 · 0.48.5</string>
+			<string>通知悬浮气泡 · 0.48.6</string>
 			<key>footerText</key>
 			<string>单击打开通知或 App；边缘缩回时长按可拖动位置，展开后及分屏图标长按清除。分屏切换保持原顺序，仅高亮当前 App。</string>
 		</dict>
@@ -164,7 +164,7 @@
 			<key>label</key>
 			<string>分屏与截屏</string>
 			<key>footerText</key>
-			<string>冻屏只在分屏背景为桌面时禁止桌面触摸并添加轻微模糊，背景为全屏 App 时不限制。截屏隐藏所有气泡、未读角标、容器及清理按钮，不隐藏分屏 App；系统机制也可能隐藏录屏中的气泡。两个开关默认关闭。</string>
+			<string>冻屏仅在桌面背景且存在展开的竖屏窗口时生效；横竖屏并存时仍冻结，只有横屏、小窗或背景为全屏 App 时不冻结。模糊透明度越高，桌面越清晰；100% 完全透明但仍防误触。截屏隐藏全部气泡、角标、容器及清理按钮，不隐藏分屏 App，可能同时影响录屏。</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -177,6 +177,24 @@
 			<false/>
 			<key>defaults</key>
 			<string>local.notifybubbles</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>label</key>
+			<string>桌面模糊透明度（%）</string>
+			<key>key</key>
+			<string>DesktopBlurTransparency</string>
+			<key>defaults</key>
+			<string>local.notifybubbles</string>
+			<key>default</key>
+			<integer>35</integer>
+			<key>min</key>
+			<integer>0</integer>
+			<key>max</key>
+			<integer>100</integer>
+			<key>showValue</key>
+			<true/>
 		</dict>
 		<dict>
 			<key>cell</key>

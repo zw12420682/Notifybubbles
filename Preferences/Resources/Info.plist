@@ -11,10 +11,12 @@
 	<key>CFBundlePackageType</key>
 	<string>BNDL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.48.5</string>
+	<string>0.48.6</string>
 	<key>CFBundleVersion</key>
-	<string>64</string>
+	<string>65</string>
 	<key>NSPrincipalClass</key>
 	<string>NFBPreferences</string>
+	<key>CFBundleIconFile</key>
+	<string>icon.png</string>
 </dict>
 </plist>

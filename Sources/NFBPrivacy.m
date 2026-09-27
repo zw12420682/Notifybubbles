@@ -2,6 +2,7 @@
 #import "NFBDebugLog.h"
 #import <QuartzCore/QuartzCore.h>
 #import <objc/runtime.h>
+#include <math.h>
 
 static __weak UIView *frozenHome;
 static BOOL savedInteraction;
@@ -30,7 +31,7 @@ static BOOL NFBContainsFloatingView(UIView *view) {
         if (NFBContainsFloatingView(child)) return YES;
     return NO;
 }
-void NFBUpdateDesktopFreeze(BOOL enabled) {
+void NFBUpdateDesktopFreeze(BOOL enabled, CGFloat opacity) {
     if (!NSThread.isMainThread) return;
     UIView *home = nil;
     if (enabled) {
@@ -65,6 +66,13 @@ void NFBUpdateDesktopFreeze(BOOL enabled) {
             desktopBlur.effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterial];
         }];
     }
+    CGFloat targetAlpha = isfinite(opacity) ? MIN(1, MAX(0, opacity)) : 0.65;
+    if (fabs(desktopBlur.alpha - targetAlpha) > 0.001) {
+        [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : 0.15
+            delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
+            animations:^{ desktopBlur.alpha = targetAlpha; } completion:nil];
+    }
+    // A fully transparent blur still freezes desktop interaction.
     home.userInteractionEnabled = NO;
     [home bringSubviewToFront:desktopBlur];
 }

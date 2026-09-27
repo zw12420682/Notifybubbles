@@ -44,7 +44,7 @@ assert 'NotifyBubblesBack_FILES' not in (root / 'Makefile').read_text(), \
 assert 'TWEAK_NAME = NotifyBubbles\n' in (root / 'Makefile').read_text(), \
     'Build only the SpringBoard component; app-side helpers stay retired.'
 prefs = plistlib.loads((root / 'Preferences/Resources/Root.plist').read_bytes())
-assert {x['key'] for x in prefs['items'] if 'key' in x} == {'Enabled','ShowOnLock','ShowOnHome','ShowInApps','IconSize','IconOpacity','ClosePreviousSplit','FreezeDesktop','HideInScreenshots'}
+assert {x['key'] for x in prefs['items'] if 'key' in x} == {'Enabled','ShowOnLock','ShowOnHome','ShowInApps','IconSize','IconOpacity','ClosePreviousSplit','FreezeDesktop','HideInScreenshots','DesktopBlurTransparency'}
 filter_ = plistlib.loads((root / 'NotifyBubbles.plist').read_bytes())
 assert filter_['Filter']['Bundles'] == ['com.apple.springboard']
 print('PASS: required files, property lists, RootHide configuration, preference keys and injection filter')

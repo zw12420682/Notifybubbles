@@ -246,7 +246,7 @@ static double NFBNumber(NSString *key, double fallback) {
     self.showHome = NFBPreference(@"ShowOnHome", YES);
     self.showApps = NFBPreference(@"ShowInApps", YES);
     if (!self.enabled) {
-        NFBUpdateDesktopFreeze(NO);
+        NFBUpdateDesktopFreeze(NO, 0);
         NFBSetCaptureHidden(self.window.rootViewController.view, NO);
         [self.timer invalidate]; self.timer = nil; [self clear];
     } else { [self startTimer]; [self tick]; }
@@ -597,9 +597,11 @@ static double NFBNumber(NSString *key, double fallback) {
 - (void)updatePrivacy {
     id desktopSB = UIApplication.sharedApplication;
     BOOL desktopVisible = [desktopSB respondsToSelector:@selector(isShowingHomescreen)] && [desktopSB isShowingHomescreen];
-    BOOL splitVisible = NFBTrollVisibleApp().length > 0 || NFBSplitAttachmentApp().length > 0;
+    // Attachment lookup includes all expanded portrait windows, even behind a landscape window.
+    BOOL splitVisible = NFBSplitAttachmentApp().length > 0;
     NFBUpdateDesktopFreeze(self.enabled && NFBPreference(@"FreezeDesktop", NO) &&
-        desktopVisible && ![self isLocked] && splitVisible);
+        desktopVisible && ![self isLocked] && splitVisible,
+        1.0 - NFBNumber(@"DesktopBlurTransparency", 35) / 100.0);
     NFBSetCaptureHidden(self.window.rootViewController.view, self.enabled && NFBPreference(@"HideInScreenshots", NO));
 }
 - (void)refresh {

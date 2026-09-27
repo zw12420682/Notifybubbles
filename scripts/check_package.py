@@ -14,7 +14,7 @@ for argument in sys.argv[1:]:
     # packaged any more: it would inject into every UIKit app for no gesture.
     assert 'NotifyBubblesBack.dylib' not in payload, 'Retired app-side helper is still in the DEB.'
     assert 'NotifyBubblesKeyboard.dylib' not in payload, 'Retired keyboard theme is still in the DEB.'
-    for suffix in ['NotifyBubbles.dylib', 'NotifyBubbles.plist', 'NFBPreferences.bundle/NFBPreferences', 'NFBPreferences.bundle/Root.plist']:
+    for suffix in ['NotifyBubbles.dylib', 'NotifyBubbles.plist', 'NFBPreferences.bundle/NFBPreferences', 'NFBPreferences.bundle/Root.plist', 'NFBPreferences.bundle/icon.png', 'NFBPreferences.bundle/icon@2x.png', 'NFBPreferences.bundle/icon@3x.png']:
         assert suffix in payload, f'Missing payload: {suffix}'
     postinst = subprocess.check_output(['dpkg-deb', '--ctrl-tarfile', str(path)])
     import io, tarfile
