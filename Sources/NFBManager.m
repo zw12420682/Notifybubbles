@@ -13,7 +13,6 @@
 #import "NFBEdgeInspection.h"
 #import "NFBEdgeLayout.h"
 #import "NFBPrivacy.h"
-#import "NFBBackRequest.h"
 #import "NFBContainerLayout.h"
 
 static const NSTimeInterval NFBMotion = 0.6;
@@ -130,7 +129,6 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic) BOOL hadSplitWindow;
 @property(nonatomic, copy) NSArray<NSString *> *splitOrder;
 @property(nonatomic) BOOL resetFavoritesScroll;
-@property(nonatomic) BOOL backPending;
 - (void)clearAllHeld:(UILongPressGestureRecognizer *)gesture;
 - (void)layoutFavorites:(CGRect)frame diameter:(CGFloat)diameter active:(NSString *)active duration:(NSTimeInterval)duration;
 
@@ -346,38 +344,24 @@ static double NFBNumber(NSString *key, double fallback) {
     }];
 }
 - (void)clearAllTapped:(UITapGestureRecognizer *)gesture {
-    if (gesture.state != UIGestureRecognizerStateEnded || self.backPending || [self isLocked] || ![self acceptGesture]) return;
-    NSString *target = NFBTrollVisibleApp();
-    if (!target.length) target = NFBSplitAttachmentApp();
-    if (!target.length) {
-        id sb = UIApplication.sharedApplication;
-        if (![sb respondsToSelector:@selector(isShowingHomescreen)] || [sb isShowingHomescreen]) return;
-        target = NFBString(NFBGet(NFBGet(sb, @"_accessibilityFrontMostApplication"), @"bundleIdentifier"));
-    }
-    if (!target.length) return;
-    self.backPending = YES;
-    NFBRequestAppBack(target, ^(NSInteger result, NSInteger reason) {
-        self.backPending = NO;
-        if (result < 0) [self showOpenNotice:@"返回组件未响应，请重新打开此 App 并确认已允许插件注入"];
-        if (result == 0 && reason == NFBBackStatusNoBackAction)
-            [self showOpenNotice:@"当前系统的模拟滑动接口不可用"];
-        // Homepage swipes are intentional; the App decides what the gesture does.
-    });
+    if (gesture.state != UIGestureRecognizerStateEnded || self.edgeMode || [self isLocked] || ![self acceptGesture]) return;
+    if (!NFBCloseCurrentSplit()) [self showOpenNotice:@"当前分屏窗口无法关闭"];
+    [self refresh];
 }
 - (void)clearAllHeld:(UILongPressGestureRecognizer *)gesture {
     if (gesture.state != UIGestureRecognizerStateBegan || [self isLocked] || ![self acceptGesture]) return;
     [self clearBackground];
 }
-// Combined Back/clear action: a blue return glyph, no badge,
+// Combined close/clear action: a blue close glyph, no badge,
 // and an accessibility label so VoiceOver reads it as an action, not an app.
 - (void)styleClearAllButton:(NFBBubble *)button {
     button.badge.hidden = YES;
     button.imageView.contentMode = UIViewContentModeCenter;
-    button.imageView.image = [UIImage systemImageNamed:@"arrow.uturn.backward"];
+    button.imageView.image = [UIImage systemImageNamed:@"xmark"];
     button.imageView.tintColor = UIColor.systemBlueColor;
     button.imageView.backgroundColor = UIColor.secondarySystemBackgroundColor;
-    button.accessibilityLabel = @"返回 / 清理后台";
-    button.accessibilityHint = @"单击返回上一页，长按清理后台";
+    button.accessibilityLabel = @"关闭分屏 / 清理后台";
+    button.accessibilityHint = @"单击关闭分屏并保留后台，长按清理后台";
 }
 // Reminder for a fresh notification while an app sits in the split view: a
 // 2-second decaying horizontal shake plus a temporary full-opacity highlight,
@@ -752,6 +736,11 @@ static double NFBNumber(NSString *key, double fallback) {
     // One bottom-first order in both modes: read rail, then external unread row.
     // Split mode simply reunites those groups inside its larger viewport.
     NSArray<NSString *> *sharedOrder = [readApps arrayByAddingObjectsFromArray:groups[1]];
+    if (!edgeMode) {
+        NSMutableArray *exclusive = [sharedOrder mutableCopy];
+        [exclusive removeObjectsInArray:self.favoriteApps];
+        sharedOrder = exclusive;
+    }
     BOOL resetMainScroll = NO;
     if (!edgeMode) {
         NSMutableOrderedSet *stable = [NSMutableOrderedSet orderedSet];
@@ -768,7 +757,7 @@ static double NFBNumber(NSString *key, double fallback) {
     self.lastEdgeReadApps = [readApps copy];
     NSMutableArray<NSString *> *displayApps = [railApps mutableCopy];
     if (edgeMode) [displayApps addObjectsFromArray:unreadApps];
-    [displayApps addObject:NFBClearAllID];
+    if (!edgeMode) [displayApps addObject:NFBClearAllID];
     NSUInteger storedCount = 0;
     self.storedApps = @[];
     BOOL orderChanged = ![self.lastLayoutApps isEqualToArray:displayApps];
@@ -881,7 +870,7 @@ static double NFBNumber(NSString *key, double fallback) {
     if (edgeMode) {
         CGFloat edgeFloor = keyboardUp ? NFBKeyboardTopInView(root) - 12 - step
             : CGRectGetHeight(bounds) - MAX(safe.bottom, 12);
-        CGFloat room = MAX(0, edgeFloor - top - side - 9);
+        CGFloat room = MAX(0, edgeFloor - top);
         height = MIN(MIN(2 * step + side, contentHeight), room);
         // Reserve a separate transparent strip for unread apps above the container.
         CGFloat gap = rowCount && unreadApps.count ? 9 : 0;
@@ -892,7 +881,7 @@ static double NFBNumber(NSString *key, double fallback) {
             height = MIN(height, MAX(0, room - unreadHeight - gap));
         }
         CGFloat total = height + unreadHeight + gap;
-        CGFloat bottom = MAX(top + total, MIN(edgeFloor - side - 9, anchor + step - side / 2 + padding));
+        CGFloat bottom = MAX(top + total, MIN(edgeFloor, anchor + step - side / 2 + padding));
         self.edgeAvailable = available;
         self.resolvedEdgePosition = (bottom - step + side / 2 - padding - top) / MAX(1, available);
         BOOL edgeExpanded = !keyboardUp && (self.edgeUntil > CACurrentMediaTime() ||
@@ -1090,6 +1079,7 @@ static double NFBNumber(NSString *key, double fallback) {
     BOOL visible = !self.edgeMode && self.favoriteApps.count && frame.size.height > 0;
     self.favoritesRail.userInteractionEnabled = visible;
     CGFloat side = diameter + 14, step = diameter + 9;
+    CGFloat oldBottomDistance = MAX(0, self.favoritesRail.contentSize.height - self.favoritesRail.bounds.size.height - self.favoritesRail.contentOffset.y);
     BOOL wasHidden = self.favoritesRail.alpha < 0.01;
     if (wasHidden && visible) { self.favoritesRail.frame = frame; self.favoritesMaterial.frame = frame; }
     [UIView animateWithDuration:duration delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{
@@ -1103,17 +1093,18 @@ static double NFBNumber(NSString *key, double fallback) {
         [self.favoriteButtons[app] removeFromSuperview]; [self.favoriteButtons removeObjectForKey:app];
     }
     CGFloat content = self.favoriteApps.count ? (self.favoriteApps.count - 1) * step + side : 0;
+    CGFloat maxOffset = MAX(0, content - frame.size.height);
     self.favoritesRail.contentSize = CGSizeMake(side, content);
     self.favoritesRail.alwaysBounceVertical = content > frame.size.height;
-    if (self.resetFavoritesScroll && visible) {
+    if ((self.resetFavoritesScroll || wasHidden) && visible) {
         self.favoritesRail.scrollEnabled = NO; self.favoritesRail.scrollEnabled = YES;
         [UIView animateWithDuration:duration delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{
-            self.favoritesRail.contentOffset = CGPointZero;
+            self.favoritesRail.contentOffset = CGPointMake(0, maxOffset);
         } completion:nil];
         self.resetFavoritesScroll = NO;
     }
     else if (!self.favoritesRail.dragging && !self.favoritesRail.decelerating && visible)
-        self.favoritesRail.contentOffset = CGPointMake(0, MIN(self.favoritesRail.contentOffset.y, MAX(0, content - frame.size.height)));
+        self.favoritesRail.contentOffset = CGPointMake(0, MAX(0, maxOffset - oldBottomDistance));
     [self.favoriteApps enumerateObjectsUsingBlock:^(NSString *app, NSUInteger index, __unused BOOL *stop) {
         NFBBubble *button = self.favoriteButtons[app];
         if (!button) {
@@ -1129,7 +1120,7 @@ static double NFBNumber(NSString *key, double fallback) {
         button.badge.adjustsFontSizeToFitWidth = YES; button.badge.minimumScaleFactor = 0.65;
         [UIView animateWithDuration:duration delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{
             button.bounds = CGRectMake(0, 0, side, side);
-            button.center = CGPointMake(side / 2, side / 2 + index * step);
+            button.center = CGPointMake(side / 2, NFBRowCenter(self.favoriteApps.count, index, step, side));
             button.imageView.frame = CGRectMake(7, 7, diameter, diameter);
             button.imageView.layer.cornerRadius = diameter * 0.23;
             button.alpha = [app isEqual:active] ? 1 : self.iconOpacity;

@@ -10,9 +10,9 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
-			<string>通知悬浮气泡 · 0.48.8</string>
+			<string>通知悬浮气泡 · 0.48.9</string>
 			<key>footerText</key>
-			<string>分屏两个容器中，当前 App 在前 4 个时仅高亮；在第 5 个以后时移到第一位并滚回前 4 个。返回箭头单击模拟 App 左边缘右划，首页也会执行；长按清理后台。</string>
+			<string>分屏两个容器中，当前 App 在前 4 个时仅高亮；在第 5 个以后时移到第一位并滚回前 4 个。关闭按钮单击关闭当前分屏并保留后台；长按清理后台。边缘模式不显示此按钮。</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -156,7 +156,7 @@
 			<key>label</key>
 			<string>排列规则</string>
 			<key>footerText</key>
-			<string>边缘容器显示 3 个图标，未读在外；分屏常用 App 在上、原容器在下，各显示最多 4 个，可滚动。键盘弹出时缩短可见区域。返回按钮在容器下方。</string>
+			<string>边缘容器显示 3 个图标，未读在外；分屏常用 App 在上、原容器在下，各显示最多 4 个，可滚动。键盘弹出时缩短可见区域。关闭按钮仅在分屏容器下方显示。</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -214,7 +214,7 @@
 			<key>label</key>
 			<string>常用 App</string>
 			<key>footerText</key>
-			<string>在分屏上方容器显示自选 App。按选择顺序排列，可与下方容器重复。未选择时不占空间。</string>
+			<string>在分屏上方容器显示自选 App。从下往上排列，最下面为第一位；下方容器不重复显示已选 App。未选择时不占空间。</string>
 		</dict>
 		<dict>
 			<key>cell</key>

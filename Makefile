@@ -5,16 +5,13 @@ INSTALL_TARGET_PROCESSES = SpringBoard
 
 include $(THEOS)/makefiles/common.mk
 
-# App-side navigation helper is required for the explicit Back button.
-TWEAK_NAME = NotifyBubbles NotifyBubblesBack
-NotifyBubbles_FILES = Sources/Tweak.m Sources/NFBStore.m Sources/NFBManager.m Sources/NFBSwitcher.m Sources/NFBTrollOpen.m Sources/NFBWindowControls.m Sources/NFBNotificationPolicy.m Sources/NFBAppExit.m Sources/NFBKeyboard.m Sources/NFBPrivacy.m Sources/NFBBackRequest.m
+# Only SpringBoard is injected; the app-side return helper is retired.
+TWEAK_NAME = NotifyBubbles
+NotifyBubbles_FILES = Sources/Tweak.m Sources/NFBStore.m Sources/NFBManager.m Sources/NFBSwitcher.m Sources/NFBTrollOpen.m Sources/NFBWindowControls.m Sources/NFBNotificationPolicy.m Sources/NFBAppExit.m Sources/NFBKeyboard.m Sources/NFBPrivacy.m
 NotifyBubbles_CFLAGS = -fobjc-arc -Wall -Wextra
 NotifyBubbles_FRAMEWORKS = UIKit Foundation QuartzCore UserNotifications
 NotifyBubbles_LIBRARIES = substrate
 
-NotifyBubblesBack_FILES = Sources/NFBAppBack.m
-NotifyBubblesBack_CFLAGS = -fobjc-arc -Wall -Wextra
-NotifyBubblesBack_FRAMEWORKS = UIKit Foundation QuartzCore
 
 include $(THEOS_MAKE_PATH)/tweak.mk
 

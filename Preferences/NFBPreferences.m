@@ -90,7 +90,7 @@ static id NFBPreferenceObject(id object, NSString *name) {
 }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView; (void)section;
-    return self.apps.count ? @"点选后即时保存，初始按选择顺序排列，当前 App 不在前四个时自动置顶。上方常用容器最多显示 4 个，其余可滚动查看；允许与下方容器重复。" : @"未能读取已安装 App，请重新打开设置并确认插件正常加载。";
+    return self.apps.count ? @"点选后即时保存，初始按选择顺序排列，当前 App 不在前四个时自动置顶。上方常用容器最多显示 4 个，其余可滚动查看；从下往上排列，最下面为第一位；已选 App 不再显示在下方容器。" : @"未能读取已安装 App，请重新打开设置并确认插件正常加载。";
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"app"];

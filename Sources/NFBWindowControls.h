@@ -8,3 +8,6 @@ void NFBResetSplitPlacement(void);
 
 // Layout target only; does not change TrollOpen action or close targets.
 NSString *NFBSplitAttachmentApp(void);
+
+// Close the visible floating window without terminating its app.
+BOOL NFBCloseCurrentSplit(void);

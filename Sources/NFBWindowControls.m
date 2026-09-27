@@ -231,3 +231,18 @@ void NFBObserveSplitPlacement(NSString *app) {
         });
     } @catch (NSException *exception) { NFBDebugLog(@"placement lookup: %@", exception); }
 }
+
+BOOL NFBCloseCurrentSplit(void) {
+    if (!NSThread.isMainThread) return NO;
+    @try {
+        UIView *window = NFBTrollVisibleApp().length ? currentWindow() : attachmentWindow();
+        if (![window isKindOfClass:UIView.class] || !visibleView(window) ||
+            boolStateOf(window, @"miniWindowModeEnabled") != 0 ||
+            boolStateOf(window, @"isClosingWithKeepAliveAnimation") == 1) return NO;
+        SEL close = NSSelectorFromString(@"closeWindowWithoutTerminatingProcessWithoutAnimation");
+        NSMethodSignature *sig = [window methodSignatureForSelector:close];
+        if (sig.numberOfArguments != 2 || strcmp(sig.methodReturnType, @encode(void))) return NO;
+        ((void (*)(id, SEL))objc_msgSend)(window, close);
+        return YES;
+    } @catch (NSException *exception) { NFBDebugLog(@"close split: %@", exception); return NO; }
+}
