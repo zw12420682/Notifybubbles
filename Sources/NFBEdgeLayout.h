@@ -12,3 +12,14 @@ static inline NSArray<NSArray<NSString *> *> *NFBEdgeGroups(NSArray<NSString *> 
     }
     return @[readApps, unreadApps];
 }
+
+// Do not insert an app missing from a user-selected list.
+static inline NSArray<NSString *> *NFBPromoteBeyondFour(NSArray<NSString *> *apps, NSString *active, BOOL *promoted) {
+    if (promoted) *promoted = NO;
+    NSUInteger index = active.length ? [apps indexOfObject:active] : NSNotFound;
+    if (index == NSNotFound || index < 4) return apps;
+    NSMutableArray *result = [apps mutableCopy];
+    [result removeObjectAtIndex:index]; [result insertObject:active atIndex:0];
+    if (promoted) *promoted = YES;
+    return result;
+}

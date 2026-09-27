@@ -110,6 +110,14 @@ int main(void) {
             Check(fit.favorites >= 0 && fit.regular >= 0 && fit.favorites + fit.regular + fit.gap <= room + 0.001,
                 @"Keyboard-constrained rails never exceed available height");
         }
+        NSArray *sixApps = @[@"a", @"b", @"c", @"d", @"e", @"f"];
+        BOOL promoted = YES;
+        Check([NFBPromoteBeyondFour(sixApps, @"d", &promoted) isEqual:sixApps] && !promoted, @"Fourth active app keeps its position");
+        NSArray *raised = NFBPromoteBeyondFour(sixApps, @"e", &promoted);
+        Check([raised isEqual:@[@"e", @"a", @"b", @"c", @"d", @"f"]] && promoted, @"Fifth app moves first, other relative order survives");
+        Check([NFBPromoteBeyondFour(raised, @"e", &promoted) isEqual:raised] && !promoted, @"Repeated refresh must not reset scroll again");
+        Check([NFBPromoteBeyondFour(sixApps, @"other", &promoted) isEqual:sixApps] && !promoted, @"Unselected app never added to favorites");
+        Check(NFBPromoteBeyondFour(@[], @"a", &promoted).count == 0 && !promoted, @"Empty favorites stay empty");
         NSLog(@"PASS: queue chronology, per-app isolation, deduplication, consumption, switcher pins and geometry");
     }
     return 0;

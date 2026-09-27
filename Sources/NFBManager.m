@@ -128,6 +128,8 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, copy) NSArray<NSString *> *favoriteApps;
 @property(nonatomic, copy) NSString *lastSplitUsed;
 @property(nonatomic) BOOL hadSplitWindow;
+@property(nonatomic, copy) NSArray<NSString *> *splitOrder;
+@property(nonatomic) BOOL resetFavoritesScroll;
 @property(nonatomic) BOOL backPending;
 - (void)clearAllHeld:(UILongPressGestureRecognizer *)gesture;
 - (void)layoutFavorites:(CGRect)frame diameter:(CGFloat)diameter active:(NSString *)active duration:(NSTimeInterval)duration;
@@ -261,7 +263,10 @@ static double NFBNumber(NSString *key, double fallback) {
     NSMutableOrderedSet *selected = [NSMutableOrderedSet orderedSet];
     if ([favorites isKindOfClass:NSArray.class]) for (id app in favorites)
         if ([app isKindOfClass:NSString.class] && [app length]) [selected addObject:app];
-    self.favoriteApps = selected.array;
+    NSMutableOrderedSet *favoriteOrder = [NSMutableOrderedSet orderedSet];
+    for (NSString *app in self.favoriteApps) if ([selected containsObject:app]) [favoriteOrder addObject:app];
+    [favoriteOrder addObjectsFromArray:selected.array];
+    self.favoriteApps = favoriteOrder.array;
     if (!self.enabled) {
         NFBUpdateDesktopFreeze(NO, 0);
         NFBSetCaptureHidden(self.window.rootViewController.view, NO);
@@ -351,10 +356,12 @@ static double NFBNumber(NSString *key, double fallback) {
     }
     if (!target.length) return;
     self.backPending = YES;
-    NFBRequestAppBack(target, ^(NSInteger result, __unused NSInteger reason) {
+    NFBRequestAppBack(target, ^(NSInteger result, NSInteger reason) {
         self.backPending = NO;
         if (result < 0) [self showOpenNotice:@"返回组件未响应，请重新打开此 App 并确认已允许插件注入"];
-        // Root pages and unsupported custom navigation are deliberate no-ops.
+        if (result == 0 && reason == NFBBackStatusNoBackAction)
+            [self showOpenNotice:@"当前系统的模拟滑动接口不可用"];
+        // Homepage swipes are intentional; the App decides what the gesture does.
     });
 }
 - (void)clearAllHeld:(UILongPressGestureRecognizer *)gesture {
@@ -745,6 +752,17 @@ static double NFBNumber(NSString *key, double fallback) {
     // One bottom-first order in both modes: read rail, then external unread row.
     // Split mode simply reunites those groups inside its larger viewport.
     NSArray<NSString *> *sharedOrder = [readApps arrayByAddingObjectsFromArray:groups[1]];
+    BOOL resetMainScroll = NO;
+    if (!edgeMode) {
+        NSMutableOrderedSet *stable = [NSMutableOrderedSet orderedSet];
+        for (NSString *app in self.splitOrder) if ([sharedOrder containsObject:app]) [stable addObject:app];
+        [stable addObjectsFromArray:sharedOrder];
+        sharedOrder = NFBPromoteBeyondFour(stable.array, floatingApp, &resetMainScroll);
+        self.splitOrder = sharedOrder;
+        BOOL resetFavorites = NO;
+        self.favoriteApps = NFBPromoteBeyondFour(self.favoriteApps, floatingApp, &resetFavorites);
+        if (resetFavorites) self.resetFavoritesScroll = YES;
+    } else self.splitOrder = nil;
     NSArray<NSString *> *railApps = edgeMode ? readApps : sharedOrder;
     BOOL edgeReadChanged = ![self.lastEdgeReadApps isEqualToArray:readApps];
     self.lastEdgeReadApps = [readApps copy];
@@ -917,10 +935,11 @@ static double NFBNumber(NSString *key, double fallback) {
     }
     self.rail.contentSize = CGSizeMake(railWidth, contentHeight);
     CGFloat maxOffset = MAX(0, self.rail.contentSize.height - height);
-    if (attachmentChanged && !self.rail.dragging && !self.rail.decelerating) {
+    if (resetMainScroll) { self.rail.scrollEnabled = NO; self.rail.scrollEnabled = YES; }
+    if ((attachmentChanged || resetMainScroll) && !self.rail.dragging && !self.rail.decelerating) {
         [UIView animateWithDuration:layoutDuration delay:0
             options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseOut
-            animations:^{ self.rail.contentOffset = CGPointMake(0, MAX(0, MIN(maxOffset, maxOffset - oldBottomOffset))); } completion:nil];
+            animations:^{ self.rail.contentOffset = CGPointMake(0, resetMainScroll ? maxOffset : MAX(0, MIN(maxOffset, maxOffset - oldBottomOffset))); } completion:nil];
     }
     else if (!self.rail.dragging && !self.rail.decelerating) {
         if (edgeMode && edgeReadChanged) self.rail.contentOffset = CGPointMake(0, maxOffset);
@@ -1086,7 +1105,14 @@ static double NFBNumber(NSString *key, double fallback) {
     CGFloat content = self.favoriteApps.count ? (self.favoriteApps.count - 1) * step + side : 0;
     self.favoritesRail.contentSize = CGSizeMake(side, content);
     self.favoritesRail.alwaysBounceVertical = content > frame.size.height;
-    if (!self.favoritesRail.dragging && !self.favoritesRail.decelerating && visible)
+    if (self.resetFavoritesScroll && visible) {
+        self.favoritesRail.scrollEnabled = NO; self.favoritesRail.scrollEnabled = YES;
+        [UIView animateWithDuration:duration delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{
+            self.favoritesRail.contentOffset = CGPointZero;
+        } completion:nil];
+        self.resetFavoritesScroll = NO;
+    }
+    else if (!self.favoritesRail.dragging && !self.favoritesRail.decelerating && visible)
         self.favoritesRail.contentOffset = CGPointMake(0, MIN(self.favoritesRail.contentOffset.y, MAX(0, content - frame.size.height)));
     [self.favoriteApps enumerateObjectsUsingBlock:^(NSString *app, NSUInteger index, __unused BOOL *stop) {
         NFBBubble *button = self.favoriteButtons[app];

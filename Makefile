@@ -14,7 +14,7 @@ NotifyBubbles_LIBRARIES = substrate
 
 NotifyBubblesBack_FILES = Sources/NFBAppBack.m
 NotifyBubblesBack_CFLAGS = -fobjc-arc -Wall -Wextra
-NotifyBubblesBack_FRAMEWORKS = UIKit Foundation WebKit
+NotifyBubblesBack_FRAMEWORKS = UIKit Foundation QuartzCore
 
 include $(THEOS_MAKE_PATH)/tweak.mk
 

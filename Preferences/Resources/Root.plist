@@ -10,9 +10,9 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
-			<string>通知悬浮气泡 · 0.48.7</string>
+			<string>通知悬浮气泡 · 0.48.8</string>
 			<key>footerText</key>
-			<string>分屏内切换仅高亮，不调整顺序；退出分屏后最近使用的 App 排到边缘第一位。返回箭头单击返回上一页，首页无动作；长按清理后台。</string>
+			<string>分屏两个容器中，当前 App 在前 4 个时仅高亮；在第 5 个以后时移到第一位并滚回前 4 个。返回箭头单击模拟 App 左边缘右划，首页也会执行；长按清理后台。</string>
 		</dict>
 		<dict>
 			<key>cell</key>
