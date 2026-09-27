@@ -10,9 +10,9 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
-			<string>通知悬浮气泡 · 测试版 0.46.0</string>
+			<string>通知悬浮气泡 · 0.48.5</string>
 			<key>footerText</key>
-			<string>收到未读消息时图标伸出并停留约 1 秒后收回。只要有 App 处于 TrollOpen 分屏，整排气泡都保持伸出、不再收回；键盘弹出时气泡若处于伸出状态则自动缩回让位，键盘收起后重新弹出。点击执行通知或 App 打开动作；若该 App 没有未读通知且正占据 TrollOpen 分屏浮窗，则单击将该分屏窗口放大到全屏。长按：分屏浮窗对应的图标长按无任何动作；其余图标长按后气泡破裂消失，同时该 App 退出后台（进程终止）。双击不绑定任何操作。</string>
+			<string>单击打开通知或 App；边缘缩回时长按可拖动位置，展开后及分屏图标长按清除。分屏切换保持原顺序，仅高亮当前 App。</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -154,9 +154,41 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
-			<string>收纳规则</string>
+			<string>排列规则</string>
 			<key>footerText</key>
-			<string>最近使用的两个 App 和未读气泡保留在外。展开收纳后，5 秒无操作自动收起。横屏分屏不吸附，清理按钮在图标栏最上方。</string>
+			<string>边缘容器显示 3 个图标，未读图标在外；分屏容器显示 7 个，均可上下滚动。横屏和小窗不吸附；伸出停留 1 秒。</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>分屏与截屏</string>
+			<key>footerText</key>
+			<string>冻屏只在分屏背景为桌面时禁止桌面触摸并添加轻微模糊，背景为全屏 App 时不限制。截屏隐藏所有气泡、未读角标、容器及清理按钮，不隐藏分屏 App；系统机制也可能隐藏录屏中的气泡。两个开关默认关闭。</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>label</key>
+			<string>分屏时冻结桌面</string>
+			<key>key</key>
+			<string>FreezeDesktop</string>
+			<key>default</key>
+			<false/>
+			<key>defaults</key>
+			<string>local.notifybubbles</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>label</key>
+			<string>截屏隐藏气泡</string>
+			<key>key</key>
+			<string>HideInScreenshots</string>
+			<key>default</key>
+			<false/>
+			<key>defaults</key>
+			<string>local.notifybubbles</string>
 		</dict>
 	</array>
 </dict>

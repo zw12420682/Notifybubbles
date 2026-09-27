@@ -12,6 +12,7 @@
 #import "NFBDebugLog.h"
 #import "NFBEdgeInspection.h"
 #import "NFBEdgeLayout.h"
+#import "NFBPrivacy.h"
 
 static const NSTimeInterval NFBMotion = 0.6;
 // How long a bubble stays expanded after an unread arrives.
@@ -184,6 +185,7 @@ static double NFBNumber(NSString *key, double fallback) {
 // the split view). Kept full opacity for the shake's duration.
 @property(nonatomic, strong) NSMutableSet<NSString *> *shakingApps;
 - (void)refresh;
+- (void)updatePrivacy;
 - (void)beginRetracting:(NSString *)app;
 - (void)syncFloatingWatch:(NSString *)floating;
 - (void)floatingWatchFired;
@@ -244,6 +246,8 @@ static double NFBNumber(NSString *key, double fallback) {
     self.showHome = NFBPreference(@"ShowOnHome", YES);
     self.showApps = NFBPreference(@"ShowInApps", YES);
     if (!self.enabled) {
+        NFBUpdateDesktopFreeze(NO);
+        NFBSetCaptureHidden(self.window.rootViewController.view, NO);
         [self.timer invalidate]; self.timer = nil; [self clear];
     } else { [self startTimer]; [self tick]; }
 }
@@ -417,6 +421,7 @@ static double NFBNumber(NSString *key, double fallback) {
     [NSRunLoop.mainRunLoop addTimer:self.floatingWatch forMode:NSRunLoopCommonModes];
 }
 - (void)floatingWatchFired {
+    [self updatePrivacy];
     NSString *now = NFBSplitAttachmentApp();
     NSString *currentApp = NFBTrollVisibleApp();
     // Orientation can change while app identity and window frame stay the same.
@@ -589,8 +594,17 @@ static double NFBNumber(NSString *key, double fallback) {
     }
     button.imageView.image = [image isKindOfClass:UIImage.class] ? image : [UIImage systemImageNamed:@"bell.fill"];
 }
+- (void)updatePrivacy {
+    id desktopSB = UIApplication.sharedApplication;
+    BOOL desktopVisible = [desktopSB respondsToSelector:@selector(isShowingHomescreen)] && [desktopSB isShowingHomescreen];
+    BOOL splitVisible = NFBTrollVisibleApp().length > 0 || NFBSplitAttachmentApp().length > 0;
+    NFBUpdateDesktopFreeze(self.enabled && NFBPreference(@"FreezeDesktop", NO) &&
+        desktopVisible && ![self isLocked] && splitVisible);
+    NFBSetCaptureHidden(self.window.rootViewController.view, self.enabled && NFBPreference(@"HideInScreenshots", NO));
+}
 - (void)refresh {
     NSAssert(NSThread.isMainThread, @"UI must be on main thread");
+    [self updatePrivacy];
     // A dismissed app (long-press exit or one-click clear) is only marked
     // "dismissed" so its bubble doesn't instantly reappear while the process is
     // still being torn down — iOS keeps a stale switcher card for a killed app,
@@ -664,7 +678,7 @@ static double NFBNumber(NSString *key, double fallback) {
         if (![self.lastActiveApp isEqual:active]) [self.store promoteApp:active];
     }
     if (!self.recentUsedApps) self.recentUsedApps = [NSMutableArray array];
-    if (!layoutModeChanged && active.length && ![self.lastActiveApp isEqual:active]) {
+    if (!layoutModeChanged && !floatingApp.length && active.length && ![self.lastActiveApp isEqual:active]) {
         [self.recentUsedApps removeObject:active];
         [self.recentUsedApps insertObject:active atIndex:0];
 
@@ -716,6 +730,7 @@ static double NFBNumber(NSString *key, double fallback) {
     }
     if (![self shouldShow]) { self.window.hidden = YES; return; }
     [self ensureWindow];
+    NFBSetCaptureHidden(self.window.rootViewController.view, NFBPreference(@"HideInScreenshots", NO));
     self.window.hidden = NO;
     for (NSString *app in [self.needsReveal copy]) {
         // An open keyboard outranks even a fresh notification: leave the reveal
