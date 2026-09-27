@@ -13,6 +13,8 @@
 #import "NFBEdgeInspection.h"
 #import "NFBEdgeLayout.h"
 #import "NFBPrivacy.h"
+#import "NFBBackRequest.h"
+#import "NFBContainerLayout.h"
 
 static const NSTimeInterval NFBMotion = 0.6;
 // How long a bubble stays expanded after an unread arrives.
@@ -120,6 +122,16 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, strong) NFBWindow *window;
 @property(nonatomic, strong) NFBRail *rail;
 @property(nonatomic, strong) NFBRail *unreadRail;
+@property(nonatomic, strong) NFBRail *favoritesRail;
+@property(nonatomic, strong) UIVisualEffectView *favoritesMaterial;
+@property(nonatomic, strong) NSMutableDictionary<NSString *, NFBBubble *> *favoriteButtons;
+@property(nonatomic, copy) NSArray<NSString *> *favoriteApps;
+@property(nonatomic, copy) NSString *lastSplitUsed;
+@property(nonatomic) BOOL hadSplitWindow;
+@property(nonatomic) BOOL backPending;
+- (void)clearAllHeld:(UILongPressGestureRecognizer *)gesture;
+- (void)layoutFavorites:(CGRect)frame diameter:(CGFloat)diameter active:(NSString *)active duration:(NSTimeInterval)duration;
+
 @property(nonatomic) NSTimeInterval edgeUntil;
 @property(nonatomic) BOOL edgeMode;
 @property(nonatomic, strong) UITapGestureRecognizer *edgeTap;
@@ -245,6 +257,11 @@ static double NFBNumber(NSString *key, double fallback) {
     self.showLock = NFBPreference(@"ShowOnLock", YES);
     self.showHome = NFBPreference(@"ShowOnHome", YES);
     self.showApps = NFBPreference(@"ShowInApps", YES);
+    id favorites = CFBridgingRelease(CFPreferencesCopyAppValue(CFSTR("FavoriteApps"), NFBDomain));
+    NSMutableOrderedSet *selected = [NSMutableOrderedSet orderedSet];
+    if ([favorites isKindOfClass:NSArray.class]) for (id app in favorites)
+        if ([app isKindOfClass:NSString.class] && [app length]) [selected addObject:app];
+    self.favoriteApps = selected.array;
     if (!self.enabled) {
         NFBUpdateDesktopFreeze(NO, 0);
         NFBSetCaptureHidden(self.window.rootViewController.view, NO);
@@ -302,9 +319,13 @@ static double NFBNumber(NSString *key, double fallback) {
 // whole background at once.
 - (void)clearBackground {
     NSString *floating = NFBTrollVisibleApp();
+    id sb = UIApplication.sharedApplication;
+    NSString *front = nil;
+    if ([sb respondsToSelector:@selector(isShowingHomescreen)] && ![sb isShowingHomescreen])
+        front = NFBString(NFBGet(NFBGet(sb, @"_accessibilityFrontMostApplication"), @"bundleIdentifier"));
     NSMutableArray<NSString *> *targets = [NSMutableArray array];
     for (NSString *app in [self orderedAppsForRemoval]) {
-        if ([app isEqualToString:floating]) continue;
+        if ([app isEqualToString:floating] || [app isEqualToString:front]) continue;
         [targets addObject:app];
     }
     if (!targets.count) return;
@@ -320,22 +341,36 @@ static double NFBNumber(NSString *key, double fallback) {
     }];
 }
 - (void)clearAllTapped:(UITapGestureRecognizer *)gesture {
-    if (gesture.state != UIGestureRecognizerStateEnded) return;
-    NFBBubble *button = (NFBBubble *)gesture.view;
-    if (self.buttons[button.appID] != button) return;
-    if (![self acceptGesture]) return;
+    if (gesture.state != UIGestureRecognizerStateEnded || self.backPending || [self isLocked] || ![self acceptGesture]) return;
+    NSString *target = NFBTrollVisibleApp();
+    if (!target.length) target = NFBSplitAttachmentApp();
+    if (!target.length) {
+        id sb = UIApplication.sharedApplication;
+        if (![sb respondsToSelector:@selector(isShowingHomescreen)] || [sb isShowingHomescreen]) return;
+        target = NFBString(NFBGet(NFBGet(sb, @"_accessibilityFrontMostApplication"), @"bundleIdentifier"));
+    }
+    if (!target.length) return;
+    self.backPending = YES;
+    NFBRequestAppBack(target, ^(NSInteger result, __unused NSInteger reason) {
+        self.backPending = NO;
+        if (result < 0) [self showOpenNotice:@"返回组件未响应，请重新打开此 App 并确认已允许插件注入"];
+        // Root pages and unsupported custom navigation are deliberate no-ops.
+    });
+}
+- (void)clearAllHeld:(UILongPressGestureRecognizer *)gesture {
+    if (gesture.state != UIGestureRecognizerStateBegan || [self isLocked] || ![self acceptGesture]) return;
     [self clearBackground];
 }
-// Give the clear-all bubble a distinct look: a red-tinted trash glyph, no badge,
+// Combined Back/clear action: a blue return glyph, no badge,
 // and an accessibility label so VoiceOver reads it as an action, not an app.
 - (void)styleClearAllButton:(NFBBubble *)button {
     button.badge.hidden = YES;
     button.imageView.contentMode = UIViewContentModeCenter;
-    button.imageView.image = [UIImage systemImageNamed:@"trash.fill"];
-    button.imageView.tintColor = UIColor.systemRedColor;
+    button.imageView.image = [UIImage systemImageNamed:@"arrow.uturn.backward"];
+    button.imageView.tintColor = UIColor.systemBlueColor;
     button.imageView.backgroundColor = UIColor.secondarySystemBackgroundColor;
-    button.accessibilityLabel = @"一键清理后台";
-    button.accessibilityHint = @"点击终止所有后台应用";
+    button.accessibilityLabel = @"返回 / 清理后台";
+    button.accessibilityHint = @"单击返回上一页，长按清理后台";
 }
 // Reminder for a fresh notification while an app sits in the split view: a
 // 2-second decaying horizontal shake plus a temporary full-opacity highlight,
@@ -680,7 +715,21 @@ static double NFBNumber(NSString *key, double fallback) {
         if (![self.lastActiveApp isEqual:active]) [self.store promoteApp:active];
     }
     if (!self.recentUsedApps) self.recentUsedApps = [NSMutableArray array];
-    if (!layoutModeChanged && !floatingApp.length && active.length && ![self.lastActiveApp isEqual:active]) {
+    NSString *usedSplit = NFBTrollVisibleApp();
+    if (usedSplit.length) self.lastSplitUsed = usedSplit;
+    else if (floatingApp.length) self.lastSplitUsed = floatingApp;
+    BOOL endedSplit = self.hadSplitWindow && !floatingApp.length && !usedSplit.length;
+    if (endedSplit && self.lastSplitUsed.length) {
+        NSString *used = self.lastSplitUsed;
+        if ([apps containsObject:used]) {
+            [self.recentUsedApps removeObject:used];
+            [self.recentUsedApps insertObject:used atIndex:0];
+            [self.store promoteApp:used];
+        }
+        self.lastSplitUsed = nil;
+    }
+    self.hadSplitWindow = floatingApp.length > 0 || usedSplit.length > 0;
+    if (!endedSplit && !layoutModeChanged && !floatingApp.length && active.length && ![self.lastActiveApp isEqual:active]) {
         [self.recentUsedApps removeObject:active];
         [self.recentUsedApps insertObject:active atIndex:0];
 
@@ -701,7 +750,7 @@ static double NFBNumber(NSString *key, double fallback) {
     self.lastEdgeReadApps = [readApps copy];
     NSMutableArray<NSString *> *displayApps = [railApps mutableCopy];
     if (edgeMode) [displayApps addObjectsFromArray:unreadApps];
-    else [displayApps addObject:NFBClearAllID];
+    [displayApps addObject:NFBClearAllID];
     NSUInteger storedCount = 0;
     self.storedApps = @[];
     BOOL orderChanged = ![self.lastLayoutApps isEqualToArray:displayApps];
@@ -723,7 +772,7 @@ static double NFBNumber(NSString *key, double fallback) {
             button.alpha = 0; button.transform = CGAffineTransformMakeTranslation(self.iconSize + 20, 0);
         } completion:^(__unused BOOL done) { [button removeFromSuperview]; }];
     }
-    if (!apps.count || !self.enabled) {
+    if (!self.enabled) {
         // Delay hiding until the removal animation completes; recheck new arrivals.
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.65 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             if (!self.enabled || !self.buttons.count) self.window.hidden = YES;
@@ -795,25 +844,26 @@ static double NFBNumber(NSString *key, double fallback) {
         railFrame = CGRectMake(x, y, railWidth, height);
     }
     CGFloat clearCenterY = railFrame.origin.y - 8 - side / 2;
+    CGRect favoritesFrame = CGRectZero;
     if (containerMode) {
         CGFloat ceiling = MAX(safe.top, 12);
         CGFloat floor = keyboardUp ? NFBKeyboardTopInView(root) - 12 - step : CGRectGetHeight(bounds) - MAX(safe.bottom, 12);
-        // Move the clear action and rail together by 10% of screen height.
-        // The floor below still reserves keyboard/input space.
         CGFloat desiredTop = (attached ? CGRectGetMinY(splitFrame) : railFrame.origin.y) + CGRectGetHeight(bounds) * 0.10;
-        CGFloat clearTop = MAX(ceiling, MIN(desiredTop, floor - diameter - 9));
-        clearCenterY = clearTop + diameter / 2;
-        CGFloat y = clearTop + diameter + 9;
-        CGFloat availableHeight = MAX(0, floor - y);
-        height = MIN(MIN(6 * step + side, contentHeight), availableHeight);
-        railFrame = CGRectMake(railFrame.origin.x, y, railWidth, height);
+        CGFloat y = MAX(ceiling, MIN(desiredTop, floor - side - 9));
+        CGFloat room = MAX(0, floor - y - side - 9);
+        NFBContainerHeights fit = NFBFitContainers(room, side, step, self.favoriteApps.count, rowCount);
+        CGFloat favoriteHeight = fit.favorites, gap = fit.gap;
+        height = fit.regular;
+        favoritesFrame = CGRectMake(railFrame.origin.x, y, railWidth, favoriteHeight);
+        railFrame = CGRectMake(railFrame.origin.x, y + favoriteHeight + gap, railWidth, height);
+        clearCenterY = CGRectGetMaxY(railFrame) + 9 + side / 2;
     }
     CGRect unreadFrame = CGRectZero;
     CGFloat unreadContentHeight = unreadApps.count ? (unreadApps.count - 1) * step + side : 0;
     if (edgeMode) {
         CGFloat edgeFloor = keyboardUp ? NFBKeyboardTopInView(root) - 12 - step
             : CGRectGetHeight(bounds) - MAX(safe.bottom, 12);
-        CGFloat room = MAX(0, edgeFloor - top);
+        CGFloat room = MAX(0, edgeFloor - top - side - 9);
         height = MIN(MIN(2 * step + side, contentHeight), room);
         // Reserve a separate transparent strip for unread apps above the container.
         CGFloat gap = rowCount && unreadApps.count ? 9 : 0;
@@ -824,16 +874,18 @@ static double NFBNumber(NSString *key, double fallback) {
             height = MIN(height, MAX(0, room - unreadHeight - gap));
         }
         CGFloat total = height + unreadHeight + gap;
-        CGFloat bottom = MAX(top + total, MIN(edgeFloor, anchor + step - side / 2 + padding));
+        CGFloat bottom = MAX(top + total, MIN(edgeFloor - side - 9, anchor + step - side / 2 + padding));
         self.edgeAvailable = available;
         self.resolvedEdgePosition = (bottom - step + side / 2 - padding - top) / MAX(1, available);
         BOOL edgeExpanded = !keyboardUp && (self.edgeUntil > CACurrentMediaTime() ||
             self.rail.dragging || self.rail.decelerating || self.draggingEdge);
         CGFloat x = CGRectGetWidth(bounds) - railWidth + (edgeExpanded ? 0 : NFBRetraction(diameter));
         railFrame = CGRectMake(x, bottom - height, railWidth, height);
+        clearCenterY = bottom + 9 + side / 2;
         unreadFrame = CGRectMake(CGRectGetWidth(bounds) - side, bottom - total,
             side + NFBRetraction(diameter), unreadHeight);
     }
+    [self layoutFavorites:favoritesFrame diameter:diameter active:floatingApp duration:layoutDuration];
     self.unreadRail.hidden = !edgeMode || !unreadApps.count;
     [UIView animateWithDuration:layoutDuration delay:0
         options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseInOut
@@ -899,6 +951,10 @@ static double NFBNumber(NSString *key, double fallback) {
             } else if (isClearAll) {
                 UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(clearAllTapped:)];
                 tap.numberOfTapsRequired = 1;
+                UILongPressGestureRecognizer *hold = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(clearAllHeld:)];
+                hold.minimumPressDuration = 0.5;
+                [tap requireGestureRecognizerToFail:hold];
+                [button addGestureRecognizer:hold];
                 [button addGestureRecognizer:tap];
             } else {
                 UITapGestureRecognizer *singleTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(singleTapped:)];
@@ -995,6 +1051,63 @@ static double NFBNumber(NSString *key, double fallback) {
                     button.alpha = alpha;
                 } completion:nil];
         }
+    }];
+}
+- (void)layoutFavorites:(CGRect)frame diameter:(CGFloat)diameter active:(NSString *)active duration:(NSTimeInterval)duration {
+    UIView *root = self.window.rootViewController.view;
+    if (!self.favoritesRail) {
+        self.favoriteButtons = [NSMutableDictionary dictionary];
+        self.favoritesRail = [NFBRail new];
+        self.favoritesRail.containerMode = YES;
+        self.favoritesRail.clipsToBounds = YES;
+        self.favoritesRail.showsVerticalScrollIndicator = NO;
+        self.favoritesRail.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
+        self.favoritesMaterial = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterial]];
+        self.favoritesMaterial.userInteractionEnabled = NO;
+        self.favoritesMaterial.clipsToBounds = YES;
+        [root addSubview:self.favoritesMaterial];
+        [root addSubview:self.favoritesRail];
+    }
+    BOOL visible = !self.edgeMode && self.favoriteApps.count && frame.size.height > 0;
+    self.favoritesRail.userInteractionEnabled = visible;
+    CGFloat side = diameter + 14, step = diameter + 9;
+    BOOL wasHidden = self.favoritesRail.alpha < 0.01;
+    if (wasHidden && visible) { self.favoritesRail.frame = frame; self.favoritesMaterial.frame = frame; }
+    [UIView animateWithDuration:duration delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{
+        if (visible) { self.favoritesRail.frame = frame; self.favoritesMaterial.frame = frame; }
+        self.favoritesRail.alpha = visible ? 1 : 0;
+        self.favoritesMaterial.alpha = visible ? 0.55 : 0;
+        self.favoritesRail.layer.cornerRadius = MIN(14, side / 4);
+        self.favoritesMaterial.layer.cornerRadius = MIN(14, side / 4);
+    } completion:nil];
+    for (NSString *app in self.favoriteButtons.allKeys) if (![self.favoriteApps containsObject:app]) {
+        [self.favoriteButtons[app] removeFromSuperview]; [self.favoriteButtons removeObjectForKey:app];
+    }
+    CGFloat content = self.favoriteApps.count ? (self.favoriteApps.count - 1) * step + side : 0;
+    self.favoritesRail.contentSize = CGSizeMake(side, content);
+    self.favoritesRail.alwaysBounceVertical = content > frame.size.height;
+    if (!self.favoritesRail.dragging && !self.favoritesRail.decelerating && visible)
+        self.favoritesRail.contentOffset = CGPointMake(0, MIN(self.favoritesRail.contentOffset.y, MAX(0, content - frame.size.height)));
+    [self.favoriteApps enumerateObjectsUsingBlock:^(NSString *app, NSUInteger index, __unused BOOL *stop) {
+        NFBBubble *button = self.favoriteButtons[app];
+        if (!button) {
+            button = [[NFBBubble alloc] initWithFrame:CGRectMake(0, 0, side, side)]; button.appID = app;
+            [button addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(singleTapped:)]];
+            self.favoriteButtons[app] = button; [self.favoritesRail addSubview:button];
+        }
+        [self updateBubble:button record:[self.store latestForApp:app]];
+        CGFloat badgeHeight = MIN(16, diameter * 0.5);
+        button.badge.frame = CGRectMake(7, 7, MIN(diameter, 24), badgeHeight);
+        button.badge.layer.cornerRadius = badgeHeight / 2;
+        button.badge.font = [UIFont boldSystemFontOfSize:MIN(11, badgeHeight * 0.7)];
+        button.badge.adjustsFontSizeToFitWidth = YES; button.badge.minimumScaleFactor = 0.65;
+        [UIView animateWithDuration:duration delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{
+            button.bounds = CGRectMake(0, 0, side, side);
+            button.center = CGPointMake(side / 2, side / 2 + index * step);
+            button.imageView.frame = CGRectMake(7, 7, diameter, diameter);
+            button.imageView.layer.cornerRadius = diameter * 0.23;
+            button.alpha = [app isEqual:active] ? 1 : self.iconOpacity;
+        } completion:nil];
     }];
 }
 // One action per gesture. Without this, a bounce in the finger or a leftover
@@ -1264,7 +1377,7 @@ static double NFBNumber(NSString *key, double fallback) {
     [self tapped:button];
 }
 - (void)tapped:(NFBBubble *)button {
-    if (button.opening || self.buttons[button.appID] != button) return;
+    if (button.opening || (self.buttons[button.appID] != button && self.favoriteButtons[button.appID] != button)) return;
     if (self.pendingRecord && [self.pendingRecord.appID isEqual:button.appID]) return;
     if (![self acceptGesture]) return;
     button.opening = YES;

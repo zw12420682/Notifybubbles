@@ -37,12 +37,11 @@ assert 'Sources/NFBSwitcher.m' in (root / 'Makefile').read_text(), 'Update the r
 assert 'Sources/NFBKeyboard.m' in (root / 'Makefile').read_text(), 'Update the root Makefile for the keyboard watcher.'
 assert 'Sources/NFBTrollOpen.m' in (root / 'Makefile').read_text(), 'Update the root Makefile for TrollOpen integration.'
 assert 'Sources/NFBAppExit.m' in (root / 'Makefile').read_text(), 'Update the root Makefile for the exit helper.'
-# The app-side back helper is retired: it filtered on com.apple.UIKit, so it was
-# loaded into every app, and no gesture drives it any more.
-assert 'NotifyBubblesBack_FILES' not in (root / 'Makefile').read_text(), \
-    'NotifyBubblesBack is retired; do not build it into every app again.'
-assert 'TWEAK_NAME = NotifyBubbles\n' in (root / 'Makefile').read_text(), \
-    'Build only the SpringBoard component; app-side helpers stay retired.'
+assert 'NotifyBubblesBack_FILES = Sources/NFBAppBack.m' in (root / 'Makefile').read_text()
+assert 'TWEAK_NAME = NotifyBubbles NotifyBubblesBack' in (root / 'Makefile').read_text()
+back_filter = plistlib.loads((root / 'NotifyBubblesBack.plist').read_bytes())
+assert back_filter['Filter']['Bundles'] == ['com.apple.UIKit']
+assert 'Sources/NFBBackRequest.m' in (root / 'Makefile').read_text()
 prefs = plistlib.loads((root / 'Preferences/Resources/Root.plist').read_bytes())
 assert {x['key'] for x in prefs['items'] if 'key' in x} == {'Enabled','ShowOnLock','ShowOnHome','ShowInApps','IconSize','IconOpacity','ClosePreviousSplit','FreezeDesktop','HideInScreenshots','DesktopBlurTransparency'}
 filter_ = plistlib.loads((root / 'NotifyBubbles.plist').read_bytes())

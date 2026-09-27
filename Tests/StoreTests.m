@@ -1,3 +1,4 @@
+#import "NFBContainerLayout.h"
 #import "NFBEdgeLayout.h"
 #import "NFBSplitClosePolicy.h"
 #import "NFBStorageLayout.h"
@@ -98,6 +99,17 @@ int main(void) {
         Check(!NFBShouldClosePreviousSplit(0, 1, 1, 1), @"Mini transition survives app switch");
         Check(!NFBShouldClosePreviousSplit(0, 0, 3, 1) && !NFBShouldClosePreviousSplit(0, 0, 1, 4), @"Landscape scene or container survives");
         Check(!NFBShouldClosePreviousSplit(-1, 0, 1, 1) && !NFBShouldClosePreviousSplit(0, -1, 1, 1) && !NFBShouldClosePreviousSplit(0, 0, 0, 1), @"Unknown state is preserved");
+        NFBContainerHeights fit = NFBFitContainers(1000, 62, 57, 8, 12);
+        Check(fit.favorites == 233 && fit.regular == 233 && fit.gap == 9, @"Both containers show at most four full icons");
+        fit = NFBFitContainers(160, 62, 57, 0, 12);
+        Check(fit.favorites == 0 && fit.gap == 0 && fit.regular == 160, @"No favorites leaves all room for regular icons");
+        fit = NFBFitContainers(300, 62, 57, 1, 12);
+        Check(fit.favorites == 62 && fit.regular == 229, @"Short favorites list gives remaining room to main rail");
+        for (NSUInteger count = 0; count < 12; count++) for (int room = 0; room < 600; room += 13) {
+            fit = NFBFitContainers(room, 62, 57, count, 12);
+            Check(fit.favorites >= 0 && fit.regular >= 0 && fit.favorites + fit.regular + fit.gap <= room + 0.001,
+                @"Keyboard-constrained rails never exceed available height");
+        }
         NSLog(@"PASS: queue chronology, per-app isolation, deduplication, consumption, switcher pins and geometry");
     }
     return 0;

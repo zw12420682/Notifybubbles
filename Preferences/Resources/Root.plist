@@ -10,9 +10,9 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
-			<string>通知悬浮气泡 · 0.48.6</string>
+			<string>通知悬浮气泡 · 0.48.7</string>
 			<key>footerText</key>
-			<string>单击打开通知或 App；边缘缩回时长按可拖动位置，展开后及分屏图标长按清除。分屏切换保持原顺序，仅高亮当前 App。</string>
+			<string>分屏内切换仅高亮，不调整顺序；退出分屏后最近使用的 App 排到边缘第一位。返回箭头单击返回上一页，首页无动作；长按清理后台。</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -156,7 +156,7 @@
 			<key>label</key>
 			<string>排列规则</string>
 			<key>footerText</key>
-			<string>边缘容器显示 3 个图标，未读图标在外；分屏容器显示 7 个，均可上下滚动。横屏和小窗不吸附；伸出停留 1 秒。</string>
+			<string>边缘容器显示 3 个图标，未读在外；分屏常用 App 在上、原容器在下，各显示最多 4 个，可滚动。键盘弹出时缩短可见区域。返回按钮在容器下方。</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -207,6 +207,22 @@
 			<false/>
 			<key>defaults</key>
 			<string>local.notifybubbles</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>常用 App</string>
+			<key>footerText</key>
+			<string>在分屏上方容器显示自选 App。按选择顺序排列，可与下方容器重复。未选择时不占空间。</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>选择常用 App</string>
+			<key>action</key>
+			<string>chooseFavorites</string>
 		</dict>
 	</array>
 </dict>
