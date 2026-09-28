@@ -1,3 +1,4 @@
+#import "NFBRightEdgeAction.h"
 #import "NFBContainerLayout.h"
 #import "NFBEdgeLayout.h"
 #import "NFBSplitClosePolicy.h"
@@ -11,6 +12,20 @@
 @property(nonatomic, strong) NSDate *timestamp;
 @end
 @implementation TestRequest
+@end
+@interface TestEdgeClose : NSObject
+@property(nonatomic) NSUInteger calls;
+@property(nonatomic, strong) id received;
+- (void)TOJBMETHOD063:(id)tap;
+@end
+@implementation TestEdgeClose
+- (void)TOJBMETHOD063:(id)tap { self.calls++; self.received = tap; }
+@end
+@interface TestEdgeWrong : NSObject
+- (BOOL)TOJBMETHOD063:(id)tap;
+@end
+@implementation TestEdgeWrong
+- (BOOL)TOJBMETHOD063:(__unused id)tap { return YES; }
 @end
 static TestRequest *Request(double time) {
     TestRequest *r = [TestRequest new]; r.timestamp = [NSDate dateWithTimeIntervalSince1970:time]; return r;
@@ -111,13 +126,30 @@ int main(void) {
                 @"Keyboard-constrained rails never exceed available height");
         }
         NSArray *sixApps = @[@"a", @"b", @"c", @"d", @"e", @"f"];
-        BOOL promoted = YES;
-        Check([NFBPromoteBeyondFour(sixApps, @"d", &promoted) isEqual:sixApps] && !promoted, @"Fourth active app keeps its position");
-        NSArray *raised = NFBPromoteBeyondFour(sixApps, @"e", &promoted);
-        Check([raised isEqual:@[@"e", @"a", @"b", @"c", @"d", @"f"]] && promoted, @"Fifth app moves first, other relative order survives");
-        Check([NFBPromoteBeyondFour(raised, @"e", &promoted) isEqual:raised] && !promoted, @"Repeated refresh must not reset scroll again");
-        Check([NFBPromoteBeyondFour(sixApps, @"other", &promoted) isEqual:sixApps] && !promoted, @"Unselected app never added to favorites");
-        Check(NFBPromoteBeyondFour(@[], @"a", &promoted).count == 0 && !promoted, @"Empty favorites stay empty");
+        NSArray *four = NFBRecentFour(sixApps, sixApps, @[], @"b", @[]);
+        Check([four isEqual:@[@"a", @"b", @"c", @"d"]], @"Only four actual members, not merely four visible rows");
+        NSArray *next = NFBRecentFour(sixApps, @[@"d", @"a", @"b", @"c"], four, @"d", @[]);
+        Check([next isEqual:four], @"Active fourth does not jump to first");
+        next = NFBRecentFour(sixApps, sixApps, four, @"f", @[]);
+        Check([next isEqual:@[@"a", @"b", @"c", @"f"]], @"Missing current replaces least recent chosen member, no reordering survivors");
+        next = NFBRecentFour(sixApps, @[@"f", @"a", @"b", @"c"], next, @"f", @[]);
+        Check([next isEqual:@[@"a", @"b", @"c", @"f"]], @"Recency update and repeated refresh keep new active position");
+        next = NFBRecentFour(sixApps, sixApps, four, @"a", @[@"a", @"b"]);
+        Check([next isEqual:@[@"c", @"d", @"e", @"f"]], @"Favorites excluded before limiting and not reinserted as current");
+        Check(NFBRecentFour(@[], sixApps, four, @"a", @[]).count == 0, @"Stale history cannot recreate removed apps");
+        next = NFBRecentFour(@[@"a", @"a", @"b"], @[], @[], nil, @[]);
+        Check([next isEqual:@[@"a", @"b"]], @"No duplicate icons");
+        Check(NFBRevealOffset(0, 233, 347, 316, 62) == 114, @"Scroll down to entire current bottom icon");
+        Check(NFBRevealOffset(114, 233, 347, 31, 62) == 0, @"Scroll up to entire current top icon");
+        Check(NFBRevealOffset(57, 233, 347, 145, 62) == 57, @"Visible active icon leaves scroll alone");
+        Check(NFBRevealOffset(0, 100, 233, 202, 62) == 133, @"Keyboard-shortened viewport reveals current icon");
+        Check(NFBSplitRailTop(200, 600) == 230 && NFBSplitRailTop(100, 1000) == 150, @"Five percent uses split height, not screen height");
+        TestEdgeClose *edge = [TestEdgeClose new]; id tap = [NSObject new];
+        SEL closeTap = NSSelectorFromString(@"TOJBMETHOD063:");
+        Check(NFBDispatchRightEdgeTap(edge, closeTap, tap) && edge.calls == 1 && edge.received == tap, @"Original tap callback invoked exactly once with recognizer");
+        Check(!NFBDispatchRightEdgeTap(edge, NSSelectorFromString(@"TOJBMETHOD064:"), tap) && edge.calls == 1, @"Long-press action must not be invoked");
+        Check(!NFBDispatchRightEdgeTap([TestEdgeWrong new], closeTap, tap), @"ABI mismatch rejected");
+        Check(!NFBDispatchRightEdgeTap([NSObject new], closeTap, tap) && !NFBDispatchRightEdgeTap(edge, closeTap, nil), @"Missing callback/recognizer rejected");
         NSLog(@"PASS: queue chronology, per-app isolation, deduplication, consumption, switcher pins and geometry");
     }
     return 0;

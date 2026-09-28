@@ -125,10 +125,9 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, strong) UIVisualEffectView *favoritesMaterial;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NFBBubble *> *favoriteButtons;
 @property(nonatomic, copy) NSArray<NSString *> *favoriteApps;
-@property(nonatomic, copy) NSString *lastSplitUsed;
-@property(nonatomic) BOOL hadSplitWindow;
-@property(nonatomic, copy) NSArray<NSString *> *splitOrder;
-@property(nonatomic) BOOL resetFavoritesScroll;
+@property(nonatomic, copy) NSArray<NSString *> *backgroundOrder;
+@property(nonatomic, copy) NSString *lastRailActive;
+@property(nonatomic, copy) NSString *lastFavoritesActive;
 - (void)clearAllHeld:(UILongPressGestureRecognizer *)gesture;
 - (void)layoutFavorites:(CGRect)frame diameter:(CGFloat)diameter active:(NSString *)active duration:(NSTimeInterval)duration;
 
@@ -144,7 +143,6 @@ static double NFBNumber(NSString *key, double fallback) {
 - (void)edgeLongPressed:(UILongPressGestureRecognizer *)gesture;
 - (void)closeBubble:(NFBBubble *)button;
 - (BOOL)edgeBubbleIsRetracted:(NFBBubble *)button;
-@property(nonatomic, copy) NSArray<NSString *> *lastEdgeReadApps;
 - (void)extendEdgeContainer;
 - (void)edgeContainerTapped:(UITapGestureRecognizer *)gesture;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NFBBubble *> *buttons;
@@ -345,7 +343,7 @@ static double NFBNumber(NSString *key, double fallback) {
 }
 - (void)clearAllTapped:(UITapGestureRecognizer *)gesture {
     if (gesture.state != UIGestureRecognizerStateEnded || self.edgeMode || [self isLocked] || ![self acceptGesture]) return;
-    if (!NFBCloseCurrentSplit()) [self showOpenNotice:@"当前分屏窗口无法关闭"];
+    if (!NFBCloseCurrentSplit()) [self showOpenNotice:@"未能读取 TrollOpen 右侧区域的单击接口"];
     [self refresh];
 }
 - (void)clearAllHeld:(UILongPressGestureRecognizer *)gesture {
@@ -361,7 +359,7 @@ static double NFBNumber(NSString *key, double fallback) {
     button.imageView.tintColor = UIColor.systemBlueColor;
     button.imageView.backgroundColor = UIColor.secondarySystemBackgroundColor;
     button.accessibilityLabel = @"关闭分屏 / 清理后台";
-    button.accessibilityHint = @"单击关闭分屏并保留后台，长按清理后台";
+    button.accessibilityHint = @"单击执行 TrollOpen 右侧区域关闭，长按清理后台";
 }
 // Reminder for a fresh notification while an app sits in the split view: a
 // 2-second decaying horizontal shake plus a temporary full-opacity highlight,
@@ -673,6 +671,7 @@ static double NFBNumber(NSString *key, double fallback) {
     // must be out of the way, so it pulls them all back in no matter what. The
     // ones it pulled in are remembered and popped back out the moment typing
     // ends (split-view bubbles come back on their own via floatingApp below).
+    BOOL previousKeyboardUp = self.keyboardUp;
     BOOL keyboardUp = NFBKeyboardVisible();
     if (keyboardUp != self.keyboardUp) {
         if (keyboardUp) {
@@ -697,64 +696,27 @@ static double NFBNumber(NSString *key, double fallback) {
     id springboard = UIApplication.sharedApplication;
     BOOL home = [springboard respondsToSelector:@selector(isShowingHomescreen)] && [springboard isShowingHomescreen];
     BOOL edgeMode = !floatingApp.length;
-    BOOL layoutModeChanged = self.lastLayoutApps != nil && self.edgeMode != edgeMode;
-    NSString *active = floatingApp ?: (home ? nil : NFBString(NFBGet(NFBGet(springboard, @"_accessibilityFrontMostApplication"), @"bundleIdentifier")));
-    // The split-view app keeps its position and is highlighted by opacity instead
-    // of being pulled to the top, so only the plain frontmost app gets promoted.
-    if (!layoutModeChanged && !floatingApp.length && active.length && [apps containsObject:active]) {
-        [apps removeObject:active]; [apps insertObject:active atIndex:0];
-        if (![self.lastActiveApp isEqual:active]) [self.store promoteApp:active];
-    }
+    NSString *active = NFBTrollVisibleApp() ?: floatingApp ?: (home ? nil : NFBString(NFBGet(NFBGet(springboard, @"_accessibilityFrontMostApplication"), @"bundleIdentifier")));
+    // Recency decides membership, never a forced jump of an existing icon.
+    if (active.length && ![self.closingApps containsObject:active] && ![self.dismissedSwitcher containsObject:active] && ![apps containsObject:active])
+        [apps addObject:active];
     if (!self.recentUsedApps) self.recentUsedApps = [NSMutableArray array];
-    NSString *usedSplit = NFBTrollVisibleApp();
-    if (usedSplit.length) self.lastSplitUsed = usedSplit;
-    else if (floatingApp.length) self.lastSplitUsed = floatingApp;
-    BOOL endedSplit = self.hadSplitWindow && !floatingApp.length && !usedSplit.length;
-    if (endedSplit && self.lastSplitUsed.length) {
-        NSString *used = self.lastSplitUsed;
-        if ([apps containsObject:used]) {
-            [self.recentUsedApps removeObject:used];
-            [self.recentUsedApps insertObject:used atIndex:0];
-            [self.store promoteApp:used];
-        }
-        self.lastSplitUsed = nil;
-    }
-    self.hadSplitWindow = floatingApp.length > 0 || usedSplit.length > 0;
-    if (!endedSplit && !layoutModeChanged && !floatingApp.length && active.length && ![self.lastActiveApp isEqual:active]) {
+    if (active.length && ![self.lastActiveApp isEqual:active]) {
         [self.recentUsedApps removeObject:active];
         [self.recentUsedApps insertObject:active atIndex:0];
-
     }
     self.lastActiveApp = active;
     if (floatingApp.length) NFBInspectTrollEdges();
     self.edgeMode = edgeMode;
-    NSArray<NSArray<NSString *> *> *groups = NFBEdgeGroups(apps, self.recentUsedApps, ^NSUInteger(NSString *app) {
+    NSMutableOrderedSet *history = [NSMutableOrderedSet orderedSetWithArray:self.recentUsedApps];
+    [history addObjectsFromArray:self.lastSwitcher ?: @[]];
+    NSArray<NSArray<NSString *> *> *groups = NFBEdgeGroups(apps, history.array, ^NSUInteger(NSString *app) {
         return [self.store countForApp:app];
     });
-    NSArray<NSString *> *readApps = groups[0];
     NSArray<NSString *> *unreadApps = edgeMode ? groups[1] : @[];
-    // One bottom-first order in both modes: read rail, then external unread row.
-    // Split mode simply reunites those groups inside its larger viewport.
-    NSArray<NSString *> *sharedOrder = [readApps arrayByAddingObjectsFromArray:groups[1]];
-    if (!edgeMode) {
-        NSMutableArray *exclusive = [sharedOrder mutableCopy];
-        [exclusive removeObjectsInArray:self.favoriteApps];
-        sharedOrder = exclusive;
-    }
-    BOOL resetMainScroll = NO;
-    if (!edgeMode) {
-        NSMutableOrderedSet *stable = [NSMutableOrderedSet orderedSet];
-        for (NSString *app in self.splitOrder) if ([sharedOrder containsObject:app]) [stable addObject:app];
-        [stable addObjectsFromArray:sharedOrder];
-        sharedOrder = NFBPromoteBeyondFour(stable.array, floatingApp, &resetMainScroll);
-        self.splitOrder = sharedOrder;
-        BOOL resetFavorites = NO;
-        self.favoriteApps = NFBPromoteBeyondFour(self.favoriteApps, floatingApp, &resetFavorites);
-        if (resetFavorites) self.resetFavoritesScroll = YES;
-    } else self.splitOrder = nil;
-    NSArray<NSString *> *railApps = edgeMode ? readApps : sharedOrder;
-    BOOL edgeReadChanged = ![self.lastEdgeReadApps isEqualToArray:readApps];
-    self.lastEdgeReadApps = [readApps copy];
+    NSArray<NSString *> *railApps = NFBRecentFour(edgeMode ? groups[0] : apps,
+        history.array, self.backgroundOrder, active, edgeMode ? @[] : self.favoriteApps);
+    self.backgroundOrder = railApps;
     NSMutableArray<NSString *> *displayApps = [railApps mutableCopy];
     if (edgeMode) [displayApps addObjectsFromArray:unreadApps];
     if (!edgeMode) [displayApps addObject:NFBClearAllID];
@@ -855,7 +817,7 @@ static double NFBNumber(NSString *key, double fallback) {
     if (containerMode) {
         CGFloat ceiling = MAX(safe.top, 12);
         CGFloat floor = keyboardUp ? NFBKeyboardTopInView(root) - 12 - step : CGRectGetHeight(bounds) - MAX(safe.bottom, 12);
-        CGFloat desiredTop = (attached ? CGRectGetMinY(splitFrame) : railFrame.origin.y) + CGRectGetHeight(bounds) * 0.10;
+        CGFloat desiredTop = attached ? NFBSplitRailTop(CGRectGetMinY(splitFrame), CGRectGetHeight(splitFrame)) : railFrame.origin.y;
         CGFloat y = MAX(ceiling, MIN(desiredTop, floor - side - 9));
         CGFloat room = MAX(0, floor - y - side - 9);
         NFBContainerHeights fit = NFBFitContainers(room, side, step, self.favoriteApps.count, rowCount);
@@ -871,7 +833,7 @@ static double NFBNumber(NSString *key, double fallback) {
         CGFloat edgeFloor = keyboardUp ? NFBKeyboardTopInView(root) - 12 - step
             : CGRectGetHeight(bounds) - MAX(safe.bottom, 12);
         CGFloat room = MAX(0, edgeFloor - top);
-        height = MIN(MIN(2 * step + side, contentHeight), room);
+        height = MIN(MIN(3 * step + side, contentHeight), room);
         // Reserve a separate transparent strip for unread apps above the container.
         CGFloat gap = rowCount && unreadApps.count ? 9 : 0;
         CGFloat unreadHeight = MIN(unreadContentHeight, MAX(0, room - height - gap));
@@ -892,7 +854,7 @@ static double NFBNumber(NSString *key, double fallback) {
         unreadFrame = CGRectMake(CGRectGetWidth(bounds) - side, bottom - total,
             side + NFBRetraction(diameter), unreadHeight);
     }
-    [self layoutFavorites:favoritesFrame diameter:diameter active:floatingApp duration:layoutDuration];
+    [self layoutFavorites:favoritesFrame diameter:diameter active:active duration:layoutDuration];
     self.unreadRail.hidden = !edgeMode || !unreadApps.count;
     [UIView animateWithDuration:layoutDuration delay:0
         options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseInOut
@@ -901,9 +863,16 @@ static double NFBNumber(NSString *key, double fallback) {
     self.unreadRail.alwaysBounceVertical = unreadContentHeight > CGRectGetHeight(unreadFrame);
     if (!self.unreadRail.dragging && !self.unreadRail.decelerating) {
         CGFloat offset = MAX(0, unreadContentHeight - CGRectGetHeight(unreadFrame));
-        if (orderChanged || attachmentChanged || self.unreadRail.contentOffset.y > offset)
-            self.unreadRail.contentOffset = CGPointMake(0, offset);
+        CGFloat targetOffset = (orderChanged || attachmentChanged) ? offset : MIN(offset, self.unreadRail.contentOffset.y);
+        NSUInteger activeUnread = [unreadApps indexOfObject:active ?: @""];
+        if (activeUnread != NSNotFound && (orderChanged || attachmentChanged || ![self.lastRailActive isEqual:active] || keyboardUp != previousKeyboardUp))
+            targetOffset = NFBRevealOffset(targetOffset, CGRectGetHeight(unreadFrame), unreadContentHeight,
+                NFBRowCenter(unreadApps.count, activeUnread, step, side), side);
+        [UIView animateWithDuration:layoutDuration delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{
+            self.unreadRail.contentOffset = CGPointMake(0, targetOffset);
+        } completion:nil];
     }
+    BOOL railSizeChanged = !CGSizeEqualToSize(self.rail.bounds.size, railFrame.size);
     // Narrow only the visible edge material. Retain the padded hit/clip area
     // so icon edges, shadows and the external unread badges stay intact.
     CGRect materialFrame = edgeMode ? CGRectInset(railFrame, 5, 0) : railFrame;
@@ -924,19 +893,17 @@ static double NFBNumber(NSString *key, double fallback) {
     }
     self.rail.contentSize = CGSizeMake(railWidth, contentHeight);
     CGFloat maxOffset = MAX(0, self.rail.contentSize.height - height);
-    if (resetMainScroll) { self.rail.scrollEnabled = NO; self.rail.scrollEnabled = YES; }
-    if ((attachmentChanged || resetMainScroll) && !self.rail.dragging && !self.rail.decelerating) {
+    if (!self.rail.dragging && !self.rail.decelerating) {
+        CGFloat offset = attachmentChanged ? maxOffset - oldBottomOffset : self.rail.contentOffset.y;
+        offset = MAX(0, MIN(maxOffset, offset));
+        NSUInteger activeIndex = [railApps indexOfObject:active ?: @""];
+        if (activeIndex != NSNotFound && (attachmentChanged || orderChanged ||
+                ![self.lastRailActive isEqual:active] || keyboardUp != previousKeyboardUp || railSizeChanged))
+            offset = NFBRevealOffset(offset, height, contentHeight, NFBRowCenter(rowCount, activeIndex, step, side), side);
+        self.lastRailActive = active;
         [UIView animateWithDuration:layoutDuration delay:0
             options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseOut
-            animations:^{ self.rail.contentOffset = CGPointMake(0, resetMainScroll ? maxOffset : MAX(0, MIN(maxOffset, maxOffset - oldBottomOffset))); } completion:nil];
-    }
-    else if (!self.rail.dragging && !self.rail.decelerating) {
-        if (edgeMode && edgeReadChanged) self.rail.contentOffset = CGPointMake(0, maxOffset);
-        else if (self.rail.contentOffset.y > maxOffset) {
-            [UIView animateWithDuration:layoutDuration delay:0
-                options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseOut
-                animations:^{ self.rail.contentOffset = CGPointMake(0, maxOffset); } completion:nil];
-        }
+            animations:^{ self.rail.contentOffset = CGPointMake(0, offset); } completion:nil];
     }
     [displayApps enumerateObjectsUsingBlock:^(NSString *appID, __unused NSUInteger index, __unused BOOL *stop) {
         BOOL isClearAll = [appID isEqualToString:NFBClearAllID];
@@ -1035,7 +1002,7 @@ static double NFBNumber(NSString *key, double fallback) {
         CGFloat alpha = self.iconOpacity;
         if (isClearAll) {
             alpha = 1.0;
-        } else if ([floatingApp isEqualToString:appID]) {
+        } else if ([active isEqualToString:appID]) {
             alpha = 1.0;
         }
         // A bubble mid-shake (fresh notification during split view) stays fully
@@ -1080,7 +1047,8 @@ static double NFBNumber(NSString *key, double fallback) {
     self.favoritesRail.userInteractionEnabled = visible;
     CGFloat side = diameter + 14, step = diameter + 9;
     CGFloat oldBottomDistance = MAX(0, self.favoritesRail.contentSize.height - self.favoritesRail.bounds.size.height - self.favoritesRail.contentOffset.y);
-    BOOL wasHidden = self.favoritesRail.alpha < 0.01;
+    BOOL wasHidden = self.favoritesRail.alpha < 0.01 || CGRectIsEmpty(self.favoritesRail.frame);
+    BOOL resized = !CGSizeEqualToSize(self.favoritesRail.bounds.size, frame.size);
     if (wasHidden && visible) { self.favoritesRail.frame = frame; self.favoritesMaterial.frame = frame; }
     [UIView animateWithDuration:duration delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{
         if (visible) { self.favoritesRail.frame = frame; self.favoritesMaterial.frame = frame; }
@@ -1096,15 +1064,17 @@ static double NFBNumber(NSString *key, double fallback) {
     CGFloat maxOffset = MAX(0, content - frame.size.height);
     self.favoritesRail.contentSize = CGSizeMake(side, content);
     self.favoritesRail.alwaysBounceVertical = content > frame.size.height;
-    if ((self.resetFavoritesScroll || wasHidden) && visible) {
-        self.favoritesRail.scrollEnabled = NO; self.favoritesRail.scrollEnabled = YES;
+    if (!self.favoritesRail.dragging && !self.favoritesRail.decelerating && visible) {
+        CGFloat offset = wasHidden ? maxOffset : MAX(0, maxOffset - oldBottomDistance);
+        NSUInteger activeIndex = [self.favoriteApps indexOfObject:active ?: @""];
+        if (activeIndex != NSNotFound && (wasHidden || resized || ![self.lastFavoritesActive isEqual:active]))
+            offset = NFBRevealOffset(offset, frame.size.height, content,
+                NFBRowCenter(self.favoriteApps.count, activeIndex, step, side), side);
+        self.lastFavoritesActive = active;
         [UIView animateWithDuration:duration delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{
-            self.favoritesRail.contentOffset = CGPointMake(0, maxOffset);
+            self.favoritesRail.contentOffset = CGPointMake(0, offset);
         } completion:nil];
-        self.resetFavoritesScroll = NO;
     }
-    else if (!self.favoritesRail.dragging && !self.favoritesRail.decelerating && visible)
-        self.favoritesRail.contentOffset = CGPointMake(0, MAX(0, maxOffset - oldBottomDistance));
     [self.favoriteApps enumerateObjectsUsingBlock:^(NSString *app, NSUInteger index, __unused BOOL *stop) {
         NFBBubble *button = self.favoriteButtons[app];
         if (!button) {

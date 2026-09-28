@@ -10,9 +10,9 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
-			<string>通知悬浮气泡 · 0.48.9</string>
+			<string>通知悬浮气泡 · 0.48.10</string>
 			<key>footerText</key>
-			<string>分屏两个容器中，当前 App 在前 4 个时仅高亮；在第 5 个以后时移到第一位并滚回前 4 个。关闭按钮单击关闭当前分屏并保留后台；长按清理后台。边缘模式不显示此按钮。</string>
+			<string>当前 App 只高亮，不自动置顶；需要时滚动到可见位置。后台容器只保留最近使用的 4 个 App。关闭按钮单击执行 TrollOpen 右侧橙色区域关闭；长按清理后台。边缘模式不显示此按钮。</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -156,7 +156,7 @@
 			<key>label</key>
 			<string>排列规则</string>
 			<key>footerText</key>
-			<string>边缘容器显示 3 个图标，未读在外；分屏常用 App 在上、原容器在下，各显示最多 4 个，可滚动。键盘弹出时缩短可见区域。关闭按钮仅在分屏容器下方显示。</string>
+			<string>边缘和分屏后台容器只保留最近使用的 4 个 App，边缘未读气泡单独显示。分屏常用 App 在上，可滚动查看；后台容器在下。容器顶部位于分屏顶部向下 5% 窗口高度处。键盘弹出时缩短可见区域。关闭按钮仅在分屏容器下方显示。</string>
 		</dict>
 		<dict>
 			<key>cell</key>
