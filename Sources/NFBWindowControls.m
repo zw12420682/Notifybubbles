@@ -1,7 +1,6 @@
 #import "NFBWindowControls.h"
 #import "NFBTrollOpen.h"
 #import "NFBRightEdgeAction.h"
-#import <objc/runtime.h>
 #import "NFBSplitClosePolicy.h"
 #import "NFBDebugLog.h"
 #import <UIKit/UIKit.h>
@@ -248,36 +247,6 @@ void NFBObserveSplitPlacement(NSString *app) {
 }
 @end
 
-static BOOL NFBHasCloseTapBinding(UIView *region, id window, NSUInteger depth) {
-    if (depth > 4) return NO;
-    for (UIGestureRecognizer *recognizer in region.gestureRecognizers) {
-        if (![recognizer isKindOfClass:UITapGestureRecognizer.class] || !recognizer.enabled) continue;
-        UITapGestureRecognizer *tap = (UITapGestureRecognizer *)recognizer;
-        if (tap.numberOfTapsRequired != 1 || tap.numberOfTouchesRequired != 1) continue;
-        @try {
-            id targets = [tap valueForKey:@"_targets"];
-            NSArray *entries = [targets isKindOfClass:NSArray.class] ? targets :
-                ([targets isKindOfClass:NSSet.class] ? [targets allObjects] :
-                ([targets isKindOfClass:NSOrderedSet.class] ? [targets array] : @[]));
-            for (id entry in entries) {
-                Ivar targetVar = class_getInstanceVariable([entry class], "_target");
-                Ivar actionVar = class_getInstanceVariable([entry class], "_action");
-                if (!targetVar || !actionVar || ivar_getTypeEncoding(targetVar)[0] != '@' ||
-                    strcmp(ivar_getTypeEncoding(actionVar), ":")) continue;
-                if (object_getIvar(entry, targetVar) != window) continue;
-                SEL action = NULL;
-                ptrdiff_t offset = ivar_getOffset(actionVar);
-                if (offset < 0 || (size_t)offset + sizeof(action) > class_getInstanceSize([entry class])) continue;
-                memcpy(&action, (const char *)(__bridge const void *)entry + offset, sizeof(action));
-                if (!action || ![NSStringFromSelector(action) isEqualToString:@"TOJBMETHOD063:"]) continue;
-                return YES;
-            }
-        } @catch (__unused NSException *exception) { continue; }
-    }
-    for (UIView *child in region.subviews)
-        if (NFBHasCloseTapBinding(child, window, depth + 1)) return YES;
-    return NO;
-}
 BOOL NFBCloseCurrentSplit(void) {
     if (!NSThread.isMainThread) return NO;
     @try {
@@ -289,13 +258,12 @@ BOOL NFBCloseCurrentSplit(void) {
         NSMethodSignature *sig = [window methodSignatureForSelector:getter];
         if (sig.numberOfArguments != 2 || sig.methodReturnType[0] != '@') return NO;
         id region = ((id (*)(id, SEL))objc_msgSend)(window, getter);
-        if (![region isKindOfClass:UIView.class] || ![region isDescendantOfView:window] ||
-            !NFBHasCloseTapBinding(region, window, 0)) {
-            NFBDebugLog(@"orange-close: rightTouchRegion single-tap binding unavailable");
+        if (![region isKindOfClass:UIView.class] || ![region isDescendantOfView:window]) {
+            NFBDebugLog(@"orange-close: rightTouchRegion unavailable");
             return NO;
         }
         NFBRightEdgeTap *tap = [NFBRightEdgeTap new]; tap.edgeRegion = region;
-        BOOL sent = NFBDispatchRightEdgeTap(window, NSSelectorFromString(@"TOJBMETHOD063:"), tap);
+        BOOL sent = NFBDispatchRightEdgeTap(window, tap);
         NFBDebugLog(@"orange-close: original right-region tap dispatched=%d app=%@", sent, appOfWindow(window));
         return sent;
     } @catch (NSException *exception) { NFBDebugLog(@"orange-close: %@", exception); return NO; }

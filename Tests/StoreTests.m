@@ -145,11 +145,9 @@ int main(void) {
         Check(NFBRevealOffset(0, 100, 233, 202, 62) == 133, @"Keyboard-shortened viewport reveals current icon");
         Check(NFBSplitRailTop(200, 600) == 230 && NFBSplitRailTop(100, 1000) == 150, @"Five percent uses split height, not screen height");
         TestEdgeClose *edge = [TestEdgeClose new]; id tap = [NSObject new];
-        SEL closeTap = NSSelectorFromString(@"TOJBMETHOD063:");
-        Check(NFBDispatchRightEdgeTap(edge, closeTap, tap) && edge.calls == 1 && edge.received == tap, @"Original tap callback invoked exactly once with recognizer");
-        Check(!NFBDispatchRightEdgeTap(edge, NSSelectorFromString(@"TOJBMETHOD064:"), tap) && edge.calls == 1, @"Long-press action must not be invoked");
-        Check(!NFBDispatchRightEdgeTap([TestEdgeWrong new], closeTap, tap), @"ABI mismatch rejected");
-        Check(!NFBDispatchRightEdgeTap([NSObject new], closeTap, tap) && !NFBDispatchRightEdgeTap(edge, closeTap, nil), @"Missing callback/recognizer rejected");
+        Check(NFBDispatchRightEdgeTap(edge, tap) && edge.calls == 1 && edge.received == tap, @"Original tap callback invoked exactly once with recognizer");
+        Check(!NFBDispatchRightEdgeTap([TestEdgeWrong new], tap), @"ABI mismatch rejected");
+        Check(!NFBDispatchRightEdgeTap([NSObject new], tap) && !NFBDispatchRightEdgeTap(edge, nil), @"Missing callback/recognizer rejected");
         NSLog(@"PASS: queue chronology, per-app isolation, deduplication, consumption, switcher pins and geometry");
     }
     return 0;
