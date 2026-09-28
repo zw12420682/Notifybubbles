@@ -4,6 +4,7 @@ import plistlib
 
 root = Path(__file__).resolve().parents[1]
 required = [
+    "Sources/NFBTopAction.h",
     "Sources/NFBRightEdgeAction.h",
     "layout/DEBIAN/postinst",
     'Sources/NFBSplitClosePolicy.h', 'Sources/NFBWindowControls.h', 'Sources/NFBWindowControls.m', 'Sources/NFBStorageLayout.h', 'Sources/NFBEdgeInspection.h', 'Makefile', 'control', 'Sources/NFBAppExit.h', 'Sources/NFBAppExit.m',
@@ -51,7 +52,7 @@ assert 'NotifyBubblesKeyboard_FILES' not in (root / 'Makefile').read_text()
 assert (root / "Sources/NFBPrivacy.m").is_file()
 assert "Sources/NFBPrivacy.m" in (root / "Makefile").read_text()
 
-for relative in ['Sources/NFBWindowControls.m', 'Sources/NFBEdgeInspection.h', 'Sources/NFBRightEdgeAction.h']:
+for relative in ['Sources/NFBWindowControls.m', 'Sources/NFBEdgeInspection.h', 'Sources/NFBRightEdgeAction.h', 'Sources/NFBTopAction.h']:
     source = (root / relative).read_text(encoding='utf-8')
     for forbidden in ['class_getInstanceVariable', 'object_getIvar', 'ivar_getOffset', 'valueForKey:@"_targets"', 'NSStringFromSelector']:
         assert forbidden not in source, f'Unsafe gesture action inspection reintroduced: {relative}: {forbidden}'

@@ -120,6 +120,16 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, strong) NFBStore *store;
 @property(nonatomic, strong) NFBWindow *window;
 @property(nonatomic, strong) NFBRail *rail;
+@property(nonatomic, strong) NFBBubble *topActionButton;
+@property(nonatomic, strong) UITapGestureRecognizer *topActionTap;
+@property(nonatomic, weak) UIView *topActionTarget;
+@property(nonatomic, weak) UIView *topActionTouchTarget;
+@property(nonatomic, weak) UIView *observedActionTarget;
+@property(nonatomic) CGRect observedActionFrame;
+@property(nonatomic) BOOL observedActionLandscape;
+- (void)topActionTapped:(UITapGestureRecognizer *)gesture;
+- (void)layoutTopAction:(CGRect)frame target:(UIView *)target duration:(NSTimeInterval)duration;
+
 @property(nonatomic, strong) NFBRail *unreadRail;
 @property(nonatomic, strong) NFBRail *favoritesRail;
 @property(nonatomic, strong) UIVisualEffectView *favoritesMaterial;
@@ -346,6 +356,50 @@ static double NFBNumber(NSString *key, double fallback) {
     if (!NFBCloseCurrentSplit()) [self showOpenNotice:@"未能读取 TrollOpen 右侧区域的单击接口"];
     [self refresh];
 }
+- (void)topActionTapped:(UITapGestureRecognizer *)gesture {
+    if (gesture.state != UIGestureRecognizerStateEnded || !self.enabled || [self isLocked]) return;
+    UIView *target = self.topActionTouchTarget;
+    self.topActionTouchTarget = nil;
+    if (!target || target != self.topActionTarget || target != NFBTopActionWindow()) { [self refresh]; return; }
+    if (![self acceptGesture]) return;
+    if (!NFBPerformTopLongPress(target)) [self showOpenNotice:@"TrollOpen 顶部长按接口不可用"];
+    [self refresh];
+}
+- (void)layoutTopAction:(CGRect)frame target:(UIView *)target duration:(NSTimeInterval)duration {
+    BOOL visible = target && !CGRectIsNull(frame) && !CGRectIsEmpty(frame) && self.enabled;
+    self.topActionTarget = visible ? target : nil;
+    if (!self.topActionButton && !visible) return;
+    if (!self.topActionButton) {
+        NFBBubble *button = [[NFBBubble alloc] initWithFrame:frame];
+        button.badge.hidden = YES;
+        button.imageView.contentMode = UIViewContentModeCenter;
+        button.imageView.image = [UIImage systemImageNamed:@"rectangle.2.swap"] ?: [UIImage systemImageNamed:@"arrow.up.left.and.arrow.down.right"];
+        button.imageView.tintColor = UIColor.systemGreenColor;
+        button.imageView.backgroundColor = UIColor.secondarySystemBackgroundColor;
+        button.accessibilityLabel = @"TrollOpen 顶部长按功能";
+        button.accessibilityHint = @"点击执行此窗口顶部绿色区域的长按动作";
+        self.topActionTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(topActionTapped:)];
+        self.topActionTap.delegate = self;
+        [button addGestureRecognizer:self.topActionTap];
+        button.alpha = 0;
+        self.topActionButton = button;
+        [self.window.rootViewController.view addSubview:button];
+    }
+    NFBBubble *button = self.topActionButton;
+    button.userInteractionEnabled = visible;
+    if (visible && button.alpha < 0.01) button.frame = frame;
+    [self.window.rootViewController.view bringSubviewToFront:button];
+    [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : MAX(0.16, duration)
+        delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseInOut animations:^{
+        button.alpha = visible ? 1 : 0;
+        if (visible) {
+            button.frame = frame;
+            CGFloat imageSide = MAX(1, frame.size.width - 14);
+            button.imageView.frame = CGRectMake(7, 7, imageSide, imageSide);
+            button.imageView.layer.cornerRadius = imageSide * 0.23;
+        }
+    } completion:nil];
+}
 - (void)clearAllHeld:(UILongPressGestureRecognizer *)gesture {
     if (gesture.state != UIGestureRecognizerStateBegan || [self isLocked] || ![self acceptGesture]) return;
     [self clearBackground];
@@ -454,7 +508,15 @@ static double NFBNumber(NSString *key, double fallback) {
     CGRect frame = NFBSplitFrameInView(self.window.rootViewController.view);
     BOOL sameFrame = CGRectEqualToRect(frame, self.observedSplitFrame) ||
         (CGRectIsNull(frame) && CGRectIsNull(self.observedSplitFrame));
-    if ((now == self.watchedFloating || [now isEqualToString:self.watchedFloating]) && sameFrame) return;
+    UIView *actionTarget = NFBTopActionWindow();
+    CGRect actionFrame = NFBWindowFrameInView(actionTarget, self.window.rootViewController.view);
+    BOOL landscape = NFBWindowIsLandscape(actionTarget);
+    BOOL sameActionFrame = CGRectEqualToRect(actionFrame, self.observedActionFrame) ||
+        (CGRectIsNull(actionFrame) && CGRectIsNull(self.observedActionFrame));
+    if ((now == self.watchedFloating || [now isEqualToString:self.watchedFloating]) && sameFrame &&
+        actionTarget == self.observedActionTarget && sameActionFrame && landscape == self.observedActionLandscape) return;
+    self.observedActionTarget = actionTarget; self.observedActionFrame = actionFrame;
+    self.observedActionLandscape = landscape;
     self.observedSplitFrame = frame;
     self.watchedFloating = now;
     [self refresh];
@@ -666,7 +728,7 @@ static double NFBNumber(NSString *key, double fallback) {
     // Keep the fast watcher in step with reality every time we recompute layout.
     // Continue observing orientation even when a lone landscape window has no
     // portrait attachment target and its rail has returned to the screen edge.
-    [self syncFloatingWatch:floatingApp ?: NFBTrollVisibleApp()];
+    [self syncFloatingWatch:floatingApp ?: NFBTrollVisibleApp() ?: (NFBTopActionWindow() ? @"__top_action__" : nil)];
     // A keyboard outranks everything else: typing is the one moment the bubbles
     // must be out of the way, so it pulls them all back in no matter what. The
     // ones it pulled in are remembered and popped back out the moment typing
@@ -814,11 +876,20 @@ static double NFBNumber(NSString *key, double fallback) {
     }
     CGFloat clearCenterY = railFrame.origin.y - 8 - side / 2;
     CGRect favoritesFrame = CGRectZero;
+    UIView *actionTarget = NFBTopActionWindow();
+    BOOL actionLandscape = NFBWindowIsLandscape(actionTarget);
+    CGRect actionWindowFrame = NFBWindowFrameInView(actionTarget, root);
+    CGRect topActionFrame = CGRectNull;
     if (containerMode) {
         CGFloat ceiling = MAX(safe.top, 12);
         CGFloat floor = keyboardUp ? NFBKeyboardTopInView(root) - 12 - step : CGRectGetHeight(bounds) - MAX(safe.bottom, 12);
         CGFloat desiredTop = attached ? NFBSplitRailTop(CGRectGetMinY(splitFrame), CGRectGetHeight(splitFrame)) : railFrame.origin.y;
         CGFloat y = MAX(ceiling, MIN(desiredTop, floor - side - 9));
+        // The action occupies its own row above both rails, never inside scrolling content.
+        if (actionTarget && !actionLandscape && !CGRectIsNull(actionWindowFrame) && floor - y >= 2 * side + 18) {
+            topActionFrame = CGRectMake(railFrame.origin.x, y, side, side);
+            y += side + 9;
+        }
         CGFloat room = MAX(0, floor - y - side - 9);
         NFBContainerHeights fit = NFBFitContainers(room, side, step, self.favoriteApps.count, rowCount);
         CGFloat favoriteHeight = fit.favorites, gap = fit.gap;
@@ -854,7 +925,17 @@ static double NFBNumber(NSString *key, double fallback) {
         unreadFrame = CGRectMake(CGRectGetWidth(bounds) - side, bottom - total,
             side + NFBRetraction(diameter), unreadHeight);
     }
+    if (actionTarget && actionLandscape && !CGRectIsNull(actionWindowFrame)) {
+        // Keep one button inside the landscape window's lower-right corner.
+        CGFloat actionSide = MIN(self.iconSize + 14, MIN(actionWindowFrame.size.width, actionWindowFrame.size.height) - 12);
+        CGFloat bottomLimit = keyboardUp ? NFBKeyboardTopInView(root) - 12 : CGRectGetHeight(bounds) - MAX(safe.bottom, 6);
+        CGFloat x = MAX(6, MIN(CGRectGetMaxX(actionWindowFrame) - actionSide - 6, CGRectGetWidth(bounds) - actionSide - 6));
+        CGFloat y = MIN(CGRectGetMaxY(actionWindowFrame) - actionSide - 6, bottomLimit - actionSide);
+        if (actionSide >= 24 && y >= MAX(safe.top, CGRectGetMinY(actionWindowFrame)) &&
+            x >= CGRectGetMinX(actionWindowFrame)) topActionFrame = CGRectMake(x, y, actionSide, actionSide);
+    }
     [self layoutFavorites:favoritesFrame diameter:diameter active:active duration:layoutDuration];
+    [self layoutTopAction:topActionFrame target:actionTarget duration:layoutDuration];
     self.unreadRail.hidden = !edgeMode || !unreadApps.count;
     [UIView animateWithDuration:layoutDuration delay:0
         options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseInOut
@@ -1274,6 +1355,10 @@ static double NFBNumber(NSString *key, double fallback) {
     return CGRectGetMaxX(image) > CGRectGetWidth(self.window.rootViewController.view.bounds) + 0.5;
 }
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldReceiveTouch:(UITouch *)touch {
+    if (gesture == self.topActionTap) {
+        self.topActionTouchTarget = self.topActionTarget;
+        return self.enabled && ![self isLocked] && self.topActionTouchTarget != nil;
+    }
     if (gesture == self.edgeTap) {
         // Bubble taps handle their own reveal. Do not race them with a parent tap.
         for (UIView *view = touch.view; view && view != self.rail; view = view.superview)

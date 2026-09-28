@@ -1,3 +1,4 @@
+#import "NFBTopAction.h"
 #import "NFBRightEdgeAction.h"
 #import "NFBContainerLayout.h"
 #import "NFBEdgeLayout.h"
@@ -27,6 +28,20 @@
 @implementation TestEdgeWrong
 - (BOOL)TOJBMETHOD063:(__unused id)tap { return YES; }
 @end
+@interface TestTopAction : NSObject
+@property(nonatomic) NSUInteger calls;
+@property(nonatomic, strong) id received;
+- (void)TOJBMETHOD087:(id)gesture;
+@end
+@implementation TestTopAction
+- (void)TOJBMETHOD087:(id)gesture { self.calls++; self.received = gesture; }
+@end
+@interface TestTopWrong : NSObject
+- (BOOL)TOJBMETHOD087:(id)gesture;
+@end
+@implementation TestTopWrong
+- (BOOL)TOJBMETHOD087:(__unused id)gesture { return YES; }
+@end
 static TestRequest *Request(double time) {
     TestRequest *r = [TestRequest new]; r.timestamp = [NSDate dateWithTimeIntervalSince1970:time]; return r;
 }
@@ -35,6 +50,20 @@ static void Check(BOOL value, NSString *message) {
 }
 int main(void) {
     @autoreleasepool {
+        TestTopAction *topAction = [TestTopAction new];
+        id topGesture = [NSObject new];
+        Check(NFBDispatchTopLongPress(topAction, topGesture) && topAction.calls == 1 && topAction.received == topGesture,
+            @"Top action dispatches exactly once with the supplied gesture");
+        Check(!NFBDispatchTopLongPress([TestTopWrong new], topGesture), @"Reject incompatible top action ABI");
+        Check(!NFBDispatchTopLongPress([NSObject new], topGesture), @"Reject missing top action");
+        Check(!NFBDispatchTopLongPress(topAction, nil) && topAction.calls == 1, @"Missing gesture never dispatches");
+        Check(NFBExpandedWindowKind(0, 0, 1, 1) == 1, @"Expanded portrait is eligible");
+        Check(NFBExpandedWindowKind(0, 0, 3, 1) == 2 && NFBExpandedWindowKind(0, 0, 1, 4) == 2,
+            @"Landscape scene or container takes landscape precedence");
+        Check(NFBExpandedWindowKind(1, 0, 3, 3) == 0 && NFBExpandedWindowKind(0, 1, 1, 1) == 0,
+            @"Mini and transitioning windows have no action button");
+        Check(NFBExpandedWindowKind(-1, 0, 1, 1) == 0 && NFBExpandedWindowKind(0, 0, 0, 1) == 0,
+            @"Unknown window state is ineligible");
         NSArray *edgeApps = @[@"a", @"b", @"c", @"d", @"e"];
         NSArray *recent = @[@"gone", @"e", @"b", @"a"];
         NSArray *groups = NFBEdgeGroups(edgeApps, recent, ^NSUInteger(NSString *app) {
