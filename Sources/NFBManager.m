@@ -85,10 +85,23 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, copy) NSString *appID;
 @property(nonatomic, strong) UIImageView *imageView;
 @property(nonatomic, strong) UILabel *badge;
+@property(nonatomic, strong) UIView *activeMark;
+- (void)updateActiveMark:(BOOL)active diameter:(CGFloat)diameter duration:(NSTimeInterval)duration;
 @property(nonatomic) BOOL opening;
 @property(nonatomic) BOOL holdStartedRetracted;
 @end
 @implementation NFBBubble
+- (void)updateActiveMark:(BOOL)active diameter:(CGFloat)diameter duration:(NSTimeInterval)duration {
+    // The bottom seven-point inset contains the whole mark: never extend past the row.
+    CGRect frame = CGRectMake(7 + diameter * 0.30, 7 + diameter + 2, diameter * 0.40, 3);
+    CGFloat alpha = active ? 1 : 0;
+    if (CGRectEqualToRect(self.activeMark.frame, frame) && self.activeMark.alpha == alpha) return;
+    [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : duration
+        delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{
+        self.activeMark.frame = frame;
+        self.activeMark.alpha = alpha;
+    } completion:nil];
+}
 - (instancetype)initWithFrame:(CGRect)frame {
     if ((self = [super initWithFrame:frame])) {
         self.accessibilityTraits = UIAccessibilityTraitButton;
@@ -107,6 +120,12 @@ static double NFBNumber(NSString *key, double fallback) {
         _badge.layer.cornerRadius = 10;
         _badge.clipsToBounds = YES;
         [self addSubview:_badge];
+        _activeMark = [UIView new];
+        _activeMark.backgroundColor = UIColor.systemRedColor;
+        _activeMark.userInteractionEnabled = NO;
+        _activeMark.layer.cornerRadius = 1.5;
+        _activeMark.alpha = 0;
+        [self addSubview:_activeMark];
         self.layer.shadowColor = UIColor.blackColor.CGColor;
         self.layer.shadowOpacity = 0.22;
         self.layer.shadowRadius = 5;
@@ -386,12 +405,13 @@ static double NFBNumber(NSString *key, double fallback) {
         [self.window.rootViewController.view addSubview:button];
     }
     NFBBubble *button = self.topActionButton;
+    CGFloat targetAlpha = visible ? (NFBWindowIsLandscape(target) ? 0.5 : 1.0) : 0;
     button.userInteractionEnabled = visible;
     if (visible && button.alpha < 0.01) button.frame = frame;
     [self.window.rootViewController.view bringSubviewToFront:button];
     [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : MAX(0.16, duration)
         delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseInOut animations:^{
-        button.alpha = visible ? 1 : 0;
+        button.alpha = targetAlpha;
         if (visible) {
             button.frame = frame;
             CGFloat imageSide = MAX(1, frame.size.width - 14);
@@ -927,7 +947,7 @@ static double NFBNumber(NSString *key, double fallback) {
     }
     if (actionTarget && actionLandscape && !CGRectIsNull(actionWindowFrame)) {
         // Keep one button inside the landscape window's lower-right corner.
-        CGFloat actionSide = MIN(self.iconSize + 14, MIN(actionWindowFrame.size.width, actionWindowFrame.size.height) - 12);
+        CGFloat actionSide = MIN((self.iconSize + 14) * 0.75, MIN(actionWindowFrame.size.width, actionWindowFrame.size.height) - 12);
         CGFloat bottomLimit = keyboardUp ? NFBKeyboardTopInView(root) - 12 : CGRectGetHeight(bounds) - MAX(safe.bottom, 6);
         CGFloat x = MAX(6, MIN(CGRectGetMaxX(actionWindowFrame) - actionSide - 6, CGRectGetWidth(bounds) - actionSide - 6));
         CGFloat y = MIN(CGRectGetMaxY(actionWindowFrame) - actionSide - 6, bottomLimit - actionSide);
@@ -1050,6 +1070,8 @@ static double NFBNumber(NSString *key, double fallback) {
         }
         // A bubble we already started retracting must not be re-expanded by the
         // stale "window still visible" reading taken mid-transition.
+        [button updateActiveMark:(!isStorage && !isClearAll && [active isEqualToString:appID])
+            diameter:diameter duration:layoutDuration];
         BOOL retracting = [self.retracting containsObject:appID];
         // "Has unread" is now the store's unread count, not a short timer: a
         // bubble with any pending notification stays fully visible (never folds)
@@ -1164,6 +1186,7 @@ static double NFBNumber(NSString *key, double fallback) {
             self.favoriteButtons[app] = button; [self.favoritesRail addSubview:button];
         }
         [self updateBubble:button record:[self.store latestForApp:app]];
+        [button updateActiveMark:[app isEqual:active] diameter:diameter duration:duration];
         CGFloat badgeHeight = MIN(16, diameter * 0.5);
         button.badge.frame = CGRectMake(7, 7, MIN(diameter, 24), badgeHeight);
         button.badge.layer.cornerRadius = badgeHeight / 2;
