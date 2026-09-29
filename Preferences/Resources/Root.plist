@@ -10,7 +10,7 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
-			<string>通知悬浮气泡 · 0.48.13</string>
+			<string>通知悬浮气泡 · 0.48.14</string>
 			<key>footerText</key>
 			<string>绿色窗口按钮单击执行 TrollOpen 顶部长按功能：有横屏时仅显示在最前面的横屏窗口右下角，否则显示在竖屏容器上方。当前 App 只高亮，不自动置顶；需要时滚动到可见位置。后台容器只保留最近使用的 4 个 App。关闭按钮单击执行 TrollOpen 右侧橙色区域关闭；长按清理后台。边缘模式不显示此按钮。</string>
 		</dict>

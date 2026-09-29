@@ -154,6 +154,14 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, strong) UIVisualEffectView *favoritesMaterial;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NFBBubble *> *favoriteButtons;
 @property(nonatomic, copy) NSArray<NSString *> *favoriteApps;
+@property(nonatomic, strong) UILongPressGestureRecognizer *favoriteHold;
+@property(nonatomic, strong) NFBBubble *favoriteDrag;
+@property(nonatomic, strong) NSTimer *favoriteDragTimer;
+@property(nonatomic) CGFloat favoriteGrabOffset;
+- (void)favoriteHeld:(UILongPressGestureRecognizer *)gesture;
+- (void)moveFavorite;
+- (void)finishFavoriteDrag;
+- (void)saveFavoritePosition;
 @property(nonatomic, copy) NSArray<NSString *> *backgroundOrder;
 @property(nonatomic, copy) NSString *lastRailActive;
 @property(nonatomic, copy) NSString *lastFavoritesActive;
@@ -289,7 +297,9 @@ static double NFBNumber(NSString *key, double fallback) {
     if ([favorites isKindOfClass:NSArray.class]) for (id app in favorites)
         if ([app isKindOfClass:NSString.class] && [app length]) [selected addObject:app];
     NSMutableOrderedSet *favoriteOrder = [NSMutableOrderedSet orderedSet];
-    for (NSString *app in self.favoriteApps) if ([selected containsObject:app]) [favoriteOrder addObject:app];
+    id savedOrder = CFBridgingRelease(CFPreferencesCopyAppValue(CFSTR("FavoriteOrder"), NFBDomain));
+    NSArray *order = self.favoriteApps ?: ([savedOrder isKindOfClass:NSArray.class] ? savedOrder : @[]);
+    for (NSString *app in order) if ([selected containsObject:app]) [favoriteOrder addObject:app];
     [favoriteOrder addObjectsFromArray:selected.array];
     self.favoriteApps = favoriteOrder.array;
     if (!self.enabled) {
@@ -1137,6 +1147,10 @@ static double NFBNumber(NSString *key, double fallback) {
         self.favoriteButtons = [NSMutableDictionary dictionary];
         self.favoritesRail = [NFBRail new];
         self.favoritesRail.containerMode = YES;
+        self.favoritesRail.delegate = self;
+        self.favoriteHold = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(favoriteHeld:)];
+        self.favoriteHold.minimumPressDuration = 0.45;
+        [self.favoritesRail addGestureRecognizer:self.favoriteHold];
         self.favoritesRail.clipsToBounds = YES;
         self.favoritesRail.showsVerticalScrollIndicator = NO;
         self.favoritesRail.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
@@ -1147,6 +1161,10 @@ static double NFBNumber(NSString *key, double fallback) {
         [root addSubview:self.favoritesRail];
     }
     BOOL visible = !self.edgeMode && self.favoriteApps.count && frame.size.height > 0;
+    if (!visible && self.favoritesRail.userInteractionEnabled) {
+        [self saveFavoritePosition];
+        [self finishFavoriteDrag];
+    }
     self.favoritesRail.userInteractionEnabled = visible;
     CGFloat side = diameter + 14, step = diameter + 9;
     CGFloat oldBottomDistance = MAX(0, self.favoritesRail.contentSize.height - self.favoritesRail.bounds.size.height - self.favoritesRail.contentOffset.y);
@@ -1167,8 +1185,8 @@ static double NFBNumber(NSString *key, double fallback) {
     CGFloat maxOffset = MAX(0, content - frame.size.height);
     self.favoritesRail.contentSize = CGSizeMake(side, content);
     self.favoritesRail.alwaysBounceVertical = content > frame.size.height;
-    if (!self.favoritesRail.dragging && !self.favoritesRail.decelerating && visible) {
-        CGFloat offset = wasHidden ? maxOffset : MAX(0, maxOffset - oldBottomDistance);
+    if (!self.favoriteDrag && !self.favoritesRail.dragging && !self.favoritesRail.decelerating && visible) {
+        CGFloat offset = MAX(0, MIN(maxOffset, maxOffset - (wasHidden ? MAX(0, NFBNumber(@"FavoriteScrollRows", 0)) * step : oldBottomDistance)));
         NSUInteger activeIndex = [self.favoriteApps indexOfObject:active ?: @""];
         if (activeIndex != NSNotFound && (wasHidden || resized || ![self.lastFavoritesActive isEqual:active]))
             offset = NFBRevealOffset(offset, frame.size.height, content,
@@ -1194,12 +1212,79 @@ static double NFBNumber(NSString *key, double fallback) {
         button.badge.adjustsFontSizeToFitWidth = YES; button.badge.minimumScaleFactor = 0.65;
         [UIView animateWithDuration:duration delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{
             button.bounds = CGRectMake(0, 0, side, side);
-            button.center = CGPointMake(side / 2, NFBRowCenter(self.favoriteApps.count, index, step, side));
+            if (button != self.favoriteDrag) button.center = CGPointMake(side / 2, NFBRowCenter(self.favoriteApps.count, index, step, side));
             button.imageView.frame = CGRectMake(7, 7, diameter, diameter);
             button.imageView.layer.cornerRadius = diameter * 0.23;
             button.alpha = [app isEqual:active] ? 1 : self.iconOpacity;
         } completion:nil];
     }];
+}
+- (void)saveFavoritePosition {
+    if (!self.favoritesRail || self.favoritesRail.alpha < 0.01) return;
+    CGFloat step = MAX(1, self.favoritesRail.contentSize.width - 5);
+    CGFloat distance = MAX(0, self.favoritesRail.contentSize.height - self.favoritesRail.bounds.size.height - self.favoritesRail.contentOffset.y);
+    CFPreferencesSetAppValue(CFSTR("FavoriteScrollRows"), (__bridge CFPropertyListRef)@(distance / step), NFBDomain);
+    CFPreferencesAppSynchronize(NFBDomain);
+}
+- (void)finishFavoriteDrag {
+    [self.favoriteDragTimer invalidate]; self.favoriteDragTimer = nil;
+    if (!self.favoriteDrag) return;
+    self.favoriteDrag.layer.zPosition = 0;
+    self.favoriteDrag = nil;
+    self.favoritesRail.scrollEnabled = YES;
+    CFPreferencesSetAppValue(CFSTR("FavoriteOrder"), (__bridge CFPropertyListRef)self.favoriteApps, NFBDomain);
+    CFPreferencesAppSynchronize(NFBDomain);
+    [self saveFavoritePosition];
+}
+- (void)favoriteHeld:(UILongPressGestureRecognizer *)gesture {
+    if (gesture.state == UIGestureRecognizerStateBegan) {
+        if ([self isLocked] || self.edgeMode || !self.enabled) return;
+        CGPoint point = [gesture locationInView:self.favoritesRail];
+        for (NFBBubble *button in self.favoriteButtons.allValues) {
+            if (CGRectContainsPoint(button.frame, point)) { self.favoriteDrag = button; break; }
+        }
+        if (!self.favoriteDrag) return;
+        self.favoriteGrabOffset = point.y - self.favoriteDrag.center.y;
+        self.favoritesRail.scrollEnabled = NO;
+        self.favoriteDrag.layer.zPosition = 10;
+        __weak typeof(self) weakSelf = self;
+        self.favoriteDragTimer = [NSTimer scheduledTimerWithTimeInterval:1.0/30.0 repeats:YES block:^(__unused NSTimer *timer) { [weakSelf moveFavorite]; }];
+    } else if (gesture.state == UIGestureRecognizerStateChanged) {
+        [self moveFavorite];
+    } else {
+        [self finishFavoriteDrag]; [self refresh];
+    }
+}
+- (void)moveFavorite {
+    NFBBubble *button = self.favoriteDrag;
+    if (!button) return;
+    if ([self isLocked] || self.edgeMode || !self.enabled || ![self.favoriteApps containsObject:button.appID]) {
+        [self finishFavoriteDrag]; return;
+    }
+    UIScrollView *rail = self.favoritesRail;
+    CGPoint point = [self.favoriteHold locationInView:rail];
+    CGFloat localY = point.y - rail.contentOffset.y;
+    CGFloat delta = localY < 28 ? -4 : (localY > rail.bounds.size.height - 28 ? 4 : 0);
+    CGFloat maxOffset = MAX(0, rail.contentSize.height - rail.bounds.size.height);
+    rail.contentOffset = CGPointMake(0, MAX(0, MIN(maxOffset, rail.contentOffset.y + delta)));
+    point = [self.favoriteHold locationInView:rail];
+    CGFloat side = rail.contentSize.width, step = MAX(1, side - 5);
+    CGFloat y = MAX(side/2, MIN(rail.contentSize.height - side/2, point.y - self.favoriteGrabOffset));
+    [button.layer removeAllAnimations]; button.center = CGPointMake(side/2, y);
+    NSInteger row = (NSInteger)llround((y - side/2) / step);
+    NSUInteger destination = self.favoriteApps.count - 1 - MIN(self.favoriteApps.count - 1, (NSUInteger)MAX(0, row));
+    NSUInteger source = [self.favoriteApps indexOfObject:button.appID];
+    if (source != destination && source != NSNotFound) {
+        NSMutableArray *apps = [self.favoriteApps mutableCopy];
+        [apps removeObjectAtIndex:source]; [apps insertObject:button.appID atIndex:destination];
+        self.favoriteApps = apps;
+        [UIView animateWithDuration:0.2 delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{
+            [apps enumerateObjectsUsingBlock:^(NSString *app, NSUInteger i, __unused BOOL *stop) {
+                NFBBubble *other = self.favoriteButtons[app];
+                if (other != button) other.center = CGPointMake(side/2, NFBRowCenter(apps.count, i, step, side));
+            }];
+        } completion:nil];
+    }
 }
 // One action per gesture. Without this, a bounce in the finger or a leftover
 // second tap of a retired double-tap would fire close/exit twice in a row.
@@ -1459,10 +1544,12 @@ static double NFBNumber(NSString *key, double fallback) {
     [self extendEdgeContainer]; [self refresh];
 }
 - (void)scrollViewDidEndDragging:(UIScrollView *)scrollView willDecelerate:(BOOL)decelerate {
+    if (scrollView == self.favoritesRail && !decelerate) [self saveFavoritePosition];
     if (scrollView != self.rail || !self.edgeMode || decelerate) return;
     [self extendEdgeContainer]; [self refresh];
 }
 - (void)scrollViewDidEndDecelerating:(UIScrollView *)scrollView {
+    if (scrollView == self.favoritesRail) [self saveFavoritePosition];
     if (scrollView != self.rail || !self.edgeMode) return;
     [self extendEdgeContainer]; [self refresh];
 }
