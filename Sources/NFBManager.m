@@ -150,6 +150,8 @@ static double NFBNumber(NSString *key, double fallback) {
 - (void)layoutTopAction:(CGRect)frame target:(UIView *)target duration:(NSTimeInterval)duration;
 
 @property(nonatomic, strong) NFBRail *unreadRail;
+@property(nonatomic, strong) NSMutableDictionary<NSString *, NFBBubble *> *edgeCopies;
+- (void)layoutEdgeCopies:(NSArray<NSString *> *)apps unread:(NSArray<NSString *> *)unread diameter:(CGFloat)diameter active:(NSString *)active duration:(NSTimeInterval)duration;
 @property(nonatomic, strong) NFBRail *favoritesRail;
 @property(nonatomic, strong) UIVisualEffectView *favoritesMaterial;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NFBBubble *> *favoriteButtons;
@@ -529,6 +531,7 @@ static double NFBNumber(NSString *key, double fallback) {
     [NSRunLoop.mainRunLoop addTimer:self.floatingWatch forMode:NSRunLoopCommonModes];
 }
 - (void)floatingWatchFired {
+    NFBObserveRotationLayout();
     [self updatePrivacy];
     NSString *now = NFBSplitAttachmentApp();
     NSString *currentApp = NFBTrollVisibleApp();
@@ -751,6 +754,7 @@ static double NFBNumber(NSString *key, double fallback) {
     NSString *floatingApp = NFBTrollVisibleApp();
     if ([self.retracting containsObject:floatingApp ?: @""]) floatingApp = nil;
     NFBObserveSplitSwitch(floatingApp, NFBPreference(@"ClosePreviousSplit", YES));
+    NFBObserveRotationLayout();
     NFBObserveSplitPlacement(floatingApp);
     // An attachment fallback is layout-only: do not treat it as an app switch.
     floatingApp = NFBSplitAttachmentApp();
@@ -806,11 +810,11 @@ static double NFBNumber(NSString *key, double fallback) {
         return [self.store countForApp:app];
     });
     NSArray<NSString *> *unreadApps = edgeMode ? groups[1] : @[];
-    NSArray<NSString *> *railApps = NFBRecentFour(edgeMode ? groups[0] : apps,
-        history.array, self.backgroundOrder, active, edgeMode ? @[] : self.favoriteApps);
+    NSArray<NSString *> *railApps = NFBRecentFour(apps,
+        history.array, self.backgroundOrder, active, @[]);
     self.backgroundOrder = railApps;
     NSMutableArray<NSString *> *displayApps = [railApps mutableCopy];
-    if (edgeMode) [displayApps addObjectsFromArray:unreadApps];
+    if (edgeMode) for (NSString *app in unreadApps) if (![displayApps containsObject:app]) [displayApps addObject:app];
     if (!edgeMode) [displayApps addObject:NFBClearAllID];
     NSUInteger storedCount = 0;
     self.storedApps = @[];
@@ -956,11 +960,12 @@ static double NFBNumber(NSString *key, double fallback) {
             side + NFBRetraction(diameter), unreadHeight);
     }
     if (actionTarget && actionLandscape && !CGRectIsNull(actionWindowFrame)) {
-        // Keep one button inside the landscape window's lower-right corner.
+        // Keep one button inside the landscape window's upper-right corner.
         CGFloat actionSide = MIN((self.iconSize + 14) * 0.75, MIN(actionWindowFrame.size.width, actionWindowFrame.size.height) - 12);
         CGFloat bottomLimit = keyboardUp ? NFBKeyboardTopInView(root) - 12 : CGRectGetHeight(bounds) - MAX(safe.bottom, 6);
         CGFloat x = MAX(6, MIN(CGRectGetMaxX(actionWindowFrame) - actionSide - 6, CGRectGetWidth(bounds) - actionSide - 6));
-        CGFloat y = MIN(CGRectGetMaxY(actionWindowFrame) - actionSide - 6, bottomLimit - actionSide);
+        CGFloat y = MAX(safe.top + 6, CGRectGetMinY(actionWindowFrame) + 6);
+        if (y + actionSide > bottomLimit) y = bottomLimit - actionSide;
         if (actionSide >= 24 && y >= MAX(safe.top, CGRectGetMinY(actionWindowFrame)) &&
             x >= CGRectGetMinX(actionWindowFrame)) topActionFrame = CGRectMake(x, y, actionSide, actionSide);
     }
@@ -1140,6 +1145,45 @@ static double NFBNumber(NSString *key, double fallback) {
                 } completion:nil];
         }
     }];
+    [self layoutEdgeCopies:railApps unread:unreadApps diameter:diameter active:active duration:layoutDuration];
+}
+- (void)layoutEdgeCopies:(NSArray<NSString *> *)apps unread:(NSArray<NSString *> *)unread diameter:(CGFloat)diameter active:(NSString *)active duration:(NSTimeInterval)duration {
+    if (!self.edgeCopies) self.edgeCopies = [NSMutableDictionary dictionary];
+    NSMutableArray *wanted = [NSMutableArray array];
+    if (self.edgeMode) for (NSString *app in apps) if ([unread containsObject:app]) [wanted addObject:app];
+    for (NSString *app in self.edgeCopies.allKeys) if (![wanted containsObject:app]) {
+        NFBBubble *old = self.edgeCopies[app]; [self.edgeCopies removeObjectForKey:app];
+        old.userInteractionEnabled = NO;
+        if ([self.closingApps containsObject:app]) { [self burstBubble:old]; [old removeFromSuperview]; }
+        else [UIView animateWithDuration:duration animations:^{ old.alpha = 0; } completion:^(__unused BOOL done) { [old removeFromSuperview]; }];
+    }
+    CGFloat side = diameter + 14, step = diameter + 9;
+    for (NSString *app in wanted) {
+        NFBBubble *button = self.edgeCopies[app];
+        if (!button) {
+            button = [[NFBBubble alloc] initWithFrame:CGRectMake(0, 0, side, side)]; button.appID = app;
+            UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(singleTapped:)];
+            UILongPressGestureRecognizer *hold = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(edgeLongPressed:)];
+            hold.minimumPressDuration = 0.45; hold.delegate = self; tap.delegate = self;
+            [tap requireGestureRecognizerToFail:hold]; [self.edgeTap requireGestureRecognizerToFail:hold];
+            [button addGestureRecognizer:tap]; [button addGestureRecognizer:hold];
+            self.edgeCopies[app] = button; [self.rail addSubview:button]; button.alpha = 0;
+        }
+        [self updateBubble:button record:[self.store latestForApp:app]];
+        [button updateActiveMark:[app isEqual:active] diameter:diameter duration:duration];
+        CGFloat badgeHeight = MIN(16, diameter * 0.5);
+        button.badge.frame = CGRectMake(7, 7, MIN(diameter, 24), badgeHeight);
+        button.badge.layer.cornerRadius = badgeHeight / 2;
+        button.badge.font = [UIFont boldSystemFontOfSize:MIN(11, badgeHeight * 0.7)];
+        button.badge.adjustsFontSizeToFitWidth = YES;
+        [UIView animateWithDuration:duration delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{
+            button.bounds = CGRectMake(0, 0, side, side);
+            button.center = CGPointMake(side/2, NFBRowCenter(apps.count, [apps indexOfObject:app], step, side));
+            button.imageView.frame = CGRectMake(7, 7, diameter, diameter);
+            button.imageView.layer.cornerRadius = diameter * 0.23;
+            button.alpha = [app isEqual:active] ? 1 : self.iconOpacity;
+        } completion:nil];
+    }
 }
 - (void)layoutFavorites:(CGRect)frame diameter:(CGFloat)diameter active:(NSString *)active duration:(NSTimeInterval)duration {
     UIView *root = self.window.rootViewController.view;
@@ -1315,7 +1359,7 @@ static double NFBNumber(NSString *key, double fallback) {
         [self showOpenNotice:@"TrollOpen 全屏接口不可用，请确认已安装适配的 1.5.2 隐根版并重启桌面"];
 }
 - (void)closeBubble:(NFBBubble *)button {
-    if (self.buttons[button.appID] != button) return;
+    if (self.buttons[button.appID] != button && self.edgeCopies[button.appID] != button) return;
     if (![self acceptGesture]) return;
     NSString *app = button.appID;
     // Suppress touch-up activation while the queued burst removes this control.
@@ -1326,7 +1370,7 @@ static double NFBNumber(NSString *key, double fallback) {
     [self closeAppsInOrder:@[app]];
     dispatch_async(dispatch_get_main_queue(), ^{
         // If a new notification cancelled dismissal, leave that surviving icon usable.
-        if (self.buttons[app] == button) {
+        if (self.buttons[app] == button || self.edgeCopies[app] == button) {
             button.opening = NO; button.userInteractionEnabled = YES;
         }
     });
@@ -1559,7 +1603,7 @@ static double NFBNumber(NSString *key, double fallback) {
     [self tapped:button];
 }
 - (void)tapped:(NFBBubble *)button {
-    if (button.opening || (self.buttons[button.appID] != button && self.favoriteButtons[button.appID] != button)) return;
+    if (button.opening || (self.buttons[button.appID] != button && self.favoriteButtons[button.appID] != button && self.edgeCopies[button.appID] != button)) return;
     if (self.pendingRecord && [self.pendingRecord.appID isEqual:button.appID]) return;
     if (![self acceptGesture]) return;
     button.opening = YES;

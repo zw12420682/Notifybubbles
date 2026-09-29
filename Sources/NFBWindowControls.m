@@ -322,3 +322,39 @@ BOOL NFBPerformTopLongPress(UIView *window) {
         return sent;
     } @catch (NSException *exception) { NFBDebugLog(@"top-long-press: %@", exception); return NO; }
 }
+
+// Reconcile host content only once after a landscape-to-portrait transition settles.
+// TOJBMETHOD404 is the original host bounds/transform layout routine used by 343.
+void NFBObserveRotationLayout(void) {
+    if (!NSThread.isMainThread) return;
+    static NSMapTable<UIView *, NSMutableDictionary *> *states;
+    if (!states) states = [NSMapTable weakToStrongObjectsMapTable];
+    @try {
+        id object = currentWindow();
+        if (![object isKindOfClass:UIView.class]) return;
+        UIView *window = object;
+        if (!visibleView(window) || boolStateOf(window, @"miniWindowModeEnabled") != 0 ||
+            boolStateOf(window, @"isTransitioningFromMiniMode") != 0 ||
+            boolStateOf(window, @"isClosingWithKeepAliveAnimation") != 0) return;
+        NSInteger scene = orientationOf(window, @"sceneOrientation"), container = orientationOf(window, @"containerOrientation");
+        NSMutableDictionary *state = [states objectForKey:window];
+        if (!state) { state = [NSMutableDictionary dictionary]; [states setObject:state forKey:window]; }
+        if (scene >= 3 || container >= 3) { state[@"landscape"] = @YES; [state removeObjectForKey:@"since"]; return; }
+        if (![state[@"landscape"] boolValue] || scene < 1 || scene > 2 || container != scene) return;
+        NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
+        NSValue *bounds = [NSValue valueWithCGRect:window.bounds];
+        if (![state[@"bounds"] isEqual:bounds] || !state[@"since"]) {
+            state[@"bounds"] = bounds; state[@"since"] = @(now); return;
+        }
+        if (now - [state[@"since"] doubleValue] < 0.65) return;
+        state[@"landscape"] = @NO;
+        SEL layout = NSSelectorFromString(@"TOJBMETHOD404");
+        NSMethodSignature *sig = [window methodSignatureForSelector:layout];
+        if (sig.numberOfArguments != 2 || strcmp(sig.methodReturnType, @encode(void))) return;
+        [UIView performWithoutAnimation:^{
+            ((void (*)(id, SEL))objc_msgSend)(window, layout);
+            [window setNeedsLayout]; [window layoutIfNeeded];
+        }];
+        NFBDebugLog(@"portrait-content: reconciled app=%@ bounds=%@", appOfWindow(window), bounds);
+    } @catch (NSException *exception) { NFBDebugLog(@"portrait-content: %@", exception); }
+}

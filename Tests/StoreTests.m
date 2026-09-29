@@ -50,6 +50,11 @@ static void Check(BOOL value, NSString *message) {
 }
 int main(void) {
     @autoreleasepool {
+        NSArray *overlapBackground = NFBRecentFour(@[@"mail", @"chat", @"video", @"maps", @"fifth"],
+            @[@"mail", @"chat", @"video", @"maps", @"fifth"], @[], @"chat", @[]);
+        Check([overlapBackground isEqual:@[@"mail", @"chat", @"video", @"maps"]],
+            @"Background four keeps favorite/unread apps when no exclusions are requested");
+
         TestTopAction *topAction = [TestTopAction new];
         id topGesture = [NSObject new];
         Check(NFBDispatchTopLongPress(topAction, topGesture) && topAction.calls == 1 && topAction.received == topGesture,

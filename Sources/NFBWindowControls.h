@@ -17,3 +17,5 @@ UIView *NFBTopActionWindow(void);
 BOOL NFBWindowIsLandscape(UIView *window);
 CGRect NFBWindowFrameInView(UIView *window, UIView *root);
 BOOL NFBPerformTopLongPress(UIView *window);
+
+void NFBObserveRotationLayout(void);
