@@ -35,7 +35,7 @@ static const CGFloat NFBFloatingPosition = 0.80;
 static const CGFloat NFBKeyboardPosition = 0.49;
 // How long the folded (no-unread) bubbles stay spread out after a tap on the
 // stack edge, before folding back into a thin stack.
-static const NSTimeInterval NFBStackHold = 5.0;
+static const NSTimeInterval NFBStackHold = 4.0;
 // Synthetic bubble id that rides at the top of the row while an app is in the
 // split view. Tapping it clears every background app at once. It never enters
 // the store or the switcher ordering.
@@ -184,6 +184,7 @@ static double NFBNumber(NSString *key, double fallback) {
 - (void)closeBubble:(NFBBubble *)button;
 - (BOOL)edgeBubbleIsRetracted:(NFBBubble *)button;
 - (void)extendEdgeContainer;
+- (void)restartStorageIdleTimer;
 - (void)edgeContainerTapped:(UITapGestureRecognizer *)gesture;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NFBBubble *> *buttons;
 @property(nonatomic, strong) NSTimer *timer;
@@ -824,7 +825,7 @@ static double NFBNumber(NSString *key, double fallback) {
         NSMutableArray<NSString *> *background = [NSMutableArray array];
         for (NSString *app in apps)
             if ([self.lastSwitcher containsObject:app] || [app isEqual:active]) [background addObject:app];
-        railApps = NFBRecentBackgroundTwo(background, history.array, self.favoriteApps);
+        railApps = NFBRecentBackgroundThree(background, history.array, self.favoriteApps);
     }
     NSMutableArray<NSString *> *displayApps = [railApps mutableCopy];
     [displayApps addObject:edgeMode ? NFBStorageID : NFBClearAllID];
@@ -1118,7 +1119,7 @@ static double NFBNumber(NSString *key, double fallback) {
         // The clear action is appended last and therefore stays above all apps.
         CGFloat rowY = (isClearAll || isStorage) ? side / 2 : NFBRowCenter(isOutside ? unreadApps.count : rowCount, rowIndex, step, side);
         CGFloat corner = !isOutside && !isClearAll ? diameter * 0.23 : diameter / 2;
-        CGPoint targetCenter = (isClearAll || isStorage) ? CGPointMake(isStorage ? CGRectGetWidth(bounds) - side / 2 : CGRectGetMidX(railFrame), clearCenterY)
+        CGPoint targetCenter = (isClearAll || isStorage) ? CGPointMake(CGRectGetMidX(railFrame), clearCenterY)
             : CGPointMake(side / 2, rowY);
         if (fresh) {
             button.bounds = targetBounds;
@@ -1350,8 +1351,8 @@ static double NFBNumber(NSString *key, double fallback) {
     if (now - self.lastGestureAt < NFBGestureCooldown) return NO;
     self.lastGestureAt = now;
     // While the folded stack is spread open, any tap keeps it open for another
-    // NFBStackHold seconds — only 5 seconds of no action folds it back.
-    if (self.stackUntil > now) self.stackUntil = now + NFBStackHold;
+    // NFBStackHold seconds — only 4 seconds of no action folds it back.
+    if (self.edgeMode) [self restartStorageIdleTimer];
     return YES;
 }
 // A bubble belongs to the app currently occupying the TrollOpen floating window.
@@ -1473,13 +1474,34 @@ static double NFBNumber(NSString *key, double fallback) {
 - (void)storageLongPressed:(UILongPressGestureRecognizer *)gesture {
     if (!self.edgeMode || self.buttons[NFBStorageID] != gesture.view) return;
     ((NFBBubble *)gesture.view).holdStartedRetracted = YES;
+    [self restartStorageIdleTimer];
     [self edgeLongPressed:gesture];
 }
 - (void)storageTapped:(UITapGestureRecognizer *)gesture {
     if (gesture.state != UIGestureRecognizerStateEnded || ![self acceptGesture]) return;
     self.backgroundCollapsed = !self.backgroundCollapsed;
-    if (!self.backgroundCollapsed) [self extendEdgeContainer];
+    if (!self.backgroundCollapsed) {
+        [self restartStorageIdleTimer];
+        [self extendEdgeContainer];
+    } else self.stackUntil = 0;
     [self refresh];
+}
+- (void)restartStorageIdleTimer {
+    if (self.backgroundCollapsed) { self.stackUntil = 0; return; }
+    self.stackUntil = CACurrentMediaTime() + NFBStackHold;
+    NSTimeInterval deadline = self.stackUntil;
+    __weak typeof(self) weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(NFBStackHold * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        typeof(self) owner = weakSelf;
+        if (!owner || owner.stackUntil != deadline || owner.backgroundCollapsed) return;
+        if (owner.draggingEdge || owner.rail.tracking || owner.rail.dragging || owner.rail.decelerating) {
+            [owner restartStorageIdleTimer];
+            return;
+        }
+        owner.stackUntil = 0;
+        owner.backgroundCollapsed = YES;
+        [owner refresh]; // Unread apps remain visible through NFBVisibleEdgeApps.
+    });
 }
 - (BOOL)edgeBubbleIsRetracted:(NFBBubble *)button {
     if (!self.edgeMode) return NO;
@@ -1504,6 +1526,7 @@ static double NFBNumber(NSString *key, double fallback) {
     if ([gesture isKindOfClass:UILongPressGestureRecognizer.class]) button.holdStartedRetracted = tucked;
     // Freeze the interaction decision at touch-down; a one-second timer must
     // not turn a held expanded icon into a drag into a drag after its timer expires.
+    if (self.edgeMode) [self restartStorageIdleTimer];
     if (self.edgeMode && !tucked) {
         if (button.superview == self.rail) [self extendEdgeContainer];
         else [self extendApp:button.appID];
@@ -1556,6 +1579,7 @@ static double NFBNumber(NSString *key, double fallback) {
 }
 - (void)edgeContainerTapped:(UITapGestureRecognizer *)gesture {
     if (!self.edgeMode || gesture.state != UIGestureRecognizerStateEnded) return;
+    [self restartStorageIdleTimer];
     [self extendEdgeContainer];
     [self refresh];
 }
@@ -1566,16 +1590,19 @@ static double NFBNumber(NSString *key, double fallback) {
 }
 - (void)scrollViewWillBeginDragging:(UIScrollView *)scrollView {
     if (scrollView != self.rail || !self.edgeMode) return;
+    [self restartStorageIdleTimer];
     [self extendEdgeContainer]; [self refresh];
 }
 - (void)scrollViewDidEndDragging:(UIScrollView *)scrollView willDecelerate:(BOOL)decelerate {
     if (scrollView == self.favoritesRail && !decelerate) [self saveFavoritePosition];
     if (scrollView != self.rail || !self.edgeMode || decelerate) return;
+    [self restartStorageIdleTimer];
     [self extendEdgeContainer]; [self refresh];
 }
 - (void)scrollViewDidEndDecelerating:(UIScrollView *)scrollView {
     if (scrollView == self.favoritesRail) [self saveFavoritePosition];
     if (scrollView != self.rail || !self.edgeMode) return;
+    [self restartStorageIdleTimer];
     [self extendEdgeContainer]; [self refresh];
 }
 - (void)singleTapped:(UITapGestureRecognizer *)gesture {

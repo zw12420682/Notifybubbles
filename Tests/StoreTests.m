@@ -149,11 +149,11 @@ int main(void) {
         Check(!NFBShouldClosePreviousSplit(0, 0, 3, 1) && !NFBShouldClosePreviousSplit(0, 0, 1, 4), @"Landscape scene or container survives");
         Check(!NFBShouldClosePreviousSplit(-1, 0, 1, 1) && !NFBShouldClosePreviousSplit(0, -1, 1, 1) && !NFBShouldClosePreviousSplit(0, 0, 0, 1), @"Unknown state is preserved");
         NFBContainerHeights fit = NFBFitContainers(1000, 62, 57, 8, 12);
-        Check(fit.favorites == 461 && fit.regular == 119 && fit.gap == 9, @"Favorites expand and background shows two rows");
+        Check(fit.favorites == 461 && fit.regular == 176 && fit.gap == 9, @"Favorites expand and background shows three rows");
         fit = NFBFitContainers(160, 62, 57, 0, 12);
-        Check(fit.favorites == 0 && fit.gap == 0 && fit.regular == 119, @"No favorites leaves all room for regular icons");
+        Check(fit.favorites == 0 && fit.gap == 0 && fit.regular == 160, @"No favorites leaves all room for regular icons");
         fit = NFBFitContainers(300, 62, 57, 1, 12);
-        Check(fit.favorites == 62 && fit.regular == 119, @"Short favorites list gives remaining room to main rail");
+        Check(fit.favorites == 62 && fit.regular == 176, @"Short favorites list gives remaining room to main rail");
         for (NSUInteger count = 0; count < 12; count++) for (int room = 0; room < 600; room += 13) {
             fit = NFBFitContainers(room, 62, 57, count, 12);
             Check(fit.favorites >= 0 && fit.regular >= 0 && fit.favorites + fit.regular + fit.gap <= room + 0.001,
@@ -169,9 +169,9 @@ int main(void) {
         [unreadSet removeObject:@"c"];
         Check([NFBVisibleEdgeApps(edgeOrder, YES, countUnread) isEqual:@[@"a"]], @"Consumed unread folds again");
         Check([NFBVisibleEdgeApps(edgeOrder, NO, countUnread) isEqual:edgeOrder], @"Expand restores all apps and their order");
-        Check([NFBRecentBackgroundTwo(edgeOrder, @[@"c", @"b", @"d", @"a"], @[@"c"]) isEqual:@[@"b", @"d"]], @"Split picks two recent non-favorites");
-        Check([NFBRecentBackgroundTwo(edgeOrder, @[@"a", @"c", @"b", @"d"], @[@"c"]) isEqual:@[@"a", @"b"]], @"Recency changes the two members");
-        Check(NFBRecentBackgroundTwo(edgeOrder, @[@"removed"], @[]).count == 0, @"Stale switcher history cannot create icons");
+        Check([NFBRecentBackgroundThree(edgeOrder, @[@"c", @"b", @"d", @"a"], @[@"c"]) isEqual:@[@"b", @"d", @"a"]], @"Split picks three recent non-favorites");
+        Check([NFBRecentBackgroundThree(edgeOrder, @[@"a", @"c", @"b", @"d"], @[@"c"]) isEqual:@[@"a", @"b", @"d"]], @"Recency changes the three members");
+        Check(NFBRecentBackgroundThree(edgeOrder, @[@"removed"], @[]).count == 0, @"Stale switcher history cannot create icons");
         NSArray *sixApps = @[@"a", @"b", @"c", @"d", @"e", @"f"];
         NSArray *four = NFBRecentFour(sixApps, sixApps, @[], @"b", @[]);
         Check([four isEqual:@[@"a", @"b", @"c", @"d"]], @"Only four actual members, not merely four visible rows");
