@@ -168,6 +168,9 @@ int main(void) {
         Check([NFBVisibleEdgeApps(edgeOrder, YES, countUnread) isEqual:@[@"a", @"c"]], @"New unread emerges without expanding read apps");
         [unreadSet removeObject:@"c"];
         Check([NFBVisibleEdgeApps(edgeOrder, YES, countUnread) isEqual:@[@"a"]], @"Consumed unread folds again");
+        Check([NFBVisibleEdgeAppsExcludingFullscreen(edgeOrder, @"a", YES, countUnread) count] == 0, @"Fullscreen unread icon is not duplicated in collapsed rail");
+        Check([NFBVisibleEdgeAppsExcludingFullscreen(edgeOrder, @"a", NO, countUnread) isEqual:@[@"b", @"d", @"c"]], @"Fullscreen app excluded while all background apps expand");
+        Check([NFBVisibleEdgeAppsExcludingFullscreen(edgeOrder, nil, YES, countUnread) isEqual:@[@"a"]], @"Leaving fullscreen restores unread icon to container");
         Check([NFBVisibleEdgeApps(edgeOrder, NO, countUnread) isEqual:edgeOrder], @"Expand restores all apps and their order");
         Check([NFBRecentBackgroundThree(edgeOrder, @[@"c", @"b", @"d", @"a"], @[@"c"]) isEqual:@[@"b", @"d", @"a"]], @"Split picks three recent non-favorites");
         Check([NFBRecentBackgroundThree(edgeOrder, @[@"a", @"c", @"b", @"d"], @[@"c"]) isEqual:@[@"a", @"b", @"d"]], @"Recency changes the three members");

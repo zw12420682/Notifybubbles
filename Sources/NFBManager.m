@@ -796,6 +796,11 @@ static double NFBNumber(NSString *key, double fallback) {
     BOOL home = [springboard respondsToSelector:@selector(isShowingHomescreen)] && [springboard isShowingHomescreen];
     BOOL edgeMode = !floatingApp.length;
     NSString *active = NFBTrollVisibleApp() ?: floatingApp ?: (home ? nil : NFBString(NFBGet(NFBGet(springboard, @"_accessibilityFrontMostApplication"), @"bundleIdentifier")));
+    NSString *frontApp = home ? nil : NFBString(NFBGet(NFBGet(springboard, @"_accessibilityFrontMostApplication"), @"bundleIdentifier"));
+    NSString *fullscreenApp = edgeMode && ![self isLocked] && frontApp.length &&
+        ![frontApp isEqual:@"com.apple.springboard"] && ![frontApp isEqual:NFBTrollVisibleApp()] &&
+        ![self.closingApps containsObject:frontApp] ? frontApp : nil;
+    if (fullscreenApp.length && ![apps containsObject:fullscreenApp]) [apps addObject:fullscreenApp];
     // Recency decides membership, never a forced jump of an existing icon.
     if (active.length && ![self.closingApps containsObject:active] && ![self.dismissedSwitcher containsObject:active] && ![apps containsObject:active])
         [apps addObject:active];
@@ -816,10 +821,10 @@ static double NFBNumber(NSString *key, double fallback) {
     NSArray<NSString *> *railApps;
     NSUInteger storedCount = 0;
     if (edgeMode) {
-        railApps = NFBVisibleEdgeApps(allEdgeApps, self.backgroundCollapsed, ^NSUInteger(NSString *app) {
+        railApps = NFBVisibleEdgeAppsExcludingFullscreen(allEdgeApps, fullscreenApp, self.backgroundCollapsed, ^NSUInteger(NSString *app) {
             return [self.store countForApp:app];
         });
-        for (NSString *app in allEdgeApps) if (![self.store countForApp:app]) storedCount++;
+        for (NSString *app in allEdgeApps) if (![app isEqual:fullscreenApp] && ![self.store countForApp:app]) storedCount++;
     } else {
         // Membership, not merely viewport height, is limited to two recent apps.
         NSMutableArray<NSString *> *background = [NSMutableArray array];
@@ -828,6 +833,7 @@ static double NFBNumber(NSString *key, double fallback) {
         railApps = NFBRecentBackgroundThree(background, history.array, self.favoriteApps);
     }
     NSMutableArray<NSString *> *displayApps = [railApps mutableCopy];
+    if (fullscreenApp.length) [displayApps addObject:fullscreenApp];
     [displayApps addObject:edgeMode ? NFBStorageID : NFBClearAllID];
     self.storedApps = @[];
     BOOL orderChanged = ![self.lastLayoutApps isEqualToArray:displayApps];
@@ -951,7 +957,8 @@ static double NFBNumber(NSString *key, double fallback) {
     if (edgeMode) {
         CGFloat edgeFloor = keyboardUp ? NFBKeyboardTopInView(root) - 12 - step
             : CGRectGetHeight(bounds) - MAX(safe.bottom, 12);
-        CGFloat room = MAX(0, edgeFloor - top - side - 9);
+        CGFloat outsideHeight = fullscreenApp.length ? side + 9 : 0;
+        CGFloat room = MAX(0, edgeFloor - top - side - 9 - outsideHeight);
         height = MIN(MIN(6 * step + side, contentHeight), room);
         // Reserve a separate transparent strip for unread apps above the container.
         CGFloat gap = height > 0 && unreadApps.count ? 9 : 0;
@@ -962,7 +969,7 @@ static double NFBNumber(NSString *key, double fallback) {
             height = MIN(height, MAX(0, room - unreadHeight - gap));
         }
         CGFloat total = height + unreadHeight + gap;
-        CGFloat bottom = MAX(top + total, MIN(edgeFloor - side - 9, anchor + step - side / 2 + padding));
+        CGFloat bottom = MAX(top + total, MIN(edgeFloor - side - 9 - outsideHeight, anchor + step - side / 2 + padding));
         self.edgeAvailable = available;
         self.resolvedEdgePosition = (bottom - step + side / 2 - padding - top) / MAX(1, available);
         BOOL edgeExpanded = !keyboardUp && (self.edgeUntil > CACurrentMediaTime() ||
@@ -1038,9 +1045,10 @@ static double NFBNumber(NSString *key, double fallback) {
     [displayApps enumerateObjectsUsingBlock:^(NSString *appID, __unused NSUInteger index, __unused BOOL *stop) {
         BOOL isClearAll = [appID isEqualToString:NFBClearAllID];
         BOOL isStorage = [appID isEqualToString:NFBStorageID];
+        BOOL isFullscreen = [appID isEqualToString:fullscreenApp];
         BOOL isOutside = edgeMode && [unreadApps containsObject:appID];
         NSUInteger rowIndex = isOutside ? [unreadApps indexOfObject:appID] : [railApps indexOfObject:appID];
-        UIView *parent = (isClearAll || isStorage) ? root : (isOutside ? self.unreadRail : self.rail);
+        UIView *parent = (isClearAll || isStorage || isFullscreen) ? root : (isOutside ? self.unreadRail : self.rail);
         NFBBubble *button = self.buttons[appID];
         BOOL fresh = !button;
         if (fresh) {
@@ -1099,7 +1107,7 @@ static double NFBNumber(NSString *key, double fallback) {
         }
         // A bubble we already started retracting must not be re-expanded by the
         // stale "window still visible" reading taken mid-transition.
-        [button updateActiveMark:(!isStorage && !isClearAll && [active isEqualToString:appID])
+        [button updateActiveMark:(!isStorage && !isClearAll && ([active isEqualToString:appID] || isFullscreen))
             diameter:diameter duration:layoutDuration];
         BOOL retracting = [self.retracting containsObject:appID];
         // "Has unread" is now the store's unread count, not a short timer: a
@@ -1117,10 +1125,10 @@ static double NFBNumber(NSString *key, double fallback) {
         CGRect targetBounds = CGRectMake(0, 0, side, side);
         // Keep the same bottom-first app ordering on desktop and in split view.
         // The clear action is appended last and therefore stays above all apps.
-        CGFloat rowY = (isClearAll || isStorage) ? side / 2 : NFBRowCenter(isOutside ? unreadApps.count : rowCount, rowIndex, step, side);
+        CGFloat rowY = (isClearAll || isStorage || isFullscreen) ? side / 2 : NFBRowCenter(isOutside ? unreadApps.count : rowCount, rowIndex, step, side);
         CGFloat corner = !isOutside && !isClearAll ? diameter * 0.23 : diameter / 2;
         CGPoint targetCenter = (isClearAll || isStorage) ? CGPointMake(CGRectGetMidX(railFrame), clearCenterY)
-            : CGPointMake(side / 2, rowY);
+            : (isFullscreen ? CGPointMake(CGRectGetWidth(bounds) - side / 2, clearCenterY + side + 9) : CGPointMake(side / 2, rowY));
         if (fresh) {
             button.bounds = targetBounds;
             button.center = targetCenter;
@@ -1134,7 +1142,7 @@ static double NFBNumber(NSString *key, double fallback) {
         CGFloat alpha = self.iconOpacity;
         if (isClearAll || isStorage) {
             alpha = 1.0;
-        } else if ([active isEqualToString:appID]) {
+        } else if (isFullscreen || [active isEqualToString:appID]) {
             alpha = 1.0;
         }
         // A bubble mid-shake (fresh notification during split view) stays fully

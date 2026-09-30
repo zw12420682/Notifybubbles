@@ -58,3 +58,11 @@ static inline NSArray<NSString *> *NFBRecentBackgroundThree(NSArray<NSString *> 
         if ([apps containsObject:app] && ![favorites containsObject:app]) [ranked addObject:app];
     return [ranked.array subarrayWithRange:NSMakeRange(0, MIN((NSUInteger)3, ranked.count))];
 }
+
+// Foreground fullscreen icon has a dedicated row, regardless of unread state.
+static inline NSArray<NSString *> *NFBVisibleEdgeAppsExcludingFullscreen(NSArray<NSString *> *ordered,
+        NSString *fullscreen, BOOL collapsed, NSUInteger (^unread)(NSString *)) {
+    NSMutableArray<NSString *> *eligible = [ordered mutableCopy];
+    if (fullscreen.length) [eligible removeObject:fullscreen];
+    return NFBVisibleEdgeApps(eligible, collapsed, unread);
+}
