@@ -14,11 +14,11 @@ static inline BOOL NFBBackFresh(uint64_t request, uint64_t now) {
 // state instead: reply = (request << NFBBackStatusShift) | status. The requester
 // (SpringBoard) can then log and surface the exact reason.
 typedef NS_ENUM(uint8_t, NFBBackStatus) {
-    NFBBackStatusPerformed = 0,     // Synthetic swipe event sequence delivered (App decides outcome).
+    NFBBackStatusPerformed = 0,     // A back action actually ran.
     NFBBackStatusNoWindow = 1,      // No usable window in the app process.
-    NFBBackStatusNoBackAction = 2,  // Required synthetic touch interface unavailable.
+    NFBBackStatusNoBackAction = 2,  // Windows found, but no nav stack / web history.
     NFBBackStatusCustomBackItem = 3,// Custom left button or hidesBackButton: do not guess.
-    NFBBackStatusTransitioning = 4, // Another gesture is active, or target window changed.
+    NFBBackStatusTransitioning = 4, // Transition in flight or an alert is up.
     NFBBackStatusException = 5,     // The back attempt threw.
 };
 enum { NFBBackStatusShift = 4 };

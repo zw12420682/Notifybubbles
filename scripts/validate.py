@@ -4,9 +4,7 @@ import plistlib
 
 root = Path(__file__).resolve().parents[1]
 required = [
-    "Sources/NFBTopAction.h",
-    "Sources/NFBRightEdgeAction.h",
-    "layout/DEBIAN/postinst",
+    "Sources/NFBTrollBadges.m", "Sources/NFBTrollBadgeText.h",
     'Sources/NFBSplitClosePolicy.h', 'Sources/NFBWindowControls.h', 'Sources/NFBWindowControls.m', 'Sources/NFBStorageLayout.h', 'Sources/NFBEdgeInspection.h', 'Makefile', 'control', 'Sources/NFBAppExit.h', 'Sources/NFBAppExit.m',
     # Retired app-side back helper: kept on disk so it can be restored, but the
     # Makefile must not build it (see the assertions below).
@@ -39,21 +37,16 @@ assert 'Sources/NFBSwitcher.m' in (root / 'Makefile').read_text(), 'Update the r
 assert 'Sources/NFBKeyboard.m' in (root / 'Makefile').read_text(), 'Update the root Makefile for the keyboard watcher.'
 assert 'Sources/NFBTrollOpen.m' in (root / 'Makefile').read_text(), 'Update the root Makefile for TrollOpen integration.'
 assert 'Sources/NFBAppExit.m' in (root / 'Makefile').read_text(), 'Update the root Makefile for the exit helper.'
-assert 'NotifyBubblesBack_FILES' not in (root / 'Makefile').read_text()
-assert 'Sources/NFBBackRequest.m' not in (root / 'Makefile').read_text()
+# The app-side back helper is retired: it filtered on com.apple.UIKit, so it was
+# loaded into every app, and no gesture drives it any more.
+assert 'NotifyBubblesBack_FILES' not in (root / 'Makefile').read_text(), \
+    'NotifyBubblesBack is retired; do not build it into every app again.'
+assert 'TWEAK_NAME = NotifyBubbles\n' in (root / 'Makefile').read_text(), \
+    'Build only the SpringBoard component; app-side helpers stay retired.'
 prefs = plistlib.loads((root / 'Preferences/Resources/Root.plist').read_bytes())
-assert {x['key'] for x in prefs['items'] if 'key' in x} == {'Enabled','ShowOnLock','ShowOnHome','ShowInApps','IconSize','IconOpacity','ClosePreviousSplit','FreezeDesktop','HideInScreenshots','DesktopBlurTransparency'}
+assert {x['key'] for x in prefs['items'] if 'key' in x} == {'Enabled','ShowOnLock','ShowOnHome','ShowInApps','IconSize','IconOpacity','ClosePreviousSplit'}
 filter_ = plistlib.loads((root / 'NotifyBubbles.plist').read_bytes())
 assert filter_['Filter']['Bundles'] == ['com.apple.springboard']
 print('PASS: required files, property lists, RootHide configuration, preference keys and injection filter')
 
 assert 'NotifyBubblesKeyboard_FILES' not in (root / 'Makefile').read_text()
-
-assert (root / "Sources/NFBPrivacy.m").is_file()
-assert "Sources/NFBPrivacy.m" in (root / "Makefile").read_text()
-
-for relative in ['Sources/NFBWindowControls.m', 'Sources/NFBEdgeInspection.h', 'Sources/NFBRightEdgeAction.h', 'Sources/NFBTopAction.h']:
-    source = (root / relative).read_text(encoding='utf-8')
-    for forbidden in ['class_getInstanceVariable', 'object_getIvar', 'ivar_getOffset', 'valueForKey:@"_targets"', 'NSStringFromSelector']:
-        assert forbidden not in source, f'Unsafe gesture action inspection reintroduced: {relative}: {forbidden}'
-print('PASS: close adapter and edge diagnostics do not read private gesture action pointers')

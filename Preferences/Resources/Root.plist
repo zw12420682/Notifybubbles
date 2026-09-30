@@ -10,9 +10,9 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
-			<string>通知悬浮气泡 · 0.48.16</string>
+			<string>通知悬浮气泡 · 测试版 0.46.0</string>
 			<key>footerText</key>
-			<string>绿色窗口按钮单击执行 TrollOpen 顶部长按功能：有横屏时仅显示在最前面的横屏窗口右下角，否则显示在竖屏容器上方。当前 App 只高亮，不自动置顶；需要时滚动到可见位置。后台容器只保留最近使用的 4 个 App。关闭按钮单击执行 TrollOpen 右侧橙色区域关闭；长按清理后台。边缘模式不显示此按钮。</string>
+			<string>收到未读消息时图标伸出并停留约 1 秒后收回。只要有 App 处于 TrollOpen 分屏，整排气泡都保持伸出、不再收回；键盘弹出时气泡若处于伸出状态则自动缩回让位，键盘收起后重新弹出。点击执行通知或 App 打开动作；若该 App 没有未读通知且正占据 TrollOpen 分屏浮窗，则单击将该分屏窗口放大到全屏。长按：分屏浮窗对应的图标长按无任何动作；其余图标长按后气泡破裂消失，同时该 App 退出后台（进程终止）。双击不绑定任何操作。</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -120,7 +120,7 @@
 			<key>label</key>
 			<string>气泡与角标</string>
 			<key>footerText</key>
-			<string>单击图标同时伸出并执行打开操作，不等待动画结束。边缘缩回时长按拖动整组位置；伸出后及分屏图标长按清除图标及对应 App。不使用双击。伸出停留 1 秒。</string>
+			<string>边缘容器最多显示 3 个图标，可上下滑动；未读图标在容器外单独显示。长按任意边缘图标后上下拖动，可调整整组位置，松手保存。双击图标关闭气泡和对应 App 后台；单击保留原来的打开操作。伸出后停留 1 秒再缩回。</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -154,75 +154,9 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
-			<string>排列规则</string>
+			<string>收纳规则</string>
 			<key>footerText</key>
-			<string>边缘和分屏后台容器只保留最近使用的 4 个 App，边缘未读气泡单独显示。分屏常用 App 在上，可滚动查看；后台容器在下。容器顶部位于分屏顶部向下 5% 窗口高度处。键盘弹出时缩短可见区域。关闭按钮仅在分屏容器下方显示。</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>label</key>
-			<string>分屏与截屏</string>
-			<key>footerText</key>
-			<string>冻屏仅在桌面背景且存在展开的竖屏窗口时生效；横竖屏并存时仍冻结，只有横屏、小窗或背景为全屏 App 时不冻结。模糊透明度越高，桌面越清晰；100% 完全透明但仍防误触。截屏隐藏全部气泡、角标、容器及清理按钮，不隐藏分屏 App，可能同时影响录屏。</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>label</key>
-			<string>分屏时冻结桌面</string>
-			<key>key</key>
-			<string>FreezeDesktop</string>
-			<key>default</key>
-			<false/>
-			<key>defaults</key>
-			<string>local.notifybubbles</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSSliderCell</string>
-			<key>label</key>
-			<string>桌面模糊透明度（%）</string>
-			<key>key</key>
-			<string>DesktopBlurTransparency</string>
-			<key>defaults</key>
-			<string>local.notifybubbles</string>
-			<key>default</key>
-			<integer>35</integer>
-			<key>min</key>
-			<integer>0</integer>
-			<key>max</key>
-			<integer>100</integer>
-			<key>showValue</key>
-			<true/>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>label</key>
-			<string>截屏隐藏气泡</string>
-			<key>key</key>
-			<string>HideInScreenshots</string>
-			<key>default</key>
-			<false/>
-			<key>defaults</key>
-			<string>local.notifybubbles</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>label</key>
-			<string>常用 App</string>
-			<key>footerText</key>
-			<string>在分屏上方容器显示自选 App。从下往上排列，最下面为第一位；下方容器不重复显示已选 App。未选择时不占空间。</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSButtonCell</string>
-			<key>label</key>
-			<string>选择常用 App</string>
-			<key>action</key>
-			<string>chooseFavorites</string>
+			<string>最近使用的两个 App 和未读气泡保留在外。展开收纳后，5 秒无操作自动收起。横屏分屏不吸附，清理按钮在图标栏最上方。</string>
 		</dict>
 	</array>
 </dict>
