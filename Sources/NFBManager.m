@@ -15,7 +15,7 @@
 #import "NFBPrivacy.h"
 #import "NFBContainerLayout.h"
 
-static const NSTimeInterval NFBMotion = 0.6;
+static const NSTimeInterval NFBMotion = 0.35;
 // How long a bubble stays expanded after an unread arrives.
 static const NSTimeInterval NFBHold = 1.0;
 // No double-tap recognizer: a short tap resolves on release.
@@ -139,6 +139,7 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, strong) NFBStore *store;
 @property(nonatomic, strong) NFBWindow *window;
 @property(nonatomic, strong) NFBRail *rail;
+@property(nonatomic) BOOL backgroundCollapsed;
 @property(nonatomic, strong) NFBBubble *topActionButton;
 @property(nonatomic, strong) UITapGestureRecognizer *topActionTap;
 @property(nonatomic, weak) UIView *topActionTarget;
@@ -810,13 +811,19 @@ static double NFBNumber(NSString *key, double fallback) {
         return [self.store countForApp:app];
     });
     NSArray<NSString *> *unreadApps = edgeMode ? groups[1] : @[];
-    NSArray<NSString *> *railApps = NFBRecentFour(apps,
-        history.array, self.backgroundOrder, active, @[]);
+    NSMutableOrderedSet<NSString *> *eligible = [NSMutableOrderedSet orderedSetWithArray:apps];
+    if (!edgeMode) [eligible removeObjectsInArray:self.favoriteApps];
+    NSMutableOrderedSet<NSString *> *stable = [NSMutableOrderedSet orderedSet];
+    for (NSString *app in self.backgroundOrder) if ([eligible containsObject:app]) [stable addObject:app];
+    for (NSString *app in history) if ([eligible containsObject:app]) [stable addObject:app];
+    [stable addObjectsFromArray:eligible.array];
+    NSArray<NSString *> *railApps = stable.array;
     self.backgroundOrder = railApps;
     NSMutableArray<NSString *> *displayApps = [railApps mutableCopy];
     if (edgeMode) for (NSString *app in unreadApps) if (![displayApps containsObject:app]) [displayApps addObject:app];
     if (!edgeMode) [displayApps addObject:NFBClearAllID];
-    NSUInteger storedCount = 0;
+    else [displayApps addObject:NFBStorageID];
+    NSUInteger storedCount = railApps.count;
     self.storedApps = @[];
     BOOL orderChanged = ![self.lastLayoutApps isEqualToArray:displayApps];
     self.lastLayoutApps = [displayApps copy];
@@ -916,7 +923,9 @@ static double NFBNumber(NSString *key, double fallback) {
     CGRect topActionFrame = CGRectNull;
     if (containerMode) {
         CGFloat ceiling = MAX(safe.top, 12);
-        CGFloat floor = keyboardUp ? NFBKeyboardTopInView(root) - 12 - step : CGRectGetHeight(bounds) - MAX(safe.bottom, 12);
+        CGFloat floor = CGRectGetHeight(bounds) - MAX(safe.bottom, 12);
+        if (attached) floor = MIN(floor, CGRectGetMaxY(splitFrame) - CGRectGetHeight(splitFrame) * 0.05);
+        if (keyboardUp) floor = MIN(floor, NFBKeyboardTopInView(root) - 12 - step);
         CGFloat desiredTop = attached ? NFBSplitRailTop(CGRectGetMinY(splitFrame), CGRectGetHeight(splitFrame)) : railFrame.origin.y;
         CGFloat y = MAX(ceiling, MIN(desiredTop, floor - side - 9));
         // The action occupies its own row above both rails, never inside scrolling content.
@@ -937,10 +946,10 @@ static double NFBNumber(NSString *key, double fallback) {
     if (edgeMode) {
         CGFloat edgeFloor = keyboardUp ? NFBKeyboardTopInView(root) - 12 - step
             : CGRectGetHeight(bounds) - MAX(safe.bottom, 12);
-        CGFloat room = MAX(0, edgeFloor - top);
-        height = MIN(MIN(3 * step + side, contentHeight), room);
+        CGFloat room = MAX(0, edgeFloor - top - side - 9);
+        height = self.backgroundCollapsed ? 0 : MIN(MIN(6 * step + side, contentHeight), room);
         // Reserve a separate transparent strip for unread apps above the container.
-        CGFloat gap = rowCount && unreadApps.count ? 9 : 0;
+        CGFloat gap = height > 0 && unreadApps.count ? 9 : 0;
         CGFloat unreadHeight = MIN(unreadContentHeight, MAX(0, room - height - gap));
         // On short keyboard layouts leave at least one unread row reachable.
         if (unreadApps.count && unreadHeight < MIN(side, room)) {
@@ -948,7 +957,7 @@ static double NFBNumber(NSString *key, double fallback) {
             height = MIN(height, MAX(0, room - unreadHeight - gap));
         }
         CGFloat total = height + unreadHeight + gap;
-        CGFloat bottom = MAX(top + total, MIN(edgeFloor, anchor + step - side / 2 + padding));
+        CGFloat bottom = MAX(top + total, MIN(edgeFloor - side - 9, anchor + step - side / 2 + padding));
         self.edgeAvailable = available;
         self.resolvedEdgePosition = (bottom - step + side / 2 - padding - top) / MAX(1, available);
         BOOL edgeExpanded = !keyboardUp && (self.edgeUntil > CACurrentMediaTime() ||
@@ -1026,7 +1035,7 @@ static double NFBNumber(NSString *key, double fallback) {
         BOOL isStorage = [appID isEqualToString:NFBStorageID];
         BOOL isOutside = edgeMode && [unreadApps containsObject:appID];
         NSUInteger rowIndex = isOutside ? [unreadApps indexOfObject:appID] : [railApps indexOfObject:appID];
-        UIView *parent = isClearAll ? root : (isOutside ? self.unreadRail : self.rail);
+        UIView *parent = (isClearAll || isStorage) ? root : (isOutside ? self.unreadRail : self.rail);
         NFBBubble *button = self.buttons[appID];
         BOOL fresh = !button;
         if (fresh) {
@@ -1074,7 +1083,7 @@ static double NFBNumber(NSString *key, double fallback) {
 
         }
         else [self updateBubble:button record:[self.store latestForApp:appID]];
-        if (!isOutside && !isClearAll) {
+        if (!isOutside && !isClearAll && !isStorage) {
             CGFloat badgeHeight = MIN(16, diameter * 0.5);
             CGFloat badgeWidth = MIN(diameter, MAX(badgeHeight, CGRectGetWidth(button.badge.frame) * 0.8));
             button.badge.frame = CGRectMake(7, 7, badgeWidth, badgeHeight);
@@ -1103,9 +1112,9 @@ static double NFBNumber(NSString *key, double fallback) {
         CGRect targetBounds = CGRectMake(0, 0, side, side);
         // Keep the same bottom-first app ordering on desktop and in split view.
         // The clear action is appended last and therefore stays above all apps.
-        CGFloat rowY = isClearAll ? side / 2 : NFBRowCenter(isOutside ? unreadApps.count : rowCount, rowIndex, step, side);
+        CGFloat rowY = (isClearAll || isStorage) ? side / 2 : NFBRowCenter(isOutside ? unreadApps.count : rowCount, rowIndex, step, side);
         CGFloat corner = !isOutside && !isClearAll ? diameter * 0.23 : diameter / 2;
-        CGPoint targetCenter = isClearAll ? CGPointMake(CGRectGetMidX(railFrame), clearCenterY)
+        CGPoint targetCenter = (isClearAll || isStorage) ? CGPointMake(isStorage ? CGRectGetWidth(bounds) - side / 2 : CGRectGetMidX(railFrame), clearCenterY)
             : CGPointMake(side / 2, rowY);
         if (fresh) {
             button.bounds = targetBounds;
@@ -1118,7 +1127,7 @@ static double NFBNumber(NSString *key, double fallback) {
         // The clear-all bubble is an action, not an app: keep it fully opaque so
         // it stays discoverable, unlike the dimmed background bubbles around it.
         CGFloat alpha = self.iconOpacity;
-        if (isClearAll) {
+        if (isClearAll || isStorage) {
             alpha = 1.0;
         } else if ([active isEqualToString:appID]) {
             alpha = 1.0;
@@ -1455,49 +1464,17 @@ static double NFBNumber(NSString *key, double fallback) {
     button.badge.font = [UIFont systemFontOfSize:10 weight:UIFontWeightSemibold];
     button.badge.layer.cornerRadius = 9;
     button.accessibilityLabel = [NSString stringWithFormat:@"收纳了 %lu 个应用", (unsigned long)count];
-    button.accessibilityHint = @"点击展开，5 秒无操作后自动收起";
+    button.accessibilityHint = @"点击收起或展开后台图标，长按上下拖动位置";
 }
 - (void)storageLongPressed:(UILongPressGestureRecognizer *)gesture {
-    if (gesture.state != UIGestureRecognizerStateBegan) return;
-    if (self.buttons[NFBStorageID] != gesture.view || ![self acceptGesture]) return;
-    NSArray<NSString *> *targets = [self.storedApps copy];
-    NSDictionary *versions = [self.generations copy];
-    [targets enumerateObjectsUsingBlock:^(NSString *app, NSUInteger index, __unused BOOL *stop) {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(index * 0.16 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            if ([self.generations[app] unsignedIntegerValue] != [versions[app] unsignedIntegerValue] ||
-                [self.store countForApp:app] || ![self.store.appIDs containsObject:app]) return;
-            id sb = UIApplication.sharedApplication;
-            BOOL home = [sb respondsToSelector:@selector(isShowingHomescreen)] && [sb isShowingHomescreen];
-            NSString *front = NFBString(NFBGet(NFBGet(sb, @"_accessibilityFrontMostApplication"), @"bundleIdentifier"));
-            if ((!home && [front isEqual:app]) || [NFBTrollVisibleApp() isEqual:app]) return;
-            // Keep termination and removal in one main-queue turn.
-            BOOL accepted = NFBTerminateApp(app);
-            NFBDebugLog(@"storage: terminate %@ accepted=%d", app, accepted);
-            [self.dismissedSwitcher addObject:app];
-            [self.store closeApp:app];
-            [self.needsReveal removeObject:app];
-            if ([self.pendingRecord.appID isEqual:app]) self.pendingRecord = nil;
-            NFBBubble *tray = self.buttons[NFBStorageID];
-            if (tray) {
-                NFBBubble *effect = [[NFBBubble alloc] initWithFrame:tray.bounds];
-                effect.center = tray.center;
-                effect.imageView.frame = tray.imageView.frame;
-                effect.imageView.image = [UIImage systemImageNamed:@"square.stack.3d.up.fill"];
-                effect.imageView.contentMode = UIViewContentModeCenter;
-                effect.imageView.tintColor = UIColor.labelColor;
-                effect.alpha = tray.alpha;
-                effect.transform = tray.transform;
-                effect.userInteractionEnabled = NO;
-                [self.rail addSubview:effect];
-                [self burstBubble:effect];
-            }
-            [self refresh];
-        });
-    }];
+    if (!self.edgeMode || self.buttons[NFBStorageID] != gesture.view) return;
+    ((NFBBubble *)gesture.view).holdStartedRetracted = YES;
+    [self edgeLongPressed:gesture];
 }
 - (void)storageTapped:(UITapGestureRecognizer *)gesture {
     if (gesture.state != UIGestureRecognizerStateEnded || ![self acceptGesture]) return;
-    self.stackUntil = CACurrentMediaTime() + NFBStackHold;
+    self.backgroundCollapsed = !self.backgroundCollapsed;
+    if (!self.backgroundCollapsed) [self extendEdgeContainer];
     [self refresh];
 }
 - (BOOL)edgeBubbleIsRetracted:(NFBBubble *)button {

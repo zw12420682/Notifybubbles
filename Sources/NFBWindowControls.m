@@ -323,7 +323,8 @@ BOOL NFBPerformTopLongPress(UIView *window) {
     } @catch (NSException *exception) { NFBDebugLog(@"top-long-press: %@", exception); return NO; }
 }
 
-// Reconcile host content only once after a landscape-to-portrait transition settles.
+// Re-submit the settled portrait scene request once, then reconcile the host.
+// 324 delegates to pipSceneHandle client-orientation updates; 404 only lays out the host.
 // TOJBMETHOD404 is the original host bounds/transform layout routine used by 343.
 void NFBObserveRotationLayout(void) {
     if (!NSThread.isMainThread) return;
@@ -339,7 +340,7 @@ void NFBObserveRotationLayout(void) {
         NSInteger scene = orientationOf(window, @"sceneOrientation"), container = orientationOf(window, @"containerOrientation");
         NSMutableDictionary *state = [states objectForKey:window];
         if (!state) { state = [NSMutableDictionary dictionary]; [states setObject:state forKey:window]; }
-        if (scene >= 3 || container >= 3) { state[@"landscape"] = @YES; [state removeObjectForKey:@"since"]; return; }
+        if (scene >= 3 || container >= 3) { state[@"landscape"] = @YES; [state removeObjectForKey:@"since"]; [state removeObjectForKey:@"requested"]; return; }
         if (![state[@"landscape"] boolValue] || scene < 1 || scene > 2 || container != scene) return;
         NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
         NSValue *bounds = [NSValue valueWithCGRect:window.bounds];
@@ -347,6 +348,22 @@ void NFBObserveRotationLayout(void) {
             state[@"bounds"] = bounds; state[@"since"] = @(now); return;
         }
         if (now - [state[@"since"] doubleValue] < 0.65) return;
+        if (!state[@"requested"]) {
+            SEL request = NSSelectorFromString(@"TOJBMETHOD324:");
+            NSMethodSignature *requestSig = [window methodSignatureForSelector:request];
+            if (requestSig.numberOfArguments != 3 || strcmp(requestSig.methodReturnType, @encode(void)) ||
+                strcmp([requestSig getArgumentTypeAtIndex:2], @encode(NSInteger))) {
+                state[@"landscape"] = @NO;
+                NFBDebugLog(@"portrait-content: scene request unavailable app=%@", appOfWindow(window));
+                return;
+            }
+            // Mark before dispatch so a synchronous callback cannot send twice.
+            state[@"requested"] = @(now);
+            ((void (*)(id, SEL, NSInteger))objc_msgSend)(window, request, scene);
+            NFBDebugLog(@"portrait-content: resubmitted orientation=%ld app=%@", (long)scene, appOfWindow(window));
+            return;
+        }
+        if (now - [state[@"requested"] doubleValue] < 0.35) return;
         state[@"landscape"] = @NO;
         SEL layout = NSSelectorFromString(@"TOJBMETHOD404");
         NSMethodSignature *sig = [window methodSignatureForSelector:layout];
