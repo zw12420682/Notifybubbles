@@ -2,7 +2,6 @@
 #import "NFBDebugLog.h"
 #import <objc/message.h>
 #include <string.h>
-#include <stdlib.h>
 
 static inline id NFBEdgeObject(id object, NSString *name) {
     SEL sel = NSSelectorFromString(name);
@@ -17,36 +16,8 @@ static inline void NFBInspectEdgeView(UIView *view, NSString *path, NSUInteger d
     if (depth > 4) return;
     for (UIGestureRecognizer *gesture in view.gestureRecognizers) {
         NFBDebugLog(@"EDGE region=%@ view=%@ gesture=%@ enabled=%d", path, NSStringFromClass(view.class), NSStringFromClass(gesture.class), gesture.enabled);
-        @try {
-            id targets = [gesture valueForKey:@"_targets"];
-            NFBDebugLog(@"EDGE2 gestureDescription=%@", gesture.description);
-            NFBDebugLog(@"EDGE2 targetsClass=%@ targets=%@", NSStringFromClass([targets class]), targets);
-            NSArray *entries = [targets isKindOfClass:NSArray.class] ? targets :
-                ([targets isKindOfClass:NSSet.class] ? [targets allObjects] : @[]);
-            if ([targets isKindOfClass:NSOrderedSet.class]) entries = [targets array];
-            for (id entry in entries) {
-                NFBDebugLog(@"EDGE2 entryClass=%@ description=%@", NSStringFromClass([entry class]), entry);
-                // Report actual ivar names/types instead of silently requiring one layout.
-                for (Class cls = [entry class]; cls && cls != NSObject.class; cls = class_getSuperclass(cls)) {
-                    unsigned int count = 0;
-                    Ivar *vars = class_copyIvarList(cls, &count);
-                    for (unsigned int i = 0; i < count; i++)
-                        NFBDebugLog(@"EDGE2 ivar=%s type=%s", ivar_getName(vars[i]), ivar_getTypeEncoding(vars[i]));
-                    free(vars);
-                }
-                Ivar targetVar = class_getInstanceVariable([entry class], "_target");
-                Ivar actionVar = class_getInstanceVariable([entry class], "_action");
-                if (!targetVar || !actionVar || ivar_getTypeEncoding(targetVar)[0] != '@' || strcmp(ivar_getTypeEncoding(actionVar), ":") != 0) continue;
-                id target = object_getIvar(entry, targetVar);
-                SEL action = NULL;
-                ptrdiff_t offset = ivar_getOffset(actionVar);
-                if (offset < 0 || (size_t)offset + sizeof(action) > class_getInstanceSize([entry class])) continue;
-                memcpy(&action, (const char *)(__bridge const void *)entry + offset, sizeof(action));
-                if (!action || ![target respondsToSelector:action]) continue;
-                Method method = class_getInstanceMethod(object_getClass(target), action);
-                NFBDebugLog(@"EDGE target=%@ action=%@ encoding=%s", NSStringFromClass([target class]), NSStringFromSelector(action), method ? method_getTypeEncoding(method) : "unknown");
-            }
-        } @catch (__unused NSException *e) { NFBDebugLog(@"EDGE target inspection unavailable for %@", path); }
+        // Public recognizer metadata only. Private action storage may contain
+        // arm64e-authenticated pointers and must not be read or stringified.
     }
     if ([view isKindOfClass:UIControl.class]) {
         UIControl *control = (UIControl *)view;

@@ -1,4 +1,6 @@
-#import "NFBTrollBadgeText.h"
+#import "NFBTopAction.h"
+#import "NFBRightEdgeAction.h"
+#import "NFBContainerLayout.h"
 #import "NFBEdgeLayout.h"
 #import "NFBSplitClosePolicy.h"
 #import "NFBStorageLayout.h"
@@ -12,6 +14,34 @@
 @end
 @implementation TestRequest
 @end
+@interface TestEdgeClose : NSObject
+@property(nonatomic) NSUInteger calls;
+@property(nonatomic, strong) id received;
+- (void)TOJBMETHOD063:(id)tap;
+@end
+@implementation TestEdgeClose
+- (void)TOJBMETHOD063:(id)tap { self.calls++; self.received = tap; }
+@end
+@interface TestEdgeWrong : NSObject
+- (BOOL)TOJBMETHOD063:(id)tap;
+@end
+@implementation TestEdgeWrong
+- (BOOL)TOJBMETHOD063:(__unused id)tap { return YES; }
+@end
+@interface TestTopAction : NSObject
+@property(nonatomic) NSUInteger calls;
+@property(nonatomic, strong) id received;
+- (void)TOJBMETHOD087:(id)gesture;
+@end
+@implementation TestTopAction
+- (void)TOJBMETHOD087:(id)gesture { self.calls++; self.received = gesture; }
+@end
+@interface TestTopWrong : NSObject
+- (BOOL)TOJBMETHOD087:(id)gesture;
+@end
+@implementation TestTopWrong
+- (BOOL)TOJBMETHOD087:(__unused id)gesture { return YES; }
+@end
 static TestRequest *Request(double time) {
     TestRequest *r = [TestRequest new]; r.timestamp = [NSDate dateWithTimeIntervalSince1970:time]; return r;
 }
@@ -20,9 +50,25 @@ static void Check(BOOL value, NSString *message) {
 }
 int main(void) {
     @autoreleasepool {
-        Check(!NFBTrollBadgeText(nil) && !NFBTrollBadgeText(@0) && !NFBTrollBadgeText(@(-1)), @"Absent/zero numeric badge is hidden");
-        Check(!NFBTrollBadgeText(@"") && !NFBTrollBadgeText(@"0"), @"Empty/zero text badge is hidden");
-        Check([NFBTrollBadgeText(@12) isEqual:@"12"] && [NFBTrollBadgeText(@"99+") isEqual:@"99+"], @"Desktop badge value is preserved");
+        NSArray *overlapBackground = NFBRecentFour(@[@"mail", @"chat", @"video", @"maps", @"fifth"],
+            @[@"mail", @"chat", @"video", @"maps", @"fifth"], @[], @"chat", @[]);
+        Check([overlapBackground isEqual:@[@"mail", @"chat", @"video", @"maps"]],
+            @"Background four keeps favorite/unread apps when no exclusions are requested");
+
+        TestTopAction *topAction = [TestTopAction new];
+        id topGesture = [NSObject new];
+        Check(NFBDispatchTopLongPress(topAction, topGesture) && topAction.calls == 1 && topAction.received == topGesture,
+            @"Top action dispatches exactly once with the supplied gesture");
+        Check(!NFBDispatchTopLongPress([TestTopWrong new], topGesture), @"Reject incompatible top action ABI");
+        Check(!NFBDispatchTopLongPress([NSObject new], topGesture), @"Reject missing top action");
+        Check(!NFBDispatchTopLongPress(topAction, nil) && topAction.calls == 1, @"Missing gesture never dispatches");
+        Check(NFBExpandedWindowKind(0, 0, 1, 1) == 1, @"Expanded portrait is eligible");
+        Check(NFBExpandedWindowKind(0, 0, 3, 1) == 2 && NFBExpandedWindowKind(0, 0, 1, 4) == 2,
+            @"Landscape scene or container takes landscape precedence");
+        Check(NFBExpandedWindowKind(1, 0, 3, 3) == 0 && NFBExpandedWindowKind(0, 1, 1, 1) == 0,
+            @"Mini and transitioning windows have no action button");
+        Check(NFBExpandedWindowKind(-1, 0, 1, 1) == 0 && NFBExpandedWindowKind(0, 0, 0, 1) == 0,
+            @"Unknown window state is ineligible");
         NSArray *edgeApps = @[@"a", @"b", @"c", @"d", @"e"];
         NSArray *recent = @[@"gone", @"e", @"b", @"a"];
         NSArray *groups = NFBEdgeGroups(edgeApps, recent, ^NSUInteger(NSString *app) {
@@ -102,6 +148,53 @@ int main(void) {
         Check(!NFBShouldClosePreviousSplit(0, 1, 1, 1), @"Mini transition survives app switch");
         Check(!NFBShouldClosePreviousSplit(0, 0, 3, 1) && !NFBShouldClosePreviousSplit(0, 0, 1, 4), @"Landscape scene or container survives");
         Check(!NFBShouldClosePreviousSplit(-1, 0, 1, 1) && !NFBShouldClosePreviousSplit(0, -1, 1, 1) && !NFBShouldClosePreviousSplit(0, 0, 0, 1), @"Unknown state is preserved");
+        NFBContainerHeights fit = NFBFitContainers(1000, 62, 57, 8, 12);
+        Check(fit.favorites == 461 && fit.regular == 119 && fit.gap == 9, @"Favorites expand and background shows two rows");
+        fit = NFBFitContainers(160, 62, 57, 0, 12);
+        Check(fit.favorites == 0 && fit.gap == 0 && fit.regular == 119, @"No favorites leaves all room for regular icons");
+        fit = NFBFitContainers(300, 62, 57, 1, 12);
+        Check(fit.favorites == 62 && fit.regular == 119, @"Short favorites list gives remaining room to main rail");
+        for (NSUInteger count = 0; count < 12; count++) for (int room = 0; room < 600; room += 13) {
+            fit = NFBFitContainers(room, 62, 57, count, 12);
+            Check(fit.favorites >= 0 && fit.regular >= 0 && fit.favorites + fit.regular + fit.gap <= room + 0.001,
+                @"Keyboard-constrained rails never exceed available height");
+        }
+        NSArray *edgeOrder = NFBStableApps(@[@"a", @"b", @"c", @"d"], @[@"d", @"c"], @[@"b", @"a"]);
+        Check([edgeOrder isEqual:@[@"b", @"a", @"d", @"c"]], @"Full edge order remains stable");
+        NSMutableSet *unreadSet = [NSMutableSet setWithObject:@"c"];
+        NSUInteger (^countUnread)(NSString *) = ^NSUInteger(NSString *app) { return [unreadSet containsObject:app] ? 1 : 0; };
+        Check([NFBVisibleEdgeApps(edgeOrder, YES, countUnread) isEqual:@[@"c"]], @"Collapsed rail retains unread app");
+        [unreadSet addObject:@"a"];
+        Check([NFBVisibleEdgeApps(edgeOrder, YES, countUnread) isEqual:@[@"a", @"c"]], @"New unread emerges without expanding read apps");
+        [unreadSet removeObject:@"c"];
+        Check([NFBVisibleEdgeApps(edgeOrder, YES, countUnread) isEqual:@[@"a"]], @"Consumed unread folds again");
+        Check([NFBVisibleEdgeApps(edgeOrder, NO, countUnread) isEqual:edgeOrder], @"Expand restores all apps and their order");
+        Check([NFBRecentBackgroundTwo(edgeOrder, @[@"c", @"b", @"d", @"a"], @[@"c"]) isEqual:@[@"b", @"d"]], @"Split picks two recent non-favorites");
+        Check([NFBRecentBackgroundTwo(edgeOrder, @[@"a", @"c", @"b", @"d"], @[@"c"]) isEqual:@[@"a", @"b"]], @"Recency changes the two members");
+        Check(NFBRecentBackgroundTwo(edgeOrder, @[@"removed"], @[]).count == 0, @"Stale switcher history cannot create icons");
+        NSArray *sixApps = @[@"a", @"b", @"c", @"d", @"e", @"f"];
+        NSArray *four = NFBRecentFour(sixApps, sixApps, @[], @"b", @[]);
+        Check([four isEqual:@[@"a", @"b", @"c", @"d"]], @"Only four actual members, not merely four visible rows");
+        NSArray *next = NFBRecentFour(sixApps, @[@"d", @"a", @"b", @"c"], four, @"d", @[]);
+        Check([next isEqual:four], @"Active fourth does not jump to first");
+        next = NFBRecentFour(sixApps, sixApps, four, @"f", @[]);
+        Check([next isEqual:@[@"a", @"b", @"c", @"f"]], @"Missing current replaces least recent chosen member, no reordering survivors");
+        next = NFBRecentFour(sixApps, @[@"f", @"a", @"b", @"c"], next, @"f", @[]);
+        Check([next isEqual:@[@"a", @"b", @"c", @"f"]], @"Recency update and repeated refresh keep new active position");
+        next = NFBRecentFour(sixApps, sixApps, four, @"a", @[@"a", @"b"]);
+        Check([next isEqual:@[@"c", @"d", @"e", @"f"]], @"Favorites excluded before limiting and not reinserted as current");
+        Check(NFBRecentFour(@[], sixApps, four, @"a", @[]).count == 0, @"Stale history cannot recreate removed apps");
+        next = NFBRecentFour(@[@"a", @"a", @"b"], @[], @[], nil, @[]);
+        Check([next isEqual:@[@"a", @"b"]], @"No duplicate icons");
+        Check(NFBRevealOffset(0, 233, 347, 316, 62) == 114, @"Scroll down to entire current bottom icon");
+        Check(NFBRevealOffset(114, 233, 347, 31, 62) == 0, @"Scroll up to entire current top icon");
+        Check(NFBRevealOffset(57, 233, 347, 145, 62) == 57, @"Visible active icon leaves scroll alone");
+        Check(NFBRevealOffset(0, 100, 233, 202, 62) == 133, @"Keyboard-shortened viewport reveals current icon");
+        Check(NFBSplitRailTop(200, 600) == 230 && NFBSplitRailTop(100, 1000) == 150, @"Five percent uses split height, not screen height");
+        TestEdgeClose *edge = [TestEdgeClose new]; id tap = [NSObject new];
+        Check(NFBDispatchRightEdgeTap(edge, tap) && edge.calls == 1 && edge.received == tap, @"Original tap callback invoked exactly once with recognizer");
+        Check(!NFBDispatchRightEdgeTap([TestEdgeWrong new], tap), @"ABI mismatch rejected");
+        Check(!NFBDispatchRightEdgeTap([NSObject new], tap) && !NFBDispatchRightEdgeTap(edge, nil), @"Missing callback/recognizer rejected");
         NSLog(@"PASS: queue chronology, per-app isolation, deduplication, consumption, switcher pins and geometry");
     }
     return 0;

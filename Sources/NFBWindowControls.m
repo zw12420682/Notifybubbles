@@ -1,5 +1,7 @@
 #import "NFBWindowControls.h"
 #import "NFBTrollOpen.h"
+#import "NFBRightEdgeAction.h"
+#import "NFBTopAction.h"
 #import "NFBSplitClosePolicy.h"
 #import "NFBDebugLog.h"
 #import <UIKit/UIKit.h>
@@ -57,15 +59,16 @@ static BOOL visibleView(UIView *view) {
     CGRect rect = [view convertRect:view.bounds toView:view.window];
     return CGRectIntersectsRect(rect, view.window.bounds);
 }
-static UIView *portraitInTree(UIView *view, Class floatingClass) {
+static UIView *floatingInTree(UIView *view, Class floatingClass, BOOL landscape) {
     if (view.hidden || view.alpha < 0.01) return nil;
     // A floating window is a candidate as a whole; its app content need not be scanned.
     if ([view isKindOfClass:floatingClass]) {
         if (!visibleView(view) || !appOfWindow(view).length ||
             boolStateOf(view, @"isClosingWithKeepAliveAnimation") == 1) return nil;
-        return NFBShouldClosePreviousSplit(boolStateOf(view, @"miniWindowModeEnabled"),
+        NSInteger kind = NFBExpandedWindowKind(boolStateOf(view, @"miniWindowModeEnabled"),
             boolStateOf(view, @"isTransitioningFromMiniMode"),
-            orientationOf(view, @"sceneOrientation"), orientationOf(view, @"containerOrientation")) ? view : nil;
+            orientationOf(view, @"sceneOrientation"), orientationOf(view, @"containerOrientation"));
+        return kind == (landscape ? 2 : 1) ? view : nil;
     }
     // zPosition overrides subview order; reversed stable order breaks ties.
     NSArray<UIView *> *frontFirst = [[view.subviews reverseObjectEnumerator].allObjects
@@ -75,21 +78,14 @@ static UIView *portraitInTree(UIView *view, Class floatingClass) {
             return NSOrderedSame;
         }];
     for (UIView *child in frontFirst) {
-        UIView *found = portraitInTree(child, floatingClass);
+        UIView *found = floatingInTree(child, floatingClass, landscape);
         if (found) return found;
     }
     return nil;
 }
-static UIView *attachmentWindow(void) {
+static UIView *frontmostFloatingWindow(BOOL landscape) {
     if (!NSThread.isMainThread) return nil;
     @try {
-        id current = currentWindow();
-        // Only expanded portrait windows may own the rail. A current landscape
-        // window yields attachment to the frontmost remaining portrait window.
-        if (NFBTrollVisibleApp().length && [current isKindOfClass:UIView.class] && visibleView(current) &&
-            NFBShouldClosePreviousSplit(boolStateOf(current, @"miniWindowModeEnabled"),
-                boolStateOf(current, @"isTransitioningFromMiniMode"),
-                orientationOf(current, @"sceneOrientation"), orientationOf(current, @"containerOrientation"))) return current;
         Class floatingClass = NSClassFromString(@"TOJBClass012");
         if (!floatingClass) return nil;
         NSMutableOrderedSet<UIWindow *> *windows = [NSMutableOrderedSet orderedSet];
@@ -110,11 +106,39 @@ static UIView *attachmentWindow(void) {
                 return NSOrderedSame;
             }];
         for (UIWindow *window in frontFirst) {
-            UIView *candidate = portraitInTree(window, floatingClass);
+            UIView *candidate = floatingInTree(window, floatingClass, landscape);
             if (candidate) return candidate;
         }
-    } @catch (NSException *exception) { NFBDebugLog(@"attachment lookup: %@", exception); }
+    } @catch (NSException *exception) { NFBDebugLog(@"floating lookup: %@", exception); }
     return nil;
+}
+static UIView *attachmentWindow(void) {
+    if (!NSThread.isMainThread) return nil;
+    @try {
+        id current = currentWindow();
+        if (NFBTrollVisibleApp().length && [current isKindOfClass:UIView.class] && visibleView(current) &&
+            boolStateOf(current, @"isClosingWithKeepAliveAnimation") != 1 &&
+            NFBShouldClosePreviousSplit(boolStateOf(current, @"miniWindowModeEnabled"),
+                boolStateOf(current, @"isTransitioningFromMiniMode"),
+                orientationOf(current, @"sceneOrientation"), orientationOf(current, @"containerOrientation"))) return current;
+        return frontmostFloatingWindow(NO);
+    } @catch (NSException *exception) { NFBDebugLog(@"attachment lookup: %@", exception); return nil; }
+}
+UIView *NFBTopActionWindow(void) {
+    // Any expanded landscape window wins, even with a portrait window in front.
+    return frontmostFloatingWindow(YES) ?: attachmentWindow();
+}
+BOOL NFBWindowIsLandscape(UIView *window) {
+    @try {
+        return NFBExpandedWindowKind(boolStateOf(window, @"miniWindowModeEnabled"),
+            boolStateOf(window, @"isTransitioningFromMiniMode"),
+            orientationOf(window, @"sceneOrientation"), orientationOf(window, @"containerOrientation")) == 2;
+    } @catch (__unused NSException *exception) { return NO; }
+}
+CGRect NFBWindowFrameInView(UIView *window, UIView *root) {
+    if (!NSThread.isMainThread || !root.window || !window) return CGRectNull;
+    @try { return visibleView(window) ? [window convertRect:window.bounds toView:root] : CGRectNull; }
+    @catch (__unused NSException *exception) { return CGRectNull; }
 }
 NSString *NFBSplitAttachmentApp(void) {
     @try { return appOfWindow(attachmentWindow()); }
@@ -230,4 +254,124 @@ void NFBObserveSplitPlacement(NSString *app) {
             } @catch (NSException *exception) { NFBDebugLog(@"placement: %@", exception); }
         });
     } @catch (NSException *exception) { NFBDebugLog(@"placement lookup: %@", exception); }
+}
+
+// Supply the ended tap expected by the original handler without dispatching a
+// second UIKit event, changing the real recognizer, or creating a screen touch.
+@interface NFBRightEdgeTap : UITapGestureRecognizer
+@property(nonatomic, weak) UIView *edgeRegion;
+@end
+@implementation NFBRightEdgeTap
+- (UIGestureRecognizerState)state { return UIGestureRecognizerStateEnded; }
+- (UIView *)view { return self.edgeRegion; }
+- (CGPoint)locationInView:(UIView *)view {
+    UIView *region = self.edgeRegion;
+    return [region convertPoint:CGPointMake(CGRectGetMidX(region.bounds), CGRectGetMidY(region.bounds)) toView:view];
+}
+@end
+
+BOOL NFBCloseCurrentSplit(void) {
+    if (!NSThread.isMainThread) return NO;
+    @try {
+        UIView *window = NFBTrollVisibleApp().length ? currentWindow() : attachmentWindow();
+        if (![window isKindOfClass:UIView.class] || !visibleView(window) ||
+            boolStateOf(window, @"miniWindowModeEnabled") != 0 ||
+            boolStateOf(window, @"isClosingWithKeepAliveAnimation") == 1) return NO;
+        SEL getter = NSSelectorFromString(@"rightTouchRegion");
+        NSMethodSignature *sig = [window methodSignatureForSelector:getter];
+        if (sig.numberOfArguments != 2 || sig.methodReturnType[0] != '@') return NO;
+        id region = ((id (*)(id, SEL))objc_msgSend)(window, getter);
+        if (![region isKindOfClass:UIView.class] || ![region isDescendantOfView:window]) {
+            NFBDebugLog(@"orange-close: rightTouchRegion unavailable");
+            return NO;
+        }
+        NFBRightEdgeTap *tap = [NFBRightEdgeTap new]; tap.edgeRegion = region;
+        BOOL sent = NFBDispatchRightEdgeTap(window, tap);
+        NFBDebugLog(@"orange-close: original right-region tap dispatched=%d app=%@", sent, appOfWindow(window));
+        return sent;
+    } @catch (NSException *exception) { NFBDebugLog(@"orange-close: %@", exception); return NO; }
+}
+
+@interface NFBTopLongPress : UILongPressGestureRecognizer
+@property(nonatomic, weak) UIView *titleRegion;
+@end
+@implementation NFBTopLongPress
+// Binary TOJBMETHOD087: compares recognizer.state with 1 (Began).
+- (UIGestureRecognizerState)state { return UIGestureRecognizerStateBegan; }
+- (UIView *)view { return self.titleRegion; }
+- (CGPoint)locationInView:(UIView *)view {
+    UIView *region = self.titleRegion;
+    return [region convertPoint:CGPointMake(CGRectGetMidX(region.bounds), CGRectGetMidY(region.bounds)) toView:view];
+}
+@end
+BOOL NFBPerformTopLongPress(UIView *window) {
+    if (!NSThread.isMainThread || !window) return NO;
+    @try {
+        if (!visibleView(window) || boolStateOf(window, @"isClosingWithKeepAliveAnimation") == 1 ||
+            !NFBExpandedWindowKind(boolStateOf(window, @"miniWindowModeEnabled"),
+                boolStateOf(window, @"isTransitioningFromMiniMode"),
+                orientationOf(window, @"sceneOrientation"), orientationOf(window, @"containerOrientation"))) return NO;
+        SEL getter = NSSelectorFromString(@"titleBar");
+        NSMethodSignature *sig = [window methodSignatureForSelector:getter];
+        if (sig.numberOfArguments != 2 || sig.methodReturnType[0] != '@') return NO;
+        id region = ((id (*)(id, SEL))objc_msgSend)(window, getter);
+        if (![region isKindOfClass:UIView.class] || ![region isDescendantOfView:window]) return NO;
+        NFBTopLongPress *gesture = [NFBTopLongPress new]; gesture.titleRegion = region;
+        BOOL sent = NFBDispatchTopLongPress(window, gesture);
+        NFBDebugLog(@"top-long-press: dispatched=%d app=%@", sent, appOfWindow(window));
+        return sent;
+    } @catch (NSException *exception) { NFBDebugLog(@"top-long-press: %@", exception); return NO; }
+}
+
+// Re-submit the settled portrait scene request once, then reconcile the host.
+// 324 delegates to pipSceneHandle client-orientation updates; 404 only lays out the host.
+// TOJBMETHOD404 is the original host bounds/transform layout routine used by 343.
+void NFBObserveRotationLayout(void) {
+    if (!NSThread.isMainThread) return;
+    static NSMapTable<UIView *, NSMutableDictionary *> *states;
+    if (!states) states = [NSMapTable weakToStrongObjectsMapTable];
+    @try {
+        id object = currentWindow();
+        if (![object isKindOfClass:UIView.class]) return;
+        UIView *window = object;
+        if (!visibleView(window) || boolStateOf(window, @"miniWindowModeEnabled") != 0 ||
+            boolStateOf(window, @"isTransitioningFromMiniMode") != 0 ||
+            boolStateOf(window, @"isClosingWithKeepAliveAnimation") != 0) return;
+        NSInteger scene = orientationOf(window, @"sceneOrientation"), container = orientationOf(window, @"containerOrientation");
+        NSMutableDictionary *state = [states objectForKey:window];
+        if (!state) { state = [NSMutableDictionary dictionary]; [states setObject:state forKey:window]; }
+        if (scene >= 3 || container >= 3) { state[@"landscape"] = @YES; [state removeObjectForKey:@"since"]; [state removeObjectForKey:@"requested"]; return; }
+        if (![state[@"landscape"] boolValue] || scene < 1 || scene > 2 || container != scene) return;
+        NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
+        NSValue *bounds = [NSValue valueWithCGRect:window.bounds];
+        if (![state[@"bounds"] isEqual:bounds] || !state[@"since"]) {
+            state[@"bounds"] = bounds; state[@"since"] = @(now); return;
+        }
+        if (now - [state[@"since"] doubleValue] < 0.65) return;
+        if (!state[@"requested"]) {
+            SEL request = NSSelectorFromString(@"TOJBMETHOD324:");
+            NSMethodSignature *requestSig = [window methodSignatureForSelector:request];
+            if (requestSig.numberOfArguments != 3 || strcmp(requestSig.methodReturnType, @encode(void)) ||
+                strcmp([requestSig getArgumentTypeAtIndex:2], @encode(NSInteger))) {
+                state[@"landscape"] = @NO;
+                NFBDebugLog(@"portrait-content: scene request unavailable app=%@", appOfWindow(window));
+                return;
+            }
+            // Mark before dispatch so a synchronous callback cannot send twice.
+            state[@"requested"] = @(now);
+            ((void (*)(id, SEL, NSInteger))objc_msgSend)(window, request, scene);
+            NFBDebugLog(@"portrait-content: resubmitted orientation=%ld app=%@", (long)scene, appOfWindow(window));
+            return;
+        }
+        if (now - [state[@"requested"] doubleValue] < 0.35) return;
+        state[@"landscape"] = @NO;
+        SEL layout = NSSelectorFromString(@"TOJBMETHOD404");
+        NSMethodSignature *sig = [window methodSignatureForSelector:layout];
+        if (sig.numberOfArguments != 2 || strcmp(sig.methodReturnType, @encode(void))) return;
+        [UIView performWithoutAnimation:^{
+            ((void (*)(id, SEL))objc_msgSend)(window, layout);
+            [window setNeedsLayout]; [window layoutIfNeeded];
+        }];
+        NFBDebugLog(@"portrait-content: reconciled app=%@ bounds=%@", appOfWindow(window), bounds);
+    } @catch (NSException *exception) { NFBDebugLog(@"portrait-content: %@", exception); }
 }
