@@ -1127,8 +1127,10 @@ static double NFBNumber(NSString *key, double fallback) {
         // The clear action is appended last and therefore stays above all apps.
         CGFloat rowY = (isClearAll || isStorage || isFullscreen) ? side / 2 : NFBRowCenter(isOutside ? unreadApps.count : rowCount, rowIndex, step, side);
         CGFloat corner = !isOutside && !isClearAll ? diameter * 0.23 : diameter / 2;
+        // Share the rail center so the standalone fullscreen icon retracts by
+        // the same half-icon distance, with the same animation and timer.
         CGPoint targetCenter = (isClearAll || isStorage) ? CGPointMake(CGRectGetMidX(railFrame), clearCenterY)
-            : (isFullscreen ? CGPointMake(CGRectGetWidth(bounds) - side / 2, clearCenterY + side + 9) : CGPointMake(side / 2, rowY));
+            : (isFullscreen ? CGPointMake(CGRectGetMidX(railFrame), clearCenterY + side + 9) : CGPointMake(side / 2, rowY));
         if (fresh) {
             button.bounds = targetBounds;
             button.center = targetCenter;
