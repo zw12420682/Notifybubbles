@@ -7,7 +7,7 @@ include $(THEOS)/makefiles/common.mk
 
 # Only SpringBoard is injected; the app-side return helper is retired.
 TWEAK_NAME = NotifyBubbles
-NotifyBubbles_FILES = Sources/Tweak.m Sources/NFBStore.m Sources/NFBManager.m Sources/NFBSwitcher.m Sources/NFBTrollOpen.m Sources/NFBWindowControls.m Sources/NFBNotificationPolicy.m Sources/NFBAppExit.m Sources/NFBKeyboard.m Sources/NFBPrivacy.m
+NotifyBubbles_FILES = Sources/Tweak.m Sources/NFBStore.m Sources/NFBManager.m Sources/NFBSwitcher.m Sources/NFBTrollOpen.m Sources/NFBWindowControls.m Sources/NFBNotificationPolicy.m Sources/NFBAppExit.m Sources/NFBKeyboard.m Sources/NFBPrivacy.m Sources/NFBOpenEdge.m
 NotifyBubbles_CFLAGS = -fobjc-arc -Wall -Wextra
 NotifyBubbles_FRAMEWORKS = UIKit Foundation QuartzCore UserNotifications
 NotifyBubbles_LIBRARIES = substrate

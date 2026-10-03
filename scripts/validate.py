@@ -42,7 +42,7 @@ assert 'Sources/NFBAppExit.m' in (root / 'Makefile').read_text(), 'Update the ro
 assert 'NotifyBubblesBack_FILES' not in (root / 'Makefile').read_text()
 assert 'Sources/NFBBackRequest.m' not in (root / 'Makefile').read_text()
 prefs = plistlib.loads((root / 'Preferences/Resources/Root.plist').read_bytes())
-assert {x['key'] for x in prefs['items'] if 'key' in x} == {'Enabled','ShowOnLock','ShowOnHome','ShowInApps','ShowEdgeIcons','IconSize','IconOpacity','ClosePreviousSplit','FreezeDesktop','HideInScreenshots','DesktopBlurTransparency'}
+assert {x['key'] for x in prefs['items'] if 'key' in x} == {'Enabled','ShowOnLock','ShowOnHome','ShowInApps','IconSize','IconOpacity','ClosePreviousSplit','FreezeDesktop','HideInScreenshots','DesktopBlurTransparency'}
 filter_ = plistlib.loads((root / 'NotifyBubbles.plist').read_bytes())
 assert filter_['Filter']['Bundles'] == ['com.apple.springboard']
 print('PASS: required files, property lists, RootHide configuration, preference keys and injection filter')
@@ -52,7 +52,7 @@ assert 'NotifyBubblesKeyboard_FILES' not in (root / 'Makefile').read_text()
 assert (root / "Sources/NFBPrivacy.m").is_file()
 assert "Sources/NFBPrivacy.m" in (root / "Makefile").read_text()
 
-for relative in ['Sources/NFBWindowControls.m', 'Sources/NFBEdgeInspection.h', 'Sources/NFBRightEdgeAction.h', 'Sources/NFBTopAction.h']:
+for relative in ['Sources/NFBOpenEdge.m', 'Sources/NFBWindowControls.m', 'Sources/NFBEdgeInspection.h', 'Sources/NFBRightEdgeAction.h', 'Sources/NFBTopAction.h']:
     source = (root / relative).read_text(encoding='utf-8')
     for forbidden in ['class_getInstanceVariable', 'object_getIvar', 'ivar_getOffset', 'valueForKey:@"_targets"', 'NSStringFromSelector']:
         assert forbidden not in source, f'Unsafe gesture action inspection reintroduced: {relative}: {forbidden}'

@@ -20,3 +20,5 @@
 打开应用使用普通包装方法，其内部 skipOnlineLimitClose 参数为 NO，保留原包行为。
 手势使用明确方法名和参数签名校验，不读取私有 action 指针。
 源码接口映射可静态验证；手机窗口动画、键盘、横竖屏旋转及布局仍需要真机测试。
+
+0.48.22：核对 HIOHODYUSF 的 shouldShowEdgeIcon（BOOL）、refreshUI（void）、showEdgeButtonAnimated:/hideEdgeButtonAnimated:（void, BOOL）、showTray（void）。refreshUI 的 false 分支执行原生隐藏边缘、关闭托盘与滑动选择动画。仅按展开竖屏窗口存在与否抑制显示。

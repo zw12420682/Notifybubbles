@@ -6,6 +6,7 @@
 #import "NFBSwitcher.h"
 #import "NFBTrollOpen.h"
 #import "NFBWindowControls.h"
+#import "NFBOpenEdge.h"
 #import "NFBNotificationPolicy.h"
 #import "NFBAppExit.h"
 #import "NFBKeyboard.h"
@@ -140,7 +141,7 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, strong) NFBWindow *window;
 @property(nonatomic, strong) NFBRail *rail;
 @property(nonatomic) BOOL backgroundCollapsed;
-@property(nonatomic) BOOL showEdgeIcons;
+
 @property(nonatomic, strong) NFBBubble *topActionButton;
 @property(nonatomic, strong) UITapGestureRecognizer *topActionTap;
 @property(nonatomic, weak) UIView *topActionTarget;
@@ -294,10 +295,11 @@ static double NFBNumber(NSString *key, double fallback) {
     self.iconSize = NFBSize(NFBNumber(@"IconSize", 48));
     self.iconOpacity = NFBOpacity(NFBNumber(@"IconOpacity", 1));
     self.enabled = NFBPreference(@"Enabled", YES);
+    NFBUpdateOpenEdge(self.enabled);
     self.showLock = NFBPreference(@"ShowOnLock", YES);
     self.showHome = NFBPreference(@"ShowOnHome", YES);
     self.showApps = NFBPreference(@"ShowInApps", YES);
-    self.showEdgeIcons = NFBPreference(@"ShowEdgeIcons", YES);
+
     id favorites = CFBridgingRelease(CFPreferencesCopyAppValue(CFSTR("FavoriteApps"), NFBDomain));
     NSMutableOrderedSet *selected = [NSMutableOrderedSet orderedSet];
     if ([favorites isKindOfClass:NSArray.class]) for (id app in favorites)
@@ -537,6 +539,7 @@ static double NFBNumber(NSString *key, double fallback) {
 - (void)floatingWatchFired {
     NFBObserveRotationLayout();
     [self updatePrivacy];
+    NFBUpdateOpenEdge(self.enabled);
     NSString *now = NFBSplitAttachmentApp();
     NSString *currentApp = NFBTrollVisibleApp();
     // Orientation can change while app identity and window frame stay the same.
@@ -731,6 +734,7 @@ static double NFBNumber(NSString *key, double fallback) {
 - (void)refresh {
     NSAssert(NSThread.isMainThread, @"UI must be on main thread");
     [self updatePrivacy];
+    NFBUpdateOpenEdge(self.enabled);
     // A dismissed app (long-press exit or one-click clear) is only marked
     // "dismissed" so its bubble doesn't instantly reappear while the process is
     // still being torn down — iOS keeps a stale switcher card for a killed app,
@@ -798,10 +802,7 @@ static double NFBNumber(NSString *key, double fallback) {
     BOOL home = [springboard respondsToSelector:@selector(isShowingHomescreen)] && [springboard isShowingHomescreen];
     BOOL edgeMode = !floatingApp.length;
     NSString *active = NFBTrollVisibleApp() ?: floatingApp ?: (home ? nil : NFBString(NFBGet(NFBGet(springboard, @"_accessibilityFrontMostApplication"), @"bundleIdentifier")));
-    NSString *frontApp = home ? nil : NFBString(NFBGet(NFBGet(springboard, @"_accessibilityFrontMostApplication"), @"bundleIdentifier"));
-    NSString *fullscreenApp = edgeMode && ![self isLocked] && frontApp.length &&
-        ![frontApp isEqual:@"com.apple.springboard"] && ![frontApp isEqual:NFBTrollVisibleApp()] &&
-        ![self.closingApps containsObject:frontApp] ? frontApp : nil;
+    NSString *fullscreenApp = nil; // Dedicated build has no standalone edge icons.
     if (fullscreenApp.length && ![apps containsObject:fullscreenApp]) [apps addObject:fullscreenApp];
     // Recency decides membership, never a forced jump of an existing icon.
     if (active.length && ![self.closingApps containsObject:active] && ![self.dismissedSwitcher containsObject:active] && ![apps containsObject:active])
@@ -823,10 +824,7 @@ static double NFBNumber(NSString *key, double fallback) {
     NSArray<NSString *> *railApps;
     NSUInteger storedCount = 0;
     if (edgeMode) {
-        railApps = NFBVisibleEdgeAppsExcludingFullscreen(allEdgeApps, fullscreenApp, self.backgroundCollapsed, ^NSUInteger(NSString *app) {
-            return [self.store countForApp:app];
-        });
-        for (NSString *app in allEdgeApps) if (![app isEqual:fullscreenApp] && ![self.store countForApp:app]) storedCount++;
+        railApps = @[]; // Open owns all edge presentation in this edition.
     } else {
         // Membership, not merely viewport height, is limited to two recent apps.
         NSMutableArray<NSString *> *background = [NSMutableArray array];
@@ -836,7 +834,7 @@ static double NFBNumber(NSString *key, double fallback) {
     }
     NSMutableArray<NSString *> *displayApps = [railApps mutableCopy];
     if (fullscreenApp.length) [displayApps addObject:fullscreenApp];
-    [displayApps addObject:edgeMode ? NFBStorageID : NFBClearAllID];
+    if (!edgeMode) [displayApps addObject:NFBClearAllID];
     self.storedApps = @[];
     BOOL orderChanged = ![self.lastLayoutApps isEqualToArray:displayApps];
     self.lastLayoutApps = [displayApps copy];
@@ -1011,7 +1009,7 @@ static double NFBNumber(NSString *key, double fallback) {
             self.unreadRail.contentOffset = CGPointMake(0, targetOffset);
         } completion:nil];
     }
-    BOOL hideEdgeIcons = edgeMode && !self.showEdgeIcons;
+    BOOL hideEdgeIcons = edgeMode;
     self.rail.hidden = hideEdgeIcons;
     self.railMaterial.hidden = hideEdgeIcons;
     if (hideEdgeIcons) self.unreadRail.hidden = YES;
