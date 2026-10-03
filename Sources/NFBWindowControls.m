@@ -86,7 +86,7 @@ static UIView *floatingInTree(UIView *view, Class floatingClass, BOOL landscape)
 static UIView *frontmostFloatingWindow(BOOL landscape) {
     if (!NSThread.isMainThread) return nil;
     @try {
-        Class floatingClass = NSClassFromString(@"TOJBClass012");
+        Class floatingClass = NSClassFromString(@"FloatingAppWindow");
         if (!floatingClass) return nil;
         NSMutableOrderedSet<UIWindow *> *windows = [NSMutableOrderedSet orderedSet];
         for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
@@ -238,7 +238,12 @@ void NFBObserveSplitPlacement(NSString *app) {
                 NSMethodSignature *sig = [window methodSignatureForSelector:scale];
                 if (sig.numberOfArguments != 3 || strcmp(sig.methodReturnType, @encode(void)) ||
                     strcmp([sig getArgumentTypeAtIndex:2], @encode(double))) return;
+                SEL sync = NSSelectorFromString(@"syncContainerFrameToVisualScalePreservingCenter:");
+                NSMethodSignature *syncSig = [window methodSignatureForSelector:sync];
+                if (syncSig.numberOfArguments != 3 || strcmp(syncSig.methodReturnType, @encode(void)) ||
+                    strcmp([syncSig getArgumentTypeAtIndex:2], @encode(BOOL))) return;
                 ((void (*)(id, SEL, double))objc_msgSend)(window, scale, 0.86);
+                ((void (*)(id, SEL, BOOL))objc_msgSend)(window, sync, YES);
                 [window setNeedsLayout]; [window layoutIfNeeded];
                 UIView *parent = window.superview;
                 CGRect area = parent ? [parent convertRect:parent.window.bounds fromView:parent.window]
@@ -296,7 +301,7 @@ BOOL NFBCloseCurrentSplit(void) {
 @property(nonatomic, weak) UIView *titleRegion;
 @end
 @implementation NFBTopLongPress
-// Binary TOJBMETHOD087: compares recognizer.state with 1 (Began).
+// Binary handleTopTouchLongPress: compares recognizer.state with 1 (Began).
 - (UIGestureRecognizerState)state { return UIGestureRecognizerStateBegan; }
 - (UIView *)view { return self.titleRegion; }
 - (CGPoint)locationInView:(UIView *)view {
@@ -325,7 +330,7 @@ BOOL NFBPerformTopLongPress(UIView *window) {
 
 // Re-submit the settled portrait scene request once, then reconcile the host.
 // 324 delegates to pipSceneHandle client-orientation updates; 404 only lays out the host.
-// TOJBMETHOD404 is the original host bounds/transform layout routine used by 343.
+// updateHostViewLayoutForCurrentBounds is the original host bounds/transform layout routine used by 343.
 void NFBObserveRotationLayout(void) {
     if (!NSThread.isMainThread) return;
     static NSMapTable<UIView *, NSMutableDictionary *> *states;
@@ -349,7 +354,7 @@ void NFBObserveRotationLayout(void) {
         }
         if (now - [state[@"since"] doubleValue] < 0.65) return;
         if (!state[@"requested"]) {
-            SEL request = NSSelectorFromString(@"TOJBMETHOD324:");
+            SEL request = NSSelectorFromString(@"requestSceneOrientationOnce:");
             NSMethodSignature *requestSig = [window methodSignatureForSelector:request];
             if (requestSig.numberOfArguments != 3 || strcmp(requestSig.methodReturnType, @encode(void)) ||
                 strcmp([requestSig getArgumentTypeAtIndex:2], @encode(NSInteger))) {
@@ -365,7 +370,7 @@ void NFBObserveRotationLayout(void) {
         }
         if (now - [state[@"requested"] doubleValue] < 0.35) return;
         state[@"landscape"] = @NO;
-        SEL layout = NSSelectorFromString(@"TOJBMETHOD404");
+        SEL layout = NSSelectorFromString(@"updateHostViewLayoutForCurrentBounds");
         NSMethodSignature *sig = [window methodSignatureForSelector:layout];
         if (sig.numberOfArguments != 2 || strcmp(sig.methodReturnType, @encode(void))) return;
         [UIView performWithoutAnimation:^{

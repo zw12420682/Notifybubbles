@@ -25,7 +25,7 @@ static UIView *NFBHomeInController(UIViewController *vc) {
     return nil;
 }
 static BOOL NFBContainsFloatingView(UIView *view) {
-    Class floating = NSClassFromString(@"TOJBClass012");
+    Class floating = NSClassFromString(@"FloatingAppWindow");
     if (floating && [view isKindOfClass:floating]) return YES;
     for (UIView *child in view.subviews)
         if (NFBContainsFloatingView(child)) return YES;

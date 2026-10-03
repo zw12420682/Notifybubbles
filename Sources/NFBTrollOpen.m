@@ -7,7 +7,7 @@
 static id NFBTrollObject(id object, NSString *name);
 
 // The TrollOpen selector set is not fully documented: the official 1.3.7 build
-// and the 1.5.2 custom build differ, and control actions such as
+// and the 1.3.7 custom build differ, and control actions such as
 // closeCurrentFloatingWindow live on the BRIDGE CLASS, not on the floating window
 // instance. Dump the methods containing control-related keywords exactly once so
 // the debug file reveals the correct selector names instead of us guessing again.
@@ -25,7 +25,7 @@ static void NFBDumpFloatingWindowInterfaces(id window) {
 
 BOOL NFBSplitTrollFrontmostApp(void) {
     if (!NSThread.isMainThread) return NO;
-    // RootHide TrollOpen 1.5.2: +[TOJBBarGestureBridge splitFrontmostApplication], v16@0:8.
+    // RootHide TrollOpen 1.3.7: +[TOJBBarGestureBridge splitFrontmostApplication], v16@0:8.
     // Let the plugin own the fullscreen-to-floating transition, rather than
     // pulling the foreground scene through its generic bundle-ID entry point.
     Class bridge = NSClassFromString(@"TOJBBarGestureBridge");
@@ -59,7 +59,9 @@ BOOL NFBCloseCurrentFloatingWindow(void) {
             NSMethodSignature *sig = [bridge methodSignatureForSelector:selector];
             char ret = sig ? sig.methodReturnType[0] : '?';
             if (sig && sig.numberOfArguments == 2 && (ret == 'v' || ret == 'B' || ret == 'c')) {
-                ((void (*)(id, SEL))objc_msgSend)(bridge, selector);
+                BOOL accepted = ret == 'v' ? YES : ((BOOL (*)(id, SEL))objc_msgSend)(bridge, selector);
+                if (ret == 'v') ((void (*)(id, SEL))objc_msgSend)(bridge, selector);
+                if (!accepted) return NO;
                 NFBDebugLog(@"close: invoked +[TOJBBarGestureBridge closeCurrentFloatingWindow]");
                 return YES;
             }
@@ -97,8 +99,8 @@ static BOOL NFBCallSimple(id target, SEL selector) {
     if (!sig || sig.numberOfArguments != 2) return NO;
     char ret = sig.methodReturnType[0];
     if (ret != 'v' && ret != 'B' && ret != 'c') return NO;
-    ((void (*)(id, SEL))objc_msgSend)(target, selector);
-    return YES;
+    if (ret == 'v') { ((void (*)(id, SEL))objc_msgSend)(target, selector); return YES; }
+    return ((BOOL (*)(id, SEL))objc_msgSend)(target, selector);
 }
 
 BOOL NFBFullscreenCurrentFloatingWindow(void) {
@@ -185,11 +187,11 @@ static BOOL NFBTrollSignature(id target, SEL selector, BOOL hasFlag) {
 
 BOOL NFBOpenTrollApp(NSString *bundleID) {
     if (!NSThread.isMainThread || ![bundleID isKindOfClass:NSString.class] || !bundleID.length) return NO;
-    // Verified against the supplied RootHide 1.5.2 binary's Objective-C metadata.
+    // Verified against the supplied RootHide 1.3.7 binary's Objective-C metadata.
     // Its normal wrapper forwards to toj_showWithBundleID:skipOnlineLimitClose:
     // with NO. Call the wrapper, preserving TrollOpen's own behavior and checks.
-    Class target = NSClassFromString(@"TOJBClass012");
-    SEL open = NSSelectorFromString(@"TOJBMETHOD164:");
+    Class target = NSClassFromString(@"FloatingAppWindow");
+    SEL open = NSSelectorFromString(@"showWithBundleID:");
     SEL fingerprint = NSSelectorFromString(@"toj_showWithBundleID:skipOnlineLimitClose:");
     @try {
         if (!NFBTrollSignature(target, open, NO) || !NFBTrollSignature(target, fingerprint, YES)) return NO;

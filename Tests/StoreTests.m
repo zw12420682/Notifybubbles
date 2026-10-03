@@ -17,30 +17,30 @@
 @interface TestEdgeClose : NSObject
 @property(nonatomic) NSUInteger calls;
 @property(nonatomic, strong) id received;
-- (void)TOJBMETHOD063:(id)tap;
+- (void)handleBottomSingleTap:(id)tap;
 @end
 @implementation TestEdgeClose
-- (void)TOJBMETHOD063:(id)tap { self.calls++; self.received = tap; }
+- (void)handleBottomSingleTap:(id)tap { self.calls++; self.received = tap; }
 @end
 @interface TestEdgeWrong : NSObject
-- (BOOL)TOJBMETHOD063:(id)tap;
+- (BOOL)handleBottomSingleTap:(id)tap;
 @end
 @implementation TestEdgeWrong
-- (BOOL)TOJBMETHOD063:(__unused id)tap { return YES; }
+- (BOOL)handleBottomSingleTap:(__unused id)tap { return YES; }
 @end
 @interface TestTopAction : NSObject
 @property(nonatomic) NSUInteger calls;
 @property(nonatomic, strong) id received;
-- (void)TOJBMETHOD087:(id)gesture;
+- (void)handleTopTouchLongPress:(id)gesture;
 @end
 @implementation TestTopAction
-- (void)TOJBMETHOD087:(id)gesture { self.calls++; self.received = gesture; }
+- (void)handleTopTouchLongPress:(id)gesture { self.calls++; self.received = gesture; }
 @end
 @interface TestTopWrong : NSObject
-- (BOOL)TOJBMETHOD087:(id)gesture;
+- (BOOL)handleTopTouchLongPress:(id)gesture;
 @end
 @implementation TestTopWrong
-- (BOOL)TOJBMETHOD087:(__unused id)gesture { return YES; }
+- (BOOL)handleTopTouchLongPress:(__unused id)gesture { return YES; }
 @end
 static TestRequest *Request(double time) {
     TestRequest *r = [TestRequest new]; r.timestamp = [NSDate dateWithTimeIntervalSince1970:time]; return r;

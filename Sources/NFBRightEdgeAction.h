@@ -2,12 +2,12 @@
 #import <Foundation/Foundation.h>
 #import <objc/message.h>
 #include <string.h>
-// 1.5.2 single-tap handler verified in the supplied binary. Register its known
+// 1.3.7 single-tap handler verified in the supplied binary. Register its known
 // name with the runtime; never read a selector from gesture private storage.
 static inline BOOL NFBDispatchRightEdgeTap(id target, id tap) {
     if (!target || !tap) return NO;
     @try {
-        SEL action = NSSelectorFromString(@"TOJBMETHOD063:");
+        SEL action = NSSelectorFromString(@"handleBottomSingleTap:");
         if (![target respondsToSelector:action]) return NO;
         NSMethodSignature *sig = [target methodSignatureForSelector:action];
         if (sig.numberOfArguments != 3 || strcmp(sig.methodReturnType, @encode(void)) ||

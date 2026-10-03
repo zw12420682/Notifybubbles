@@ -8,11 +8,11 @@ static inline NSInteger NFBExpandedWindowKind(NSInteger mini, NSInteger transiti
     if (mini != 0 || transitioning != 0 || scene < 1 || scene > 4 || container < 1 || container > 4) return 0;
     return (scene >= 3 || container >= 3) ? 2 : 1;
 }
-// Known TrollOpen 1.5.2 title-bar long-press handler. No private gesture pointers.
+// Known TrollOpen 1.3.7 title-bar long-press handler. No private gesture pointers.
 static inline BOOL NFBDispatchTopLongPress(id target, id gesture) {
     if (!target || !gesture) return NO;
     @try {
-        SEL action = NSSelectorFromString(@"TOJBMETHOD087:");
+        SEL action = NSSelectorFromString(@"handleTopTouchLongPress:");
         if (![target respondsToSelector:action]) return NO;
         NSMethodSignature *sig = [target methodSignatureForSelector:action];
         if (sig.numberOfArguments != 3 || strcmp(sig.methodReturnType, @encode(void)) ||

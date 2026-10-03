@@ -140,6 +140,7 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, strong) NFBWindow *window;
 @property(nonatomic, strong) NFBRail *rail;
 @property(nonatomic) BOOL backgroundCollapsed;
+@property(nonatomic) BOOL showEdgeIcons;
 @property(nonatomic, strong) NFBBubble *topActionButton;
 @property(nonatomic, strong) UITapGestureRecognizer *topActionTap;
 @property(nonatomic, weak) UIView *topActionTarget;
@@ -296,6 +297,7 @@ static double NFBNumber(NSString *key, double fallback) {
     self.showLock = NFBPreference(@"ShowOnLock", YES);
     self.showHome = NFBPreference(@"ShowOnHome", YES);
     self.showApps = NFBPreference(@"ShowInApps", YES);
+    self.showEdgeIcons = NFBPreference(@"ShowEdgeIcons", YES);
     id favorites = CFBridgingRelease(CFPreferencesCopyAppValue(CFSTR("FavoriteApps"), NFBDomain));
     NSMutableOrderedSet *selected = [NSMutableOrderedSet orderedSet];
     if ([favorites isKindOfClass:NSArray.class]) for (id app in favorites)
@@ -1009,6 +1011,10 @@ static double NFBNumber(NSString *key, double fallback) {
             self.unreadRail.contentOffset = CGPointMake(0, targetOffset);
         } completion:nil];
     }
+    BOOL hideEdgeIcons = edgeMode && !self.showEdgeIcons;
+    self.rail.hidden = hideEdgeIcons;
+    self.railMaterial.hidden = hideEdgeIcons;
+    if (hideEdgeIcons) self.unreadRail.hidden = YES;
     BOOL railSizeChanged = !CGSizeEqualToSize(self.rail.bounds.size, railFrame.size);
     // Narrow only the visible edge material. Retain the padded hit/clip area
     // so icon edges, shadows and the external unread badges stay intact.
@@ -1084,6 +1090,7 @@ static double NFBNumber(NSString *key, double fallback) {
             self.buttons[appID] = button;
             [parent addSubview:button];
         }
+        button.hidden = hideEdgeIcons;
         if (button.superview != parent) {
             // Preserve screen position when moving between unread strip and rail.
             CGPoint position = [button.superview convertPoint:button.center toView:parent];
@@ -1380,7 +1387,7 @@ static double NFBNumber(NSString *key, double fallback) {
     // instead of the bubble waiting for TrollOpen to finish the transition.
     [self beginRetracting:app];
     if (!NFBFullscreenCurrentFloatingWindow())
-        [self showOpenNotice:@"TrollOpen 全屏接口不可用，请确认已安装适配的 1.5.2 隐根版并重启桌面"];
+        [self showOpenNotice:@"TrollOpen 全屏接口不可用，请确认已安装适配的 1.3.7 隐根版并重启桌面"];
 }
 - (void)closeBubble:(NFBBubble *)button {
     if (self.buttons[button.appID] != button && self.edgeCopies[button.appID] != button) return;
@@ -1690,7 +1697,7 @@ static double NFBNumber(NSString *key, double fallback) {
         submitted = NFBOpenTrollApp(app);
     }
     if (!submitted)
-        [self showOpenNotice:@"TrollOpen 分屏接口不可用，请确认已安装适配的 1.5.2 隐根版并重启桌面"];
+        [self showOpenNotice:@"TrollOpen 分屏接口不可用，请确认已安装适配的 1.3.7 隐根版并重启桌面"];
 }
 - (BOOL)executeRecord:(NFBRecord *)record {
     id action = NFBGet(record.request, @"defaultAction");
