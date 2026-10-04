@@ -880,6 +880,22 @@ static double NFBNumber(NSString *key, double fallback) {
     CGFloat top = MAX(safe.top, 48) + 30;
     CGRect splitFrame = floatingApp.length ? NFBSplitFrameInView(root) : CGRectNull;
     BOOL attached = !NFBCurrentSplitLandscape() && floatingApp.length && !CGRectIsNull(splitFrame) && !CGRectIsEmpty(splitFrame);
+    // Position gates only our presentation. Open's edge suppression still uses
+    // portrait-window existence, independently of this corner test.
+    BOOL validSplit = !CGRectIsNull(splitFrame) && !CGRectIsEmpty(splitFrame);
+    const CGFloat cornerTolerance = 4.0;
+    BOOL atBottomLeft = validSplit &&
+        fabs(CGRectGetMinX(splitFrame) - CGRectGetMinX(bounds)) <= cornerTolerance &&
+        fabs(CGRectGetMaxY(splitFrame) - CGRectGetMaxY(bounds)) <= cornerTolerance;
+    BOOL hideForPosition = floatingApp.length && !atBottomLeft;
+    root.userInteractionEnabled = !hideForPosition;
+    CGFloat visibility = hideForPosition ? 0 : 1;
+    if (root.alpha != visibility) {
+        [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : 0.18 delay:0
+            options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
+            animations:^{ root.alpha = visibility; } completion:nil];
+    }
+
     BOOL containerMode = !edgeMode;
     BOOL attachmentChanged = attached != self.splitRailActive;
     self.splitRailActive = attached;
