@@ -43,6 +43,41 @@ static void showTray(id owner, SEL cmd) {
     remember(owner);
     if (!suppressed()) originalShowTray(owner, cmd);
 }
+// Native hide completion writes hidden=YES even when its animation was interrupted.
+// Reconcile after transitions, retaining the native eligibility/settings decision.
+static NSUInteger restoreGeneration;
+static void reconcile(void) {
+    if (!installed || suppressed()) return;
+    for (id owner in owners.allObjects) {
+        originalRefresh(owner, NSSelectorFromString(@"refreshUI"));
+        BOOL allowed = originalShouldShow(owner, NSSelectorFromString(@"shouldShowEdgeIcon"));
+        SEL getter = NSSelectorFromString(@"edgeButton");
+        NSMethodSignature *sig = [owner methodSignatureForSelector:getter];
+        if (!sig || sig.numberOfArguments != 2 || sig.methodReturnType[0] != '@') continue;
+        UIView *button = ((id (*)(id, SEL))objc_msgSend)(owner, getter);
+        if (![button isKindOfClass:UIView.class]) continue;
+        // Do not expose the button behind an intentionally open tray.
+        SEL trayGetter = NSSelectorFromString(@"trayBackdrop");
+        NSMethodSignature *traySig = [owner methodSignatureForSelector:trayGetter];
+        if (!traySig || traySig.numberOfArguments != 2 || traySig.methodReturnType[0] != '@') continue;
+        id tray = ((id (*)(id, SEL))objc_msgSend)(owner, trayGetter);
+        if (allowed && !tray && (button.hidden || button.alpha < 0.01))
+            originalShowEdge(owner, NSSelectorFromString(@"showEdgeButtonAnimated:"), NO);
+        NFBDebugLog(@"Open edge restore: eligible=%d hidden=%d alpha=%.2f owners=%lu",
+            allowed, button.hidden, button.alpha, (unsigned long)owners.count);
+    }
+}
+void NFBOpenEdgeAfterClose(void) {
+    if (!NSThread.isMainThread) return;
+    NSUInteger generation = ++restoreGeneration;
+    // Bounded retries cover scene removal, hide completion and late edge registration.
+    for (NSNumber *delay in @[@0.15, @0.45, @0.9, @1.5, @2.2]) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay.doubleValue * NSEC_PER_SEC)),
+            dispatch_get_main_queue(), ^{
+                if (generation == restoreGeneration) reconcile();
+            });
+    }
+}
 static BOOL matches(Class cls, NSString *name, const char *result, const char *argument) {
     Method method = class_getInstanceMethod(cls, NSSelectorFromString(name));
     if (!method) return NO;
@@ -72,6 +107,8 @@ void NFBUpdateOpenEdge(BOOL enabled) {
     BOOL now = suppressed();
     if (now == lastSuppressed) return;
     lastSuppressed = now;
+    if (now) ++restoreGeneration;
+    else NFBOpenEdgeAfterClose();
     for (id owner in owners.allObjects) originalRefresh(owner, NSSelectorFromString(@"refreshUI"));
     // On restoration, native shouldShowEdgeIcon still checks the user's own settings.
     NFBDebugLog(@"Open edge portrait suppression=%d", now);

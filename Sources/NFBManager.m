@@ -391,6 +391,7 @@ static double NFBNumber(NSString *key, double fallback) {
 - (void)clearAllTapped:(UITapGestureRecognizer *)gesture {
     if (gesture.state != UIGestureRecognizerStateEnded || self.edgeMode || [self isLocked] || ![self acceptGesture]) return;
     if (!NFBCloseCurrentSplit()) [self showOpenNotice:@"未能读取 TrollOpen 右侧区域的单击接口"];
+    else NFBOpenEdgeAfterClose();
     [self refresh];
 }
 - (void)topActionTapped:(UITapGestureRecognizer *)gesture {
