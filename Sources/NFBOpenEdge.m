@@ -46,6 +46,7 @@ static void showTray(id owner, SEL cmd) {
 // Native hide completion writes hidden=YES even when its animation was interrupted.
 // Reconcile after transitions, retaining the native eligibility/settings decision.
 static NSUInteger restoreGeneration;
+static BOOL expandOnRestore;
 static void reconcile(void) {
     if (!installed || suppressed()) return;
     for (id owner in owners.allObjects) {
@@ -63,6 +64,13 @@ static void reconcile(void) {
         id tray = ((id (*)(id, SEL))objc_msgSend)(owner, trayGetter);
         if (allowed && !tray && (button.hidden || button.alpha < 0.01))
             originalShowEdge(owner, NSSelectorFromString(@"showEdgeButtonAnimated:"), NO);
+        if (allowed && !tray && expandOnRestore) {
+            SEL expand = NSSelectorFromString(@"setEdgeButtonAutoHidden:animated:");
+            NSMethodSignature *es = [owner methodSignatureForSelector:expand];
+            if (es.numberOfArguments == 4 && !strcmp(es.methodReturnType,@encode(void)) &&
+                !strcmp([es getArgumentTypeAtIndex:2],@encode(BOOL)) && !strcmp([es getArgumentTypeAtIndex:3],@encode(BOOL)))
+                ((void (*)(id,SEL,BOOL,BOOL))objc_msgSend)(owner,expand,NO,YES);
+        }
         NFBDebugLog(@"Open edge restore: eligible=%d hidden=%d alpha=%.2f owners=%lu",
             allowed, button.hidden, button.alpha, (unsigned long)owners.count);
     }
@@ -77,6 +85,10 @@ void NFBOpenEdgeAfterClose(void) {
                 if (generation == restoreGeneration) reconcile();
             });
     }
+}
+void NFBOpenEdgeExpandAfterRotation(void) {
+    if (!NSThread.isMainThread || suppressed()) return;
+    expandOnRestore = YES; NFBOpenEdgeAfterClose();
 }
 static BOOL matches(Class cls, NSString *name, const char *result, const char *argument) {
     Method method = class_getInstanceMethod(cls, NSSelectorFromString(name));
@@ -107,7 +119,7 @@ void NFBUpdateOpenEdge(BOOL enabled) {
     BOOL now = suppressed();
     if (now == lastSuppressed) return;
     lastSuppressed = now;
-    if (now) ++restoreGeneration;
+    if (now) { ++restoreGeneration; expandOnRestore = NO; }
     else NFBOpenEdgeAfterClose();
     for (id owner in owners.allObjects) originalRefresh(owner, NSSelectorFromString(@"refreshUI"));
     // On restoration, native shouldShowEdgeIcon still checks the user's own settings.

@@ -538,6 +538,7 @@ static double NFBNumber(NSString *key, double fallback) {
     [NSRunLoop.mainRunLoop addTimer:self.floatingWatch forMode:NSRunLoopCommonModes];
 }
 - (void)floatingWatchFired {
+    NFBObserveSplitPlacement(nil);
     NFBObserveRotationLayout();
     [self updatePrivacy];
     NFBUpdateOpenEdge(self.enabled);
