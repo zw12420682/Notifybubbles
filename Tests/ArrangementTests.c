@@ -14,4 +14,7 @@ int main(void){
  NFBTile mixed[]={{300,150,0,0},{250,350,0,0}};NFBArrangeGroups(mixed,2,1,390,844);assert(mixed[0].y==0);assert(fabs(mixed[1].y+mixed[1].height-844)<0.001);assert(mixed[0].height<=mixed[1].y);
  NFBTile multi[]={{300,150,0,0},{300,150,0,0},{250,350,0,0}};NFBArrangeGroups(multi,3,2,390,844);assert(multi[0].y==0);assert(multi[1].y>=multi[0].height);assert(multi[2].y>=multi[1].y+multi[1].height);
  NFBTile overflow[]={{800,400,0,0},{335,725,0,0}};double f=NFBArrangeGroups(overflow,2,1,390,844);assert(f<1);assert(overflow[0].y==0);assert(overflow[1].y>=overflow[0].height-0.001);
+ NFBTile slider[]={{300,200,0,0}};NFBArrangeGroups(slider,1,1,390,844);NFBPositionLandscape(slider,1,1,844,0.5);assert(fabs(slider[0].y-322)<0.001);
+ NFBTile blocked[]={{300,150,0,0},{250,350,0,0}};NFBArrangeGroups(blocked,2,1,390,844);double portraitY=blocked[1].y;NFBPositionLandscape(blocked,2,1,844,2);assert(blocked[0].y+blocked[0].height<=portraitY-6+0.001);assert(blocked[1].y==portraitY);
+ NFBTile top[]={{300,200,0,0}};NFBArrangeGroups(top,1,1,390,844);NFBPositionLandscape(top,1,1,844,NAN);assert(top[0].y==0);
  return 0;}

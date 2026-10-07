@@ -29,3 +29,15 @@ static inline double NFBArrangeGroups(NFBTile *tiles, size_t count, size_t lands
     }
     return factor;
 }
+
+// Slide the landscape group only through the remaining free vertical space.
+static inline void NFBPositionLandscape(NFBTile *tiles, size_t count, size_t landscapes, double height, double position) {
+    if (!count || !landscapes || landscapes > count || height <= 0) return;
+    if (!isfinite(position)) position = 0;
+    position = fmax(0, fmin(1, position));
+    double bottom = tiles[landscapes-1].y + tiles[landscapes-1].height;
+    double gap = landscapes < count ? fmin(6, height / (count * 8.0)) : 0;
+    double limit = landscapes < count ? tiles[landscapes].y - gap : height;
+    double offset = fmax(0, limit - bottom) * position;
+    for (size_t i=0; i<landscapes; i++) tiles[i].y += offset;
+}

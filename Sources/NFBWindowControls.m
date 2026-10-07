@@ -286,7 +286,11 @@ void NFBObserveSplitPlacement(NSString *app) {
         UIScreen *screen = ((UIView *)participants.firstObject).window.screen;
         CGRect area = screen.bounds;
         if (!participants.count || !screen || CGRectIsEmpty(area)) { arrangementSignature = nil; return; }
-        NSMutableString *signature = [NSMutableString stringWithFormat:@"%@", NSStringFromCGRect(area)];
+        id savedPosition = CFBridgingRelease(CFPreferencesCopyAppValue(CFSTR("LandscapeVerticalPosition"), CFSTR("local.notifybubbles")));
+        double position = [savedPosition isKindOfClass:NSNumber.class] ? [savedPosition doubleValue] / 100.0 : 0;
+        if (!isfinite(position)) position = 0;
+        position = MAX(0, MIN(1, position));
+        NSMutableString *signature = [NSMutableString stringWithFormat:@"%@|position=%.6f", NSStringFromCGRect(area), position];
         for (UIView *view in participants) {
             NSDictionary *state = [arrangementStates objectForKey:view];
             [signature appendFormat:@"|%@:%@:%@:%@", state[@"order"], state[@"kind"], NSStringFromCGRect(view.bounds), state[@"base"]];
@@ -309,6 +313,7 @@ void NFBObserveSplitPlacement(NSString *app) {
             if ([[arrangementStates objectForKey:view][@"kind"] integerValue] == 2) landscapeCount++;
         double factor=NFBArrangeGroups(tiles,participants.count,landscapeCount,area.size.width,area.size.height);
         if (factor<=0) { free(tiles); return; }
+        NFBPositionLandscape(tiles,participants.count,landscapeCount,area.size.height,position);
         [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled()?0:0.35 delay:0
             options:UIViewAnimationOptionBeginFromCurrentState|UIViewAnimationOptionAllowUserInteraction|UIViewAnimationOptionCurveEaseInOut animations:^{
                 for (NSUInteger i=0; i<participants.count; i++) {
