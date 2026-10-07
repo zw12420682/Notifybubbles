@@ -17,7 +17,8 @@
         NSDictionary *symbols = @{@"LandscapeVerticalPosition": @"arrow.up.arrow.down", @"Enabled": @"bell.badge.fill", @"ShowOnLock": @"lock.fill",
             @"ShowOnHome": @"house.fill", @"ShowInApps": @"app.fill", @"IconSize": @"arrow.up.left.and.arrow.down.right",
             @"IconOpacity": @"circle.lefthalf.filled", @"ClosePreviousSplit": @"rectangle.on.rectangle",
-            @"FreezeDesktop": @"snowflake", @"DesktopBlurTransparency": @"drop.halffull", @"HideInScreenshots": @"eye.slash.fill"};
+            @"FreezeDesktop": @"snowflake", @"DesktopBlurTransparency": @"drop.halffull", @"HideInScreenshots": @"eye.slash.fill",
+            @"SplitSizeLock": @"lock.fill", @"SplitLockSize": @"arrow.up.and.down"};
         for (PSSpecifier *specifier in _specifiers) {
             NSString *key = [specifier propertyForKey:@"key"];
             NSString *symbol = key ? symbols[key] : nil;

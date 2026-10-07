@@ -2,6 +2,7 @@
 #import "NFBDebugLog.h"
 #import <objc/message.h>
 #include <string.h>
+#include <math.h>
 
 // Forward declaration: fetches an object-returning no-argument method result.
 static id NFBTrollObject(id object, NSString *name);
@@ -231,4 +232,42 @@ NSString *NFBTrollVisibleApp(void) {
     } @catch (__unused NSException *e) { return nil; }
     id app = NFBTrollObject(window, @"bundleID");
     return [app isKindOfClass:NSString.class] ? app : nil;
+}
+
+UIView *NFBCurrentFloatingWindow(void) {
+    if (!NSThread.isMainThread) return nil;
+    id window = NFBTrollObject(NSClassFromString(@"TOJBBarGestureBridge"), @"currentVisibleFloatingWindow");
+    return [window isKindOfClass:UIView.class] ? (UIView *)window : nil;
+}
+
+BOOL NFBSetFloatingVisualScale(double scale) {
+    if (!NSThread.isMainThread || !isfinite(scale) || scale <= 0) return NO;
+    @try {
+        UIView *window = NFBCurrentFloatingWindow();
+        if (!window) return NO;
+        // setVisualScale: is a plain double setter (v24@0:8d16), confirmed in the
+        // supplied 1.3.7 binary's Objective-C metadata.
+        SEL setScale = NSSelectorFromString(@"setVisualScale:");
+        NSMethodSignature *setSig = [window methodSignatureForSelector:setScale];
+        if (![window respondsToSelector:setScale] || !setSig || setSig.numberOfArguments != 3 ||
+            strcmp(setSig.methodReturnType, @encode(void)) != 0 ||
+            strcmp([setSig getArgumentTypeAtIndex:2], @encode(double)) != 0) {
+            NFBDebugLog(@"scale: setVisualScale: unavailable");
+            return NO;
+        }
+        ((void (*)(id, SEL, double))objc_msgSend)(window, setScale, scale);
+        // Re-sync the container frame to the new scale, keeping the window centered.
+        SEL sync = NSSelectorFromString(@"syncContainerFrameToVisualScalePreservingCenter:");
+        NSMethodSignature *syncSig = [window methodSignatureForSelector:sync];
+        if ([window respondsToSelector:sync] && syncSig && syncSig.numberOfArguments == 3) {
+            char argType = [syncSig getArgumentTypeAtIndex:2][0];
+            char retType = syncSig.methodReturnType[0];
+            if (argType == 'B' || argType == 'c') {
+                if (retType == 'v') ((void (*)(id, SEL, BOOL))objc_msgSend)(window, sync, YES);
+                else if (retType == 'B' || retType == 'c') ((BOOL (*)(id, SEL, BOOL))objc_msgSend)(window, sync, YES);
+            }
+        }
+        NFBDebugLog(@"scale: applied %.3f", scale);
+        return YES;
+    } @catch (NSException *error) { NFBDebugLog(@"scale failed: %@", error); return NO; }
 }
