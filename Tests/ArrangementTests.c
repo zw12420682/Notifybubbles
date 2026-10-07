@@ -10,4 +10,8 @@ int main(void){
  NFBTile wide[]={{844,390,0,0},{335,725,0,0}};check(wide,2,390,844);
  NFBTile many[100];for(int i=0;i<100;i++)many[i]=(NFBTile){300,600,0,0};check(many,100,390,844);
  NFBTile invalid[]={{0,10,0,0}};assert(NFBArrange(invalid,1,390,844)==0);assert(NFBArrange(0,0,390,844)==1);
+ NFBTile onlyLandscape[]={{300,200,0,0}};assert(NFBArrangeGroups(onlyLandscape,1,1,390,844)==1);assert(onlyLandscape[0].y==0);
+ NFBTile mixed[]={{300,150,0,0},{250,350,0,0}};NFBArrangeGroups(mixed,2,1,390,844);assert(mixed[0].y==0);assert(fabs(mixed[1].y+mixed[1].height-844)<0.001);assert(mixed[0].height<=mixed[1].y);
+ NFBTile multi[]={{300,150,0,0},{300,150,0,0},{250,350,0,0}};NFBArrangeGroups(multi,3,2,390,844);assert(multi[0].y==0);assert(multi[1].y>=multi[0].height);assert(multi[2].y>=multi[1].y+multi[1].height);
+ NFBTile overflow[]={{800,400,0,0},{335,725,0,0}};double f=NFBArrangeGroups(overflow,2,1,390,844);assert(f<1);assert(overflow[0].y==0);assert(overflow[1].y>=overflow[0].height-0.001);
  return 0;}

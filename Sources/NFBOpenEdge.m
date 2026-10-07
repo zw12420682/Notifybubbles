@@ -64,12 +64,16 @@ static void reconcile(void) {
         id tray = ((id (*)(id, SEL))objc_msgSend)(owner, trayGetter);
         if (allowed && !tray && (button.hidden || button.alpha < 0.01))
             originalShowEdge(owner, NSSelectorFromString(@"showEdgeButtonAnimated:"), NO);
-        if (allowed && !tray && expandOnRestore) {
-            SEL expand = NSSelectorFromString(@"setEdgeButtonAutoHidden:animated:");
-            NSMethodSignature *es = [owner methodSignatureForSelector:expand];
-            if (es.numberOfArguments == 4 && !strcmp(es.methodReturnType,@encode(void)) &&
-                !strcmp([es getArgumentTypeAtIndex:2],@encode(BOOL)) && !strcmp([es getArgumentTypeAtIndex:3],@encode(BOOL)))
-                ((void (*)(id,SEL,BOOL,BOOL))objc_msgSend)(owner,expand,NO,YES);
+        if (allowed && !suppressed() && expandOnRestore) {
+            // Right-edge inward/left pan resolves mode 1 and calls showTray (1.3.7).
+            // Consume only once the tray exists; later retries must not reopen a
+            // tray the user subsequently dismissed.
+            if (!tray) originalShowTray(owner, NSSelectorFromString(@"showTray"));
+            id opened = ((id (*)(id, SEL))objc_msgSend)(owner, trayGetter);
+            if (opened) {
+                expandOnRestore = NO;
+                NFBDebugLog(@"Open rotation: opened inward-swipe app tray");
+            }
         }
         NFBDebugLog(@"Open edge restore: eligible=%d hidden=%d alpha=%.2f owners=%lu",
             allowed, button.hidden, button.alpha, (unsigned long)owners.count);

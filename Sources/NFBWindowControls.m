@@ -304,7 +304,10 @@ void NFBObserveSplitPlacement(NSString *app) {
             CGRect natural=CGRectApplyAffineTransform((CGRect){CGPointZero,view.bounds.size},base);
             tiles[i].width=natural.size.width; tiles[i].height=natural.size.height;
         }
-        double factor=NFBArrange(tiles,participants.count,area.size.width,area.size.height);
+        NSUInteger landscapeCount = 0;
+        for (UIView *view in participants)
+            if ([[arrangementStates objectForKey:view][@"kind"] integerValue] == 2) landscapeCount++;
+        double factor=NFBArrangeGroups(tiles,participants.count,landscapeCount,area.size.width,area.size.height);
         if (factor<=0) { free(tiles); return; }
         [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled()?0:0.35 delay:0
             options:UIViewAnimationOptionBeginFromCurrentState|UIViewAnimationOptionAllowUserInteraction|UIViewAnimationOptionCurveEaseInOut animations:^{

@@ -19,3 +19,13 @@ static inline double NFBArrange(NFBTile *tiles, size_t count, double width, doub
     }
     return factor;
 }
+
+// Landscape prefix is pinned to the top; remaining portrait group stays bottom-aligned.
+static inline double NFBArrangeGroups(NFBTile *tiles, size_t count, size_t landscapes, double width, double height) {
+    double factor = NFBArrange(tiles,count,width,height);
+    if (factor > 0 && count && landscapes) {
+        double offset = tiles[0].y;
+        for (size_t i=0; i<count && i<landscapes; i++) tiles[i].y -= offset;
+    }
+    return factor;
+}
