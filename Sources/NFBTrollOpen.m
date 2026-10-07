@@ -234,16 +234,17 @@ NSString *NFBTrollVisibleApp(void) {
     return [app isKindOfClass:NSString.class] ? app : nil;
 }
 
-UIView *NFBCurrentFloatingWindow(void) {
+id NFBCurrentFloatingWindow(void) {
     if (!NSThread.isMainThread) return nil;
     id window = NFBTrollObject(NSClassFromString(@"TOJBBarGestureBridge"), @"currentVisibleFloatingWindow");
-    return [window isKindOfClass:UIView.class] ? (UIView *)window : nil;
+    Class viewClass = NSClassFromString(@"UIView");
+    return (viewClass && [window isKindOfClass:viewClass]) ? window : nil;
 }
 
 BOOL NFBSetFloatingVisualScale(double scale) {
     if (!NSThread.isMainThread || !isfinite(scale) || scale <= 0) return NO;
     @try {
-        UIView *window = NFBCurrentFloatingWindow();
+        id window = NFBCurrentFloatingWindow();
         if (!window) return NO;
         // setVisualScale: is a plain double setter (v24@0:8d16), confirmed in the
         // supplied 1.3.7 binary's Objective-C metadata.

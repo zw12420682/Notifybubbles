@@ -1,5 +1,4 @@
 #import <Foundation/Foundation.h>
-#import <UIKit/UIKit.h>
 
 // YES means the request was submitted, not that a window was confirmed visible.
 BOOL NFBOpenTrollApp(NSString *bundleID);
@@ -24,8 +23,10 @@ BOOL NFBFullscreenCurrentFloatingWindow(void);
 // across builds, so both are probed (class method first, then instance).
 BOOL NFBMinimizeCurrentFloatingWindow(void);
 
-// Current visible floating window as a UIView, or nil when none is present.
-UIView *NFBCurrentFloatingWindow(void);
+// Current visible floating window, or nil when none is present. Returned as an
+// opaque object (id) so this header stays UIKit-free and the macOS test target
+// can compile it without the iOS SDK.
+id NFBCurrentFloatingWindow(void);
 
 // Set the floating window's visual scale (size) and re-sync its container frame,
 // preserving the window's center. Returns YES when the scale was submitted.
