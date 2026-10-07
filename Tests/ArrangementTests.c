@@ -18,4 +18,6 @@ int main(void){
  NFBTile blocked[]={{300,150,0,0},{250,350,0,0}};NFBArrangeGroups(blocked,2,1,390,844);double portraitY=blocked[1].y;NFBPositionLandscape(blocked,2,1,844,2);assert(fabs(blocked[0].y+blocked[0].height-844)<0.001);assert(blocked[1].y==portraitY);
  NFBTile mixedPos[]={{300,150,0,0},{250,350,0,0}};NFBArrangeGroups(mixedPos,2,1,390,844);NFBPositionLandscape(mixedPos,2,1,844,0.5);assert(fabs(mixedPos[0].y-347)<0.001);assert(fabs(mixedPos[1].y-494)<0.001);
  NFBTile top[]={{300,200,0,0}};NFBArrangeGroups(top,1,1,390,844);NFBPositionLandscape(top,1,1,844,NAN);assert(top[0].y==0);
+ NFBTile miniOnly[]={{200,80,0,0},{250,350,0,0}};NFBArrangeGroups(miniOnly,2,1,390,844);assert(miniOnly[0].y==0);assert(fabs(miniOnly[1].y+miniOnly[1].height-844)<0.001);
+ NFBTile miniTop[]={{300,100,0,0},{200,80,0,0},{250,350,0,0}};NFBArrangeGroups(miniTop,3,2,390,844);assert(fabs(miniTop[0].y)<0.001);assert(miniTop[1].y>=miniTop[0].height);assert(fabs(miniTop[2].y+miniTop[2].height-844)<0.001);
  return 0;}

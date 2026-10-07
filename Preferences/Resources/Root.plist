@@ -256,7 +256,7 @@
 			<key>label</key>
 			<string>分屏大小锁定</string>
 			<key>footerText</key>
-			<string>锁定后，打开竖屏分屏窗口时自动套用下面设定的大小；打开后仍可手动缩放调整。分屏上的锁定按钮与此开关状态一致。</string>
+			<string>锁定后，打开竖屏分屏窗口时自动套用下面设定的大小；未锁定时自动恢复原始大小（取消 Open 默认的 0.86 缩放）。打开后仍可手动缩放调整。分屏上的锁定按钮与此开关状态一致。</string>
 		</dict>
 		<dict>
 			<key>cell</key>

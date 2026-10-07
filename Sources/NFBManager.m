@@ -158,7 +158,7 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic) NSTimeInterval pendingLockSince;
 @property(nonatomic, weak) UIView *appliedLockWindow;
 @property(nonatomic, copy) NSString *appliedLockApp;
-- (void)applySplitLockScale;
+- (void)applySplitScale;
 
 @property(nonatomic, strong) NFBRail *unreadRail;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NFBBubble *> *edgeCopies;
@@ -307,15 +307,16 @@ static double NFBNumber(NSString *key, double fallback) {
     self.showLock = NFBPreference(@"ShowOnLock", YES);
     self.showHome = NFBPreference(@"ShowOnHome", YES);
     self.showApps = NFBPreference(@"ShowInApps", YES);
-    self.splitSizeLocked = NFBPreference(@"SplitSizeLock", NO);
+    BOOL newLocked = NFBPreference(@"SplitSizeLock", NO);
     double lockSize = NFBNumber(@"SplitLockSize", 100);
     if (lockSize < 50 || lockSize > 150) lockSize = 100;
     double newScale = lockSize / 100.0;
-    if (newScale != self.splitLockScale) {
-        // Size changed while locked: re-apply to the open split window.
+    if (newLocked != self.splitSizeLocked || newScale != self.splitLockScale) {
+        // Lock state or size changed: re-apply to the open split window.
         self.appliedLockWindow = nil; self.appliedLockApp = nil;
         self.pendingLockWindow = nil; self.pendingLockSince = 0;
     }
+    self.splitSizeLocked = newLocked;
     self.splitLockScale = newScale;
 
     id favorites = CFBridgingRelease(CFPreferencesCopyAppValue(CFSTR("FavoriteApps"), NFBDomain));
@@ -425,7 +426,7 @@ static double NFBNumber(NSString *key, double fallback) {
     CFPreferencesAppSynchronize(NFBDomain);
     self.appliedLockWindow = nil; self.appliedLockApp = nil;
     self.pendingLockWindow = nil; self.pendingLockSince = 0;
-    if (self.splitSizeLocked) [self applySplitLockScale];
+    [self applySplitScale];
     [self refresh];
 }
 - (void)layoutTopAction:(CGRect)frame target:(UIView *)target duration:(NSTimeInterval)duration {
@@ -564,7 +565,7 @@ static double NFBNumber(NSString *key, double fallback) {
     [NSRunLoop.mainRunLoop addTimer:self.floatingWatch forMode:NSRunLoopCommonModes];
 }
 - (void)floatingWatchFired {
-    [self applySplitLockScale];
+    [self applySplitScale];
     NFBObserveSplitPlacement(nil);
     NFBObserveRotationLayout();
     [self updatePrivacy];
@@ -590,15 +591,18 @@ static double NFBNumber(NSString *key, double fallback) {
     self.watchedFloating = now;
     [self refresh];
 }
-// Apply the locked split size once per window/app opening: wait past the opening
-// animation, then submit the configured visual scale. Manual resizing is never
-// fought back, so the scale is only set when the window or app first appears.
-- (void)applySplitLockScale {
-    if (!self.splitSizeLocked || !self.enabled) {
+// Apply the split size once per window/app opening: wait past the opening
+// animation, then submit the visual scale. Locked uses the configured size;
+// unlocked uses natural 1.0 so the host's default shrink (0.86) is cancelled.
+// Manual resizing is never fought back, so the scale is only set when the
+// window or app first appears.
+- (void)applySplitScale {
+    if (!self.enabled) {
         self.pendingLockWindow = nil; self.pendingLockSince = 0;
         self.appliedLockWindow = nil; self.appliedLockApp = nil;
         return;
     }
+    double scale = self.splitSizeLocked ? self.splitLockScale : 1.0;
     NSString *app = NFBTrollVisibleApp();
     UIView *window = NFBCurrentFloatingWindow();
     BOOL portraitSplit = app.length > 0 && window && !NFBWindowIsLandscape(window);
@@ -611,7 +615,7 @@ static double NFBNumber(NSString *key, double fallback) {
     }
     if (CACurrentMediaTime() - self.pendingLockSince < 0.75) return;
     self.pendingLockWindow = nil; self.pendingLockSince = 0;
-    if (NFBSetFloatingVisualScale(self.splitLockScale)) {
+    if (NFBSetFloatingVisualScale(scale)) {
         self.appliedLockWindow = window;
         self.appliedLockApp = app;
     }

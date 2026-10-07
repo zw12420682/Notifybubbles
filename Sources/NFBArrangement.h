@@ -20,24 +20,25 @@ static inline double NFBArrange(NFBTile *tiles, size_t count, double width, doub
     return factor;
 }
 
-// Landscape prefix is pinned to the top; remaining portrait group stays bottom-aligned.
-static inline double NFBArrangeGroups(NFBTile *tiles, size_t count, size_t landscapes, double width, double height) {
+// Mini and landscape windows form the top prefix, pinned to the top; the
+// remaining portrait group stays bottom-aligned.
+static inline double NFBArrangeGroups(NFBTile *tiles, size_t count, size_t topCount, double width, double height) {
     double factor = NFBArrange(tiles,count,width,height);
-    if (factor > 0 && count && landscapes) {
+    if (factor > 0 && count && topCount) {
         double offset = tiles[0].y;
-        for (size_t i=0; i<count && i<landscapes; i++) tiles[i].y -= offset;
+        for (size_t i=0; i<count && i<topCount; i++) tiles[i].y -= offset;
     }
     return factor;
 }
 
-// Map the slider position directly to the landscape group's top Y, using the
-// full screen height as the range. Portrait windows sharing the screen do not
-// change the target position.
-static inline void NFBPositionLandscape(NFBTile *tiles, size_t count, size_t landscapes, double height, double position) {
-    if (!count || !landscapes || landscapes > count || height <= 0) return;
+// Map the slider position directly to the top group's top Y, using the full
+// screen height as the range. Portrait windows sharing the screen do not change
+// the target position.
+static inline void NFBPositionLandscape(NFBTile *tiles, size_t count, size_t topCount, double height, double position) {
+    if (!count || !topCount || topCount > count || height <= 0) return;
     if (!isfinite(position)) position = 0;
     position = fmax(0, fmin(1, position));
-    double bottom = tiles[landscapes-1].y + tiles[landscapes-1].height;
+    double bottom = tiles[topCount-1].y + tiles[topCount-1].height;
     double offset = fmax(0, height - bottom) * position;
-    for (size_t i=0; i<landscapes; i++) tiles[i].y += offset;
+    for (size_t i=0; i<topCount; i++) tiles[i].y += offset;
 }

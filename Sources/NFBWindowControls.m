@@ -273,10 +273,9 @@ void NFBObserveSplitPlacement(NSString *app) {
             hasLandscape |= kind == 2; hasPortrait |= kind == 1;
         }
         if (rotatedToLandscape && !hasPortrait) NFBOpenEdgeExpandAfterRotation();
-        for (UIView *view in found) {
-            NSInteger kind = [[arrangementStates objectForKey:view][@"kind"] integerValue];
-            if (kind != 3 || (!hasLandscape && hasPortrait)) [participants addObject:view];
-        }
+        // Mini windows participate too: they stay at the top with landscape
+        // instead of being left to the host's corner-avoidance layout.
+        for (UIView *view in found) [participants addObject:view];
         [participants sortUsingComparator:^NSComparisonResult(UIView *a, UIView *b) {
             NSDictionary *sa = [arrangementStates objectForKey:a], *sb = [arrangementStates objectForKey:b];
             NSInteger ka = [sa[@"kind"] integerValue], kb = [sb[@"kind"] integerValue];
@@ -308,12 +307,13 @@ void NFBObserveSplitPlacement(NSString *app) {
             CGRect natural=CGRectApplyAffineTransform((CGRect){CGPointZero,view.bounds.size},base);
             tiles[i].width=natural.size.width; tiles[i].height=natural.size.height;
         }
-        NSUInteger landscapeCount = 0;
+        // Mini and landscape windows both sit at the top; only portrait stays bottom.
+        NSUInteger topCount = 0;
         for (UIView *view in participants)
-            if ([[arrangementStates objectForKey:view][@"kind"] integerValue] == 2) landscapeCount++;
-        double factor=NFBArrangeGroups(tiles,participants.count,landscapeCount,area.size.width,area.size.height);
+            if ([[arrangementStates objectForKey:view][@"kind"] integerValue] != 1) topCount++;
+        double factor=NFBArrangeGroups(tiles,participants.count,topCount,area.size.width,area.size.height);
         if (factor<=0) { free(tiles); return; }
-        NFBPositionLandscape(tiles,participants.count,landscapeCount,area.size.height,position);
+        NFBPositionLandscape(tiles,participants.count,topCount,area.size.height,position);
         [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled()?0:0.35 delay:0
             options:UIViewAnimationOptionBeginFromCurrentState|UIViewAnimationOptionAllowUserInteraction|UIViewAnimationOptionCurveEaseInOut animations:^{
                 for (NSUInteger i=0; i<participants.count; i++) {
