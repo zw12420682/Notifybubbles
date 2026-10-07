@@ -254,21 +254,9 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
-			<string>分屏大小锁定</string>
+			<string>分屏大小</string>
 			<key>footerText</key>
-			<string>锁定后，打开竖屏分屏窗口时自动套用下面设定的大小；未锁定时自动恢复原始大小（取消 Open 默认的 0.86 缩放）。打开后仍可手动缩放调整。分屏上的锁定按钮与此开关状态一致。</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>label</key>
-			<string>锁定分屏大小</string>
-			<key>key</key>
-			<string>SplitSizeLock</string>
-			<key>defaults</key>
-			<string>local.notifybubbles</string>
-			<key>default</key>
-			<false/>
+			<string>竖屏分屏窗口打开时自动套用下面的比例（取代 Open 默认的 0.86 缩放）。打开后仍可手动缩放调整。修改即时生效。</string>
 		</dict>
 		<dict>
 			<key>cell</key>

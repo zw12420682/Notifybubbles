@@ -273,13 +273,13 @@ void NFBObserveSplitPlacement(NSString *app) {
             hasLandscape |= kind == 2; hasPortrait |= kind == 1;
         }
         if (rotatedToLandscape && !hasPortrait) NFBOpenEdgeExpandAfterRotation();
-        // Mini windows participate too: they stay at the top with landscape
-        // instead of being left to the host's corner-avoidance layout.
+        // Mini windows participate too: they form a horizontal row at the top,
+        // left to right, instead of being left to the host's corner-avoidance.
         for (UIView *view in found) [participants addObject:view];
         [participants sortUsingComparator:^NSComparisonResult(UIView *a, UIView *b) {
             NSDictionary *sa = [arrangementStates objectForKey:a], *sb = [arrangementStates objectForKey:b];
             NSInteger ka = [sa[@"kind"] integerValue], kb = [sb[@"kind"] integerValue];
-            NSInteger ra = ka == 2 ? 0 : (ka == 3 ? 1 : 2), rb = kb == 2 ? 0 : (kb == 3 ? 1 : 2);
+            NSInteger ra = ka == 3 ? 0 : (ka == 2 ? 1 : 2), rb = kb == 3 ? 0 : (kb == 2 ? 1 : 2);
             return ra == rb ? [sa[@"order"] compare:sb[@"order"]] : (ra < rb ? NSOrderedAscending : NSOrderedDescending);
         }];
         UIScreen *screen = ((UIView *)participants.firstObject).window.screen;
@@ -307,13 +307,17 @@ void NFBObserveSplitPlacement(NSString *app) {
             CGRect natural=CGRectApplyAffineTransform((CGRect){CGPointZero,view.bounds.size},base);
             tiles[i].width=natural.size.width; tiles[i].height=natural.size.height;
         }
-        // Mini and landscape windows both sit at the top; only portrait stays bottom.
-        NSUInteger topCount = 0;
-        for (UIView *view in participants)
-            if ([[arrangementStates objectForKey:view][@"kind"] integerValue] != 1) topCount++;
-        double factor=NFBArrangeGroups(tiles,participants.count,topCount,area.size.width,area.size.height);
+        // Sorted mini, landscape, portrait: mini forms the top row, landscape is
+        // the vertical top group, portrait stays bottom-aligned.
+        NSUInteger rowCount = 0, topCount = 0;
+        for (UIView *view in participants) {
+            NSInteger kind = [[arrangementStates objectForKey:view][@"kind"] integerValue];
+            if (kind == 3) rowCount++;
+            else if (kind == 2) topCount++;
+        }
+        double factor=NFBArrangeMixed(tiles,participants.count,rowCount,topCount,area.size.width,area.size.height);
         if (factor<=0) { free(tiles); return; }
-        NFBPositionLandscape(tiles,participants.count,topCount,area.size.height,position);
+        NFBPositionLandscape(tiles,participants.count,rowCount,topCount,area.size.height,position);
         [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled()?0:0.35 delay:0
             options:UIViewAnimationOptionBeginFromCurrentState|UIViewAnimationOptionAllowUserInteraction|UIViewAnimationOptionCurveEaseInOut animations:^{
                 for (NSUInteger i=0; i<participants.count; i++) {

@@ -142,22 +142,15 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, strong) NFBRail *rail;
 @property(nonatomic) BOOL backgroundCollapsed;
 
-@property(nonatomic, strong) NFBBubble *topActionButton;
-@property(nonatomic, strong) UITapGestureRecognizer *topActionTap;
-@property(nonatomic, weak) UIView *topActionTarget;
-@property(nonatomic, weak) UIView *topActionTouchTarget;
 @property(nonatomic, weak) UIView *observedActionTarget;
 @property(nonatomic) CGRect observedActionFrame;
 @property(nonatomic) BOOL observedActionLandscape;
-- (void)topActionTapped:(UITapGestureRecognizer *)gesture;
-- (void)layoutTopAction:(CGRect)frame target:(UIView *)target duration:(NSTimeInterval)duration;
 
-@property(nonatomic) BOOL splitSizeLocked;
-@property(nonatomic) double splitLockScale;
-@property(nonatomic, weak) UIView *pendingLockWindow;
-@property(nonatomic) NSTimeInterval pendingLockSince;
-@property(nonatomic, weak) UIView *appliedLockWindow;
-@property(nonatomic, copy) NSString *appliedLockApp;
+@property(nonatomic) double splitScale;
+@property(nonatomic, weak) UIView *pendingScaleWindow;
+@property(nonatomic) NSTimeInterval pendingScaleSince;
+@property(nonatomic, weak) UIView *appliedScaleWindow;
+@property(nonatomic, copy) NSString *appliedScaleApp;
 - (void)applySplitScale;
 
 @property(nonatomic, strong) NFBRail *unreadRail;
@@ -307,17 +300,15 @@ static double NFBNumber(NSString *key, double fallback) {
     self.showLock = NFBPreference(@"ShowOnLock", YES);
     self.showHome = NFBPreference(@"ShowOnHome", YES);
     self.showApps = NFBPreference(@"ShowInApps", YES);
-    BOOL newLocked = NFBPreference(@"SplitSizeLock", NO);
-    double lockSize = NFBNumber(@"SplitLockSize", 100);
-    if (lockSize < 50 || lockSize > 150) lockSize = 100;
-    double newScale = lockSize / 100.0;
-    if (newLocked != self.splitSizeLocked || newScale != self.splitLockScale) {
-        // Lock state or size changed: re-apply to the open split window.
-        self.appliedLockWindow = nil; self.appliedLockApp = nil;
-        self.pendingLockWindow = nil; self.pendingLockSince = 0;
+    double sizePercent = NFBNumber(@"SplitLockSize", 100);
+    if (sizePercent < 50 || sizePercent > 150) sizePercent = 100;
+    double newScale = sizePercent / 100.0;
+    if (newScale != self.splitScale) {
+        // Size changed: re-apply to the open split window.
+        self.appliedScaleWindow = nil; self.appliedScaleApp = nil;
+        self.pendingScaleWindow = nil; self.pendingScaleSince = 0;
     }
-    self.splitSizeLocked = newLocked;
-    self.splitLockScale = newScale;
+    self.splitScale = newScale;
 
     id favorites = CFBridgingRelease(CFPreferencesCopyAppValue(CFSTR("FavoriteApps"), NFBDomain));
     NSMutableOrderedSet *selected = [NSMutableOrderedSet orderedSet];
@@ -412,59 +403,6 @@ static double NFBNumber(NSString *key, double fallback) {
     if (!NFBCloseCurrentSplit()) [self showOpenNotice:@"未能读取 TrollOpen 右侧区域的单击接口"];
     else NFBOpenEdgeAfterClose();
     [self refresh];
-}
-- (void)topActionTapped:(UITapGestureRecognizer *)gesture {
-    if (gesture.state != UIGestureRecognizerStateEnded || !self.enabled || [self isLocked]) return;
-    UIView *target = self.topActionTouchTarget;
-    self.topActionTouchTarget = nil;
-    if (!target || target != self.topActionTarget || target != NFBTopActionWindow()) { [self refresh]; return; }
-    if (![self acceptGesture]) return;
-    // Toggle the split-size lock; opening a split window then applies the size
-    // chosen in settings. Manual resizing stays enabled either way.
-    self.splitSizeLocked = !self.splitSizeLocked;
-    CFPreferencesSetAppValue(CFSTR("SplitSizeLock"), self.splitSizeLocked ? kCFBooleanTrue : kCFBooleanFalse, NFBDomain);
-    CFPreferencesAppSynchronize(NFBDomain);
-    self.appliedLockWindow = nil; self.appliedLockApp = nil;
-    self.pendingLockWindow = nil; self.pendingLockSince = 0;
-    [self applySplitScale];
-    [self refresh];
-}
-- (void)layoutTopAction:(CGRect)frame target:(UIView *)target duration:(NSTimeInterval)duration {
-    BOOL visible = target && !CGRectIsNull(frame) && !CGRectIsEmpty(frame) && self.enabled;
-    self.topActionTarget = visible ? target : nil;
-    if (!self.topActionButton && !visible) return;
-    if (!self.topActionButton) {
-        NFBBubble *button = [[NFBBubble alloc] initWithFrame:frame];
-        button.badge.hidden = YES;
-        button.imageView.contentMode = UIViewContentModeCenter;
-        button.imageView.backgroundColor = UIColor.secondarySystemBackgroundColor;
-        self.topActionTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(topActionTapped:)];
-        self.topActionTap.delegate = self;
-        [button addGestureRecognizer:self.topActionTap];
-        button.alpha = 0;
-        self.topActionButton = button;
-        [self.window.rootViewController.view addSubview:button];
-    }
-    NFBBubble *button = self.topActionButton;
-    BOOL locked = self.splitSizeLocked;
-    button.imageView.image = [UIImage systemImageNamed:locked ? @"lock.fill" : @"lock.open"];
-    button.imageView.tintColor = locked ? UIColor.systemOrangeColor : UIColor.systemGrayColor;
-    button.accessibilityLabel = locked ? @"解除锁定分屏大小" : @"锁定分屏大小";
-    button.accessibilityHint = locked ? @"点击解除锁定，分屏可自由调整大小" : @"点击锁定，分屏打开时使用设置里的大小";
-    CGFloat targetAlpha = visible ? (NFBWindowIsLandscape(target) ? 0.5 : 1.0) : 0;
-    button.userInteractionEnabled = visible;
-    if (visible && button.alpha < 0.01) button.frame = frame;
-    [self.window.rootViewController.view bringSubviewToFront:button];
-    [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : MAX(0.16, duration)
-        delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseInOut animations:^{
-        button.alpha = targetAlpha;
-        if (visible) {
-            button.frame = frame;
-            CGFloat imageSide = MAX(1, frame.size.width - 14);
-            button.imageView.frame = CGRectMake(7, 7, imageSide, imageSide);
-            button.imageView.layer.cornerRadius = imageSide * 0.23;
-        }
-    } completion:nil];
 }
 - (void)clearAllHeld:(UILongPressGestureRecognizer *)gesture {
     if (gesture.state != UIGestureRecognizerStateBegan || [self isLocked] || ![self acceptGesture]) return;
@@ -591,33 +529,32 @@ static double NFBNumber(NSString *key, double fallback) {
     self.watchedFloating = now;
     [self refresh];
 }
-// Apply the split size once per window/app opening: wait past the opening
-// animation, then submit the visual scale. Locked uses the configured size;
-// unlocked uses natural 1.0 so the host's default shrink (0.86) is cancelled.
-// Manual resizing is never fought back, so the scale is only set when the
-// window or app first appears.
+// Apply the configured split size once per window/app opening: wait past the
+// opening animation, then submit the visual scale (the "分屏大小" setting),
+// replacing the host's default 0.86 shrink. Manual resizing is never fought
+// back, so the scale is only set when the window or app first appears.
 - (void)applySplitScale {
     if (!self.enabled) {
-        self.pendingLockWindow = nil; self.pendingLockSince = 0;
-        self.appliedLockWindow = nil; self.appliedLockApp = nil;
+        self.pendingScaleWindow = nil; self.pendingScaleSince = 0;
+        self.appliedScaleWindow = nil; self.appliedScaleApp = nil;
         return;
     }
-    double scale = self.splitSizeLocked ? self.splitLockScale : 1.0;
+    double scale = self.splitScale;
     NSString *app = NFBTrollVisibleApp();
     UIView *window = NFBCurrentFloatingWindow();
     BOOL portraitSplit = app.length > 0 && window && !NFBWindowIsLandscape(window);
-    if (!portraitSplit) { self.pendingLockWindow = nil; self.pendingLockSince = 0; return; }
-    if (window == self.appliedLockWindow && [app isEqual:self.appliedLockApp]) return;
-    if (window != self.pendingLockWindow) {
-        self.pendingLockWindow = window;
-        self.pendingLockSince = CACurrentMediaTime();
+    if (!portraitSplit) { self.pendingScaleWindow = nil; self.pendingScaleSince = 0; return; }
+    if (window == self.appliedScaleWindow && [app isEqual:self.appliedScaleApp]) return;
+    if (window != self.pendingScaleWindow) {
+        self.pendingScaleWindow = window;
+        self.pendingScaleSince = CACurrentMediaTime();
         return;
     }
-    if (CACurrentMediaTime() - self.pendingLockSince < 0.75) return;
-    self.pendingLockWindow = nil; self.pendingLockSince = 0;
+    if (CACurrentMediaTime() - self.pendingScaleSince < 0.75) return;
+    self.pendingScaleWindow = nil; self.pendingScaleSince = 0;
     if (NFBSetFloatingVisualScale(scale)) {
-        self.appliedLockWindow = window;
-        self.appliedLockApp = app;
+        self.appliedScaleWindow = window;
+        self.appliedScaleApp = app;
     }
 }
 - (void)extendApp:(NSString *)app {
@@ -1003,10 +940,6 @@ static double NFBNumber(NSString *key, double fallback) {
     }
     CGFloat clearCenterY = railFrame.origin.y - 8 - side / 2;
     CGRect favoritesFrame = CGRectZero;
-    UIView *actionTarget = NFBTopActionWindow();
-    BOOL actionLandscape = NFBWindowIsLandscape(actionTarget);
-    CGRect actionWindowFrame = NFBWindowFrameInView(actionTarget, root);
-    CGRect topActionFrame = CGRectNull;
     if (containerMode) {
         CGFloat ceiling = MAX(safe.top, 12);
         CGFloat floor = CGRectGetHeight(bounds) - MAX(safe.bottom, 12);
@@ -1014,11 +947,6 @@ static double NFBNumber(NSString *key, double fallback) {
         if (keyboardUp) floor = MIN(floor, NFBKeyboardTopInView(root) - 12 - step);
         CGFloat desiredTop = attached ? NFBSplitRailTop(CGRectGetMinY(splitFrame), CGRectGetHeight(splitFrame)) : railFrame.origin.y;
         CGFloat y = MAX(ceiling, MIN(desiredTop, floor - side - 9));
-        // The action occupies its own row above both rails, never inside scrolling content.
-        if (actionTarget && !actionLandscape && !CGRectIsNull(actionWindowFrame) && floor - y >= 2 * side + 18) {
-            topActionFrame = CGRectMake(railFrame.origin.x, y, side, side);
-            y += side + 9;
-        }
         CGFloat room = MAX(0, floor - y - side - 9);
         NFBContainerHeights fit = NFBFitContainers(room, side, step, self.favoriteApps.count, rowCount);
         CGFloat favoriteHeight = fit.favorites, gap = fit.gap;
@@ -1056,7 +984,6 @@ static double NFBNumber(NSString *key, double fallback) {
             side + NFBRetraction(diameter), unreadHeight);
     }
     [self layoutFavorites:favoritesFrame diameter:diameter active:active duration:layoutDuration];
-    [self layoutTopAction:topActionFrame target:actionTarget duration:layoutDuration];
     self.unreadRail.hidden = !edgeMode || !unreadApps.count;
     [UIView animateWithDuration:layoutDuration delay:0
         options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseInOut
@@ -1590,10 +1517,6 @@ static double NFBNumber(NSString *key, double fallback) {
     return CGRectGetMaxX(image) > CGRectGetWidth(self.window.rootViewController.view.bounds) + 0.5;
 }
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldReceiveTouch:(UITouch *)touch {
-    if (gesture == self.topActionTap) {
-        self.topActionTouchTarget = self.topActionTarget;
-        return self.enabled && ![self isLocked] && self.topActionTouchTarget != nil;
-    }
     if (gesture == self.edgeTap) {
         // Bubble taps handle their own reveal. Do not race them with a parent tap.
         for (UIView *view = touch.view; view && view != self.rail; view = view.superview)
