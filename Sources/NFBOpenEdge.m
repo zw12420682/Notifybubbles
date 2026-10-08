@@ -1,5 +1,6 @@
 #import "NFBOpenEdge.h"
 #import "NFBWindowControls.h"
+#import "NFBPrivate.h"
 #import "NFBDebugLog.h"
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
@@ -13,16 +14,62 @@ static BOOL enabledByOwner;
 static BOOL splitIconsVisible;
 static BOOL installed;
 static BOOL lastSuppressed;
+static BOOL lastTucked;
+static void (*originalSetTucked)(id, SEL, BOOL, BOOL);
+static void (*originalSetTuckedPlain)(id, SEL, BOOL);
+static BOOL (*originalGetTucked)(id, SEL);
+static CGFloat (*originalCenterX)(id, SEL, CGRect, BOOL);
 static NSHashTable *owners;
 static BOOL (*originalShouldShow)(id, SEL);
 static void (*originalRefresh)(id, SEL);
 static void (*originalShowEdge)(id, SEL, BOOL);
 static void (*originalShowTray)(id, SEL);
+// Tucking is Open's native edge position (the position revealed by swiping),
+// independent of hiding the button. A visible floating/mini window is not fullscreen.
+static BOOL shouldTuck(void) {
+    id sb = UIApplication.sharedApplication;
+    if ([sb respondsToSelector:@selector(isShowingHomescreen)] && [sb isShowingHomescreen]) return NO;
+    // The bridge also reports windows that are not in UIApplication.windows.
+    id floating = NFBGet(NSClassFromString(@"TOJBBarGestureBridge"), @"currentVisibleFloatingWindow");
+    if ([floating isKindOfClass:UIView.class] && ![(UIView *)floating isHidden] &&
+        [(UIView *)floating alpha] > 0.01) return NO;
+    for (UIWindow *window in UIApplication.sharedApplication.windows) {
+        if ([window isKindOfClass:NSClassFromString(@"FloatingAppWindow")] &&
+            !window.hidden && window.alpha > 0.01) return NO;
+    }
+    return NFBString(NFBGet(NFBGet(sb, @"_accessibilityFrontMostApplication"), @"bundleIdentifier")).length > 0;
+}
 static BOOL suppressed(void) {
-    // Hide Open's edge icon only while NotifyBubbles' split bubbles are on screen.
-    // Any other state keeps Open's native shouldShowEdgeIcon decision: a
-    // fullscreen app retracts it, the desktop/landscape/mini cases show it.
     return enabledByOwner && splitIconsVisible && NSThread.isMainThread;
+}
+static BOOL tuckValue(BOOL requested) {
+    return enabledByOwner && NSThread.isMainThread ? shouldTuck() : requested;
+}
+static BOOL getTucked(id owner, SEL cmd) {
+    return tuckValue(originalGetTucked(owner, cmd));
+}
+static CGFloat centerX(id owner, SEL cmd, CGRect bounds, BOOL tucked) {
+    // Use Open's own left/right geometry, but enforce the presentation policy
+    // at the point where the actual on-screen position is calculated.
+    return originalCenterX(owner, cmd, bounds, tuckValue(tucked));
+}
+static void setTucked(id owner, SEL cmd, BOOL tucked, BOOL animated) {
+    originalSetTucked(owner, cmd, tuckValue(tucked), animated);
+}
+static void setTuckedPlain(id owner, SEL cmd, BOOL tucked) {
+    originalSetTuckedPlain(owner, cmd, tuckValue(tucked));
+}
+static void applyTuck(id owner, BOOL animated) {
+    if (!enabledByOwner || suppressed()) return;
+    originalSetTucked(owner, NSSelectorFromString(@"setEdgeButtonAutoHidden:animated:"), shouldTuck(), animated);
+    // The native setter may return early when its stored value is unchanged.
+    // Re-run native layout so an old tucked frame cannot survive that branch.
+    id button = NFBGet(owner, @"edgeButton");
+    if (![button isKindOfClass:UIView.class]) return;
+    UIView *host = [(UIView *)button superview];
+    if (!host || NFBGet(owner, @"trayBackdrop")) return;
+    ((void (*)(id, SEL, id, BOOL))objc_msgSend)(owner,
+        NSSelectorFromString(@"updateEdgeButtonLayoutInHostView:animated:"), host, animated);
 }
 static void remember(id owner) {
     if (NSThread.isMainThread) [owners addObject:owner];
@@ -33,7 +80,8 @@ static BOOL shouldShow(id owner, SEL cmd) {
 }
 static void refresh(id owner, SEL cmd) {
     remember(owner);
-    originalRefresh(owner, cmd); // Native false branch animates edge/tray/swipe dismissal.
+    originalRefresh(owner, cmd);
+    applyTuck(owner, YES);
 }
 static void showEdge(id owner, SEL cmd, BOOL animated) {
     remember(owner);
@@ -42,6 +90,7 @@ static void showEdge(id owner, SEL cmd, BOOL animated) {
         return;
     }
     originalShowEdge(owner, cmd, animated);
+    applyTuck(owner, animated);
 }
 static void showTray(id owner, SEL cmd) {
     remember(owner);
@@ -54,6 +103,7 @@ static void reconcile(void) {
     if (!installed || suppressed()) return;
     for (id owner in owners.allObjects) {
         originalRefresh(owner, NSSelectorFromString(@"refreshUI"));
+        applyTuck(owner, NO);
         BOOL allowed = originalShouldShow(owner, NSSelectorFromString(@"shouldShowEdgeIcon"));
         SEL getter = NSSelectorFromString(@"edgeButton");
         NSMethodSignature *sig = [owner methodSignatureForSelector:getter];
@@ -67,6 +117,7 @@ static void reconcile(void) {
         id tray = ((id (*)(id, SEL))objc_msgSend)(owner, trayGetter);
         if (allowed && !tray && (button.hidden || button.alpha < 0.01))
             originalShowEdge(owner, NSSelectorFromString(@"showEdgeButtonAnimated:"), NO);
+        applyTuck(owner, NO);
         NFBDebugLog(@"Open edge restore: eligible=%d hidden=%d alpha=%.2f owners=%lu",
             allowed, button.hidden, button.alpha, (unsigned long)owners.count);
     }
@@ -89,18 +140,32 @@ static BOOL matches(Class cls, NSString *name, const char *result, const char *a
     if (strcmp(sig.methodReturnType, result) || sig.numberOfArguments != (argument ? 3u : 2u)) return NO;
     return !argument || !strcmp([sig getArgumentTypeAtIndex:2], argument);
 }
+static BOOL matchesPair(Class cls, NSString *name, const char *result,
+                        const char *first, const char *second) {
+    Method method = class_getInstanceMethod(cls, NSSelectorFromString(name));
+    if (!method) return NO;
+    NSMethodSignature *sig = [NSMethodSignature signatureWithObjCTypes:method_getTypeEncoding(method)];
+    return sig.numberOfArguments == 4 && !strcmp(sig.methodReturnType, result) &&
+        !strcmp([sig getArgumentTypeAtIndex:2], first) &&
+        !strcmp([sig getArgumentTypeAtIndex:3], second);
+}
 // Apply the current suppression state, restoring the native edge icon when the
 // split bubbles leave the screen.
 static void applySuppression(void) {
     if (!installed) return;
     BOOL now = suppressed();
-    if (now == lastSuppressed) return;
+    BOOL tucked = shouldTuck();
+    if (now == lastSuppressed && tucked == lastTucked) return;
     lastSuppressed = now;
+    lastTucked = tucked;
     if (now) ++restoreGeneration;
     else NFBOpenEdgeAfterClose();
-    for (id owner in owners.allObjects) originalRefresh(owner, NSSelectorFromString(@"refreshUI"));
+    for (id owner in owners.allObjects) {
+        originalRefresh(owner, NSSelectorFromString(@"refreshUI"));
+        applyTuck(owner, YES);
+    }
     // On restoration, native shouldShowEdgeIcon still checks the user's own settings.
-    NFBDebugLog(@"Open edge split-bubble suppression=%d", now);
+    NFBDebugLog(@"Open edge policy: splitIconsHidden=%d tucked=%d owners=%lu", now, tucked, (unsigned long)owners.count);
 }
 void NFBUpdateOpenEdge(BOOL enabled) {
     if (!NSThread.isMainThread) return;
@@ -113,7 +178,24 @@ void NFBUpdateOpenEdge(BOOL enabled) {
             !matches(cls, @"showEdgeButtonAnimated:", @encode(void), @encode(BOOL)) ||
             !matches(cls, @"hideEdgeButtonAnimated:", @encode(void), @encode(BOOL)) ||
             !matches(cls, @"showTray", @encode(void), NULL)) return;
+        if (!matches(cls, @"setEdgeButtonAutoHidden:", @encode(void), @encode(BOOL))) return;
+        if (!matches(cls, @"edgeButtonAutoHidden", @encode(BOOL), NULL) ||
+            !matchesPair(cls, @"edgeCenterXForHostBounds:tucked:", @encode(CGFloat), @encode(CGRect), @encode(BOOL)) ||
+            !matchesPair(cls, @"updateEdgeButtonLayoutInHostView:animated:", @encode(void), @encode(id), @encode(BOOL))) {
+            NFBDebugLog(@"Open edge position integration: incompatible method signatures");
+            return;
+        }
+        Method tuckMethod = class_getInstanceMethod(cls, NSSelectorFromString(@"setEdgeButtonAutoHidden:animated:"));
+        if (!tuckMethod) return;
+        NSMethodSignature *tuckSig = [NSMethodSignature signatureWithObjCTypes:method_getTypeEncoding(tuckMethod)];
+        if (strcmp(tuckSig.methodReturnType, @encode(void)) || tuckSig.numberOfArguments != 4 ||
+            strcmp([tuckSig getArgumentTypeAtIndex:2], @encode(BOOL)) ||
+            strcmp([tuckSig getArgumentTypeAtIndex:3], @encode(BOOL))) return;
         owners = [NSHashTable weakObjectsHashTable];
+        MSHookMessageEx(cls, NSSelectorFromString(@"edgeButtonAutoHidden"), (IMP)getTucked, (IMP *)&originalGetTucked);
+        MSHookMessageEx(cls, NSSelectorFromString(@"edgeCenterXForHostBounds:tucked:"), (IMP)centerX, (IMP *)&originalCenterX);
+        MSHookMessageEx(cls, NSSelectorFromString(@"setEdgeButtonAutoHidden:animated:"), (IMP)setTucked, (IMP *)&originalSetTucked);
+        MSHookMessageEx(cls, NSSelectorFromString(@"setEdgeButtonAutoHidden:"), (IMP)setTuckedPlain, (IMP *)&originalSetTuckedPlain);
         MSHookMessageEx(cls, NSSelectorFromString(@"shouldShowEdgeIcon"), (IMP)shouldShow, (IMP *)&originalShouldShow);
         MSHookMessageEx(cls, NSSelectorFromString(@"refreshUI"), (IMP)refresh, (IMP *)&originalRefresh);
         MSHookMessageEx(cls, NSSelectorFromString(@"showEdgeButtonAnimated:"), (IMP)showEdge, (IMP *)&originalShowEdge);

@@ -882,8 +882,7 @@ static double NFBNumber(NSString *key, double fallback) {
     CGFloat top = MAX(safe.top, 48) + 30;
     CGRect splitFrame = floatingApp.length ? NFBSplitFrameInView(root) : CGRectNull;
     BOOL attached = !NFBCurrentSplitLandscape() && floatingApp.length && !CGRectIsNull(splitFrame) && !CGRectIsEmpty(splitFrame);
-    // Position gates only our presentation. Open's edge suppression still uses
-    // portrait-window existence, independently of this corner test.
+    // Position gates both our presentation and Open's edge suppression.
     BOOL validSplit = !CGRectIsNull(splitFrame) && !CGRectIsEmpty(splitFrame);
     const CGFloat cornerTolerance = 4.0;
     BOOL atBottomLeft = validSplit &&
@@ -899,7 +898,8 @@ static double NFBNumber(NSString *key, double fallback) {
     }
     // Open's edge icon is hidden only while these split bubbles are actually on
     // screen. A fullscreen app, the desktop, landscape/mini-only, or a split
-    // parked away from the corner all fall back to Open's native decision.
+    // parked away from the corner restore native visibility; the adapter separately
+    // keeps fullscreen tucked and every other visible edge extended.
     NFBUpdateOpenEdgeSplitIconsVisible(floatingApp.length > 0 && !hideForPosition);
 
     BOOL containerMode = !edgeMode;
