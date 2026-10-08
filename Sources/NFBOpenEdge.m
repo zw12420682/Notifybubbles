@@ -10,6 +10,7 @@
 // Verified against the supplied Open 1.3.7 binary. Never alter its preferences,
 // minimized-app list, notification records or private gesture action pointers.
 static BOOL enabledByOwner;
+static BOOL splitIconsShown = YES;
 static BOOL installed;
 static BOOL lastSuppressed;
 static NSHashTable *owners;
@@ -18,7 +19,8 @@ static void (*originalRefresh)(id, SEL);
 static void (*originalShowEdge)(id, SEL, BOOL);
 static void (*originalShowTray)(id, SEL);
 static BOOL suppressed(void) {
-    return enabledByOwner && NSThread.isMainThread && NFBSplitAttachmentApp().length > 0;
+    // Suppress the edge icon only while NotifyBubbles shows its own split icons.
+    return enabledByOwner && splitIconsShown && NSThread.isMainThread && NFBSplitAttachmentApp().length > 0;
 }
 static void remember(id owner) {
     if (NSThread.isMainThread) [owners addObject:owner];
@@ -91,6 +93,10 @@ void NFBOpenEdgeAfterClose(void) {
     }
 }
 void NFBOpenEdgeExpandAfterRotation(void) {
+    NFBOpenEdgeExpand();
+}
+// Expand the edge icon into its app list (the left-swipe/inward-pan action).
+void NFBOpenEdgeExpand(void) {
     if (!NSThread.isMainThread || suppressed()) return;
     expandOnRestore = YES; NFBOpenEdgeAfterClose();
 }
@@ -128,4 +134,17 @@ void NFBUpdateOpenEdge(BOOL enabled) {
     for (id owner in owners.allObjects) originalRefresh(owner, NSSelectorFromString(@"refreshUI"));
     // On restoration, native shouldShowEdgeIcon still checks the user's own settings.
     NFBDebugLog(@"Open edge portrait suppression=%d", now);
+}
+// Split-icon toggle changed: recompute whether Open's edge icon stays suppressed.
+void NFBUpdateOpenEdgeSplitIcons(BOOL show) {
+    if (!NSThread.isMainThread) return;
+    splitIconsShown = show;
+    if (!installed) return;
+    BOOL now = suppressed();
+    if (now == lastSuppressed) return;
+    lastSuppressed = now;
+    if (now) { ++restoreGeneration; expandOnRestore = NO; }
+    else NFBOpenEdgeAfterClose();
+    for (id owner in owners.allObjects) originalRefresh(owner, NSSelectorFromString(@"refreshUI"));
+    NFBDebugLog(@"Open edge split-icons suppression=%d", now);
 }

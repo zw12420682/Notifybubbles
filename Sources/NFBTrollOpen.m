@@ -214,6 +214,38 @@ BOOL NFBMinimizeFloatingWindow(id window) {
     } @catch (NSException *error) { NFBDebugLog(@"minimize-window failed: %@", error); return NO; }
 }
 
+// Expand a SPECIFIC mini floating window back to its full split size.
+BOOL NFBExpandFloatingWindow(id window) {
+    if (!NSThread.isMainThread || !window) return NO;
+    @try {
+        SEL animated = NSSelectorFromString(@"setMiniWindowModeEnabled:animated:");
+        NSMethodSignature *sig = [window methodSignatureForSelector:animated];
+        if ([window respondsToSelector:animated] && sig && sig.numberOfArguments == 4 &&
+            strcmp(sig.methodReturnType, @encode(void)) == 0) {
+            char a2 = [sig getArgumentTypeAtIndex:2][0];
+            char a3 = [sig getArgumentTypeAtIndex:3][0];
+            if ((a2 == 'B' || a2 == 'c') && (a3 == 'B' || a3 == 'c')) {
+                ((void (*)(id, SEL, BOOL, BOOL))objc_msgSend)(window, animated, NO, YES);
+                NFBDebugLog(@"expand-window: setMiniWindowModeEnabled:NO animated:YES");
+                return YES;
+            }
+        }
+        SEL plain = NSSelectorFromString(@"setMiniWindowModeEnabled:");
+        sig = [window methodSignatureForSelector:plain];
+        if ([window respondsToSelector:plain] && sig && sig.numberOfArguments == 3 &&
+            strcmp(sig.methodReturnType, @encode(void)) == 0) {
+            char a2 = [sig getArgumentTypeAtIndex:2][0];
+            if (a2 == 'B' || a2 == 'c') {
+                ((void (*)(id, SEL, BOOL))objc_msgSend)(window, plain, NO);
+                NFBDebugLog(@"expand-window: setMiniWindowModeEnabled:NO");
+                return YES;
+            }
+        }
+        NFBDebugLog(@"expand-window: no usable path");
+        return NO;
+    } @catch (NSException *error) { NFBDebugLog(@"expand-window failed: %@", error); return NO; }
+}
+
 static BOOL NFBTrollSignature(id target, SEL selector, BOOL hasFlag) {
     if (![target respondsToSelector:selector]) return NO;
     NSMethodSignature *sig = [target methodSignatureForSelector:selector];

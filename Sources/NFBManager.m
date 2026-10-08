@@ -152,6 +152,8 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, weak) UIView *appliedScaleWindow;
 @property(nonatomic, copy) NSString *appliedScaleApp;
 - (void)applySplitScale;
+- (void)observeSplitMinimizeAndRestore;
+- (void)restoreSplitApp:(NSString *)app;
 
 @property(nonatomic, strong) NFBRail *unreadRail;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NFBBubble *> *edgeCopies;
@@ -214,6 +216,15 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic) BOOL showLock;
 @property(nonatomic) BOOL showHome;
 @property(nonatomic) BOOL showApps;
+// Split-view bubbles toggle; when off the Open edge icon expands instead.
+@property(nonatomic) BOOL showSplitIcons;
+@property(nonatomic) BOOL splitIconsExpanded;
+// Recent split apps (most recent first) so a minimized split can restore the
+// previous one, plus the last observed split window/app for minimize detection.
+@property(nonatomic, strong) NSMutableArray<NSString *> *recentSplitApps;
+@property(nonatomic, copy) NSString *lastSplitApp;
+@property(nonatomic, weak) UIView *lastSplitWindow;
+@property(nonatomic) BOOL restoringSplit;
 @property(nonatomic) NSTimeInterval lastGestureAt;
 // Until when the folded (no-unread) bubbles stay spread out after a tap. When
 // in the past, they fold back into a thin stack at the bottom edge.
@@ -283,6 +294,7 @@ static double NFBNumber(NSString *key, double fallback) {
         _lastBadges = [NSMutableDictionary dictionary];
         _keyboardSuspended = [NSMutableSet set];
         _shakingApps = [NSMutableSet set];
+        _recentSplitApps = [NSMutableArray array];
         __weak NFBManager *weakSelf = self;
         NFBKeyboardInstall(^{ [weakSelf refresh]; });
         [self reloadPreferences];
@@ -300,6 +312,8 @@ static double NFBNumber(NSString *key, double fallback) {
     self.showLock = NFBPreference(@"ShowOnLock", YES);
     self.showHome = NFBPreference(@"ShowOnHome", YES);
     self.showApps = NFBPreference(@"ShowInApps", YES);
+    self.showSplitIcons = NFBPreference(@"ShowSplitIcons", YES);
+    NFBUpdateOpenEdgeSplitIcons(self.showSplitIcons);
     double sizePercent = NFBNumber(@"SplitLockSize", 100);
     if (sizePercent < 50 || sizePercent > 150) sizePercent = 100;
     double newScale = sizePercent / 100.0;
@@ -557,6 +571,46 @@ static double NFBNumber(NSString *key, double fallback) {
         self.appliedScaleApp = app;
     }
 }
+// Track the recent split order and, when the current split window is minimized,
+// bring the previous split app back so the split position is not left empty.
+- (void)observeSplitMinimizeAndRestore {
+    if (self.restoringSplit) return;
+    NSString *splitApp = NFBTrollVisibleApp();
+    UIView *window = NFBCurrentFloatingWindow();
+    BOOL portraitSplit = splitApp.length > 0 && window && !NFBWindowIsLandscape(window);
+    if (portraitSplit) {
+        if (![splitApp isEqual:self.lastSplitApp]) {
+            [self.recentSplitApps removeObject:splitApp];
+            [self.recentSplitApps insertObject:splitApp atIndex:0];
+            while (self.recentSplitApps.count > 8) [self.recentSplitApps removeLastObject];
+        }
+        self.lastSplitApp = splitApp;
+        self.lastSplitWindow = window;
+        return;
+    }
+    NSString *minimized = self.lastSplitApp;
+    UIView *last = self.lastSplitWindow;
+    if (!minimized.length) return;
+    if (!last) { self.lastSplitApp = nil; return; } // the window closed, not minimized
+    if (!NFBWindowIsMini(last)) return;             // landscape target or still moving
+    self.lastSplitApp = nil; self.lastSplitWindow = nil;
+    NSString *previous = nil;
+    for (NSString *app in self.recentSplitApps) {
+        if (![app isEqualToString:minimized]) { previous = app; break; }
+    }
+    if (!previous.length) return;
+    self.restoringSplit = YES;
+    [self restoreSplitApp:previous];
+    self.restoringSplit = NO;
+    NFBDebugLog(@"split-minimize: %@ -> restored previous %@", minimized, previous);
+}
+// Expand the previous app's existing mini window when it still exists, otherwise
+// ask Open to open it as a fresh split window.
+- (void)restoreSplitApp:(NSString *)app {
+    UIView *window = NFBFloatingWindowForApp(app);
+    if (window && NFBWindowIsMini(window) && NFBExpandFloatingWindow(window)) return;
+    NFBOpenTrollApp(app);
+}
 - (void)extendApp:(NSString *)app {
     if (self.edgeMode) [self extendEdgeContainer];
     NSTimeInterval duration = UIAccessibilityIsReduceMotionEnabled() ? 0 : NFBMotion;
@@ -731,6 +785,7 @@ static double NFBNumber(NSString *key, double fallback) {
     NSAssert(NSThread.isMainThread, @"UI must be on main thread");
     [self updatePrivacy];
     NFBUpdateOpenEdge(self.enabled);
+    [self observeSplitMinimizeAndRestore];
     // A dismissed app (long-press exit or one-click clear) is only marked
     // "dismissed" so its bubble doesn't instantly reappear while the process is
     // still being torn down — iOS keeps a stale switcher card for a killed app,
@@ -883,13 +938,24 @@ static double NFBNumber(NSString *key, double fallback) {
     BOOL atBottomLeft = validSplit &&
         fabs(CGRectGetMinX(splitFrame) - CGRectGetMinX(bounds)) <= cornerTolerance &&
         fabs(CGRectGetMaxY(splitFrame) - CGRectGetMaxY(bounds)) <= cornerTolerance;
-    BOOL hideForPosition = floatingApp.length && (!atBottomLeft || keyboardUp);
+    // Hide the split bubbles when the window is off the corner, the keyboard is
+    // up, or the user turned the split-icon toggle off.
+    BOOL hideForPosition = floatingApp.length && (!atBottomLeft || keyboardUp || !self.showSplitIcons);
     root.userInteractionEnabled = !hideForPosition;
     CGFloat visibility = hideForPosition ? 0 : 1;
     if (root.alpha != visibility) {
         [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : 0.18 delay:0
             options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
             animations:^{ root.alpha = visibility; } completion:nil];
+    }
+    // With the split bubbles off, expand Open's edge icon (left-swipe app list)
+    // when the split window is parked at the bottom-left over the desktop.
+    BOOL autoExpand = !self.showSplitIcons && floatingApp.length > 0 && atBottomLeft && home;
+    if (autoExpand && !self.splitIconsExpanded) {
+        self.splitIconsExpanded = YES;
+        NFBOpenEdgeExpand();
+    } else if (!autoExpand) {
+        self.splitIconsExpanded = NO;
     }
 
     BOOL containerMode = !edgeMode;

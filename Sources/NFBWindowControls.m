@@ -144,6 +144,45 @@ CGRect NFBWindowFrameInView(UIView *window, UIView *root) {
     @try { return visibleView(window) ? [window convertRect:window.bounds toView:root] : CGRectNull; }
     @catch (__unused NSException *exception) { return CGRectNull; }
 }
+BOOL NFBWindowIsMini(UIView *window) {
+    if (!window) return NO;
+    @try { return boolStateOf(window, @"miniWindowModeEnabled") == 1; }
+    @catch (__unused NSException *exception) { return NO; }
+}
+static UIView *floatingForAppInTree(UIView *view, Class floatingClass, NSString *bundleID) {
+    if (view.hidden || view.alpha < 0.01) return nil;
+    if ([view isKindOfClass:floatingClass]) {
+        if (boolStateOf(view, @"isClosingWithKeepAliveAnimation") == 1) return nil;
+        return [appOfWindow(view) isEqualToString:bundleID] ? view : nil;
+    }
+    for (UIView *child in view.subviews) {
+        UIView *found = floatingForAppInTree(child, floatingClass, bundleID);
+        if (found) return found;
+    }
+    return nil;
+}
+UIView *NFBFloatingWindowForApp(NSString *bundleID) {
+    if (!NSThread.isMainThread || !bundleID.length) return nil;
+    @try {
+        Class floatingClass = NSClassFromString(@"FloatingAppWindow");
+        if (!floatingClass) return nil;
+        NSMutableOrderedSet<UIWindow *> *windows = [NSMutableOrderedSet orderedSet];
+        for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+            if (![scene isKindOfClass:UIWindowScene.class] || scene.activationState == UISceneActivationStateBackground ||
+                scene.activationState == UISceneActivationStateUnattached) continue;
+            [windows addObjectsFromArray:((UIWindowScene *)scene).windows];
+        }
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        [windows addObjectsFromArray:UIApplication.sharedApplication.windows];
+#pragma clang diagnostic pop
+        for (UIWindow *window in windows) {
+            UIView *found = floatingForAppInTree(window, floatingClass, bundleID);
+            if (found) return found;
+        }
+    } @catch (NSException *exception) { NFBDebugLog(@"floating-app lookup: %@", exception); }
+    return nil;
+}
 NSString *NFBSplitAttachmentApp(void) {
     @try { return appOfWindow(attachmentWindow()); }
     @catch (__unused NSException *exception) { return nil; }

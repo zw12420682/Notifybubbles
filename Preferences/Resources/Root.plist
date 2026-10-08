@@ -32,7 +32,19 @@
 			<key>label</key>
 			<string>显示位置</string>
 			<key>footerText</key>
-			<string>竖屏窗口贴合左下角时显示分屏图标，离开后隐藏，返回后恢复。有展开的竖屏窗口时，Open 边缘图标仍保持隐藏，不受窗口位置影响。</string>
+			<string>竖屏窗口贴合左下角时显示分屏图标，离开后隐藏，返回后恢复。有展开的竖屏窗口时，Open 边缘图标仍保持隐藏，不受窗口位置影响。关闭“分屏图标”后，分屏窗口在左下角且在桌面时改为自动展开 Open 边缘图标的应用列表；未读通知不受影响。</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>label</key>
+			<string>分屏图标</string>
+			<key>key</key>
+			<string>ShowSplitIcons</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>local.notifybubbles</string>
 		</dict>
 		<dict>
 			<key>cell</key>

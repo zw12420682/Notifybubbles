@@ -27,6 +27,9 @@ BOOL NFBMinimizeCurrentFloatingWindow(void);
 // mini size. Probes the window's own minimize / mini-mode selectors.
 BOOL NFBMinimizeFloatingWindow(id window);
 
+// Expand a SPECIFIC mini floating window back to its full split size.
+BOOL NFBExpandFloatingWindow(id window);
+
 // Current visible floating window, or nil when none is present. Returned as an
 // opaque object (id) so this header stays UIKit-free and the macOS test target
 // can compile it without the iOS SDK.
