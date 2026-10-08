@@ -39,16 +39,17 @@ static inline int NFBArrangeMixed(NFBTile *tiles, size_t count, size_t rowCount,
     return 1;
 }
 
-// Slide the vertical top group (landscape: `topCount` tiles starting after the
-// row) through the free space below the row. position 0 keeps it just below the
-// row; position 1 puts its bottom at the screen bottom.
+// Slide the whole top group (mini row + landscape: `rowCount + topCount` tiles)
+// together through the free vertical space. position 0 keeps the mini row at the
+// top; position 1 puts the group's bottom at the screen bottom. This links the
+// mini row's top to the landscape slider setting.
 static inline void NFBPositionLandscape(NFBTile *tiles, size_t count, size_t rowCount, size_t topCount, double height, double position) {
-    if (!count || !topCount || rowCount + topCount > count || height <= 0) return;
+    size_t total = rowCount + topCount;
+    if (!count || !total || total > count || height <= 0) return;
     if (!isfinite(position)) position = 0;
     position = fmax(0, fmin(1, position));
-    size_t start = rowCount;
-    double top = tiles[start].y;
-    double bottom = tiles[start + topCount - 1].y + tiles[start + topCount - 1].height;
+    double top = tiles[0].y;
+    double bottom = tiles[total - 1].y + tiles[total - 1].height;
     double offset = fmax(0, height - top - (bottom - top)) * position;
-    for (size_t i=start; i<start+topCount; i++) tiles[i].y += offset;
+    for (size_t i=0; i<total; i++) tiles[i].y += offset;
 }

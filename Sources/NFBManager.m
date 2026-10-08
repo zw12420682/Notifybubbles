@@ -883,7 +883,7 @@ static double NFBNumber(NSString *key, double fallback) {
     BOOL atBottomLeft = validSplit &&
         fabs(CGRectGetMinX(splitFrame) - CGRectGetMinX(bounds)) <= cornerTolerance &&
         fabs(CGRectGetMaxY(splitFrame) - CGRectGetMaxY(bounds)) <= cornerTolerance;
-    BOOL hideForPosition = floatingApp.length && !atBottomLeft;
+    BOOL hideForPosition = floatingApp.length && (!atBottomLeft || keyboardUp);
     root.userInteractionEnabled = !hideForPosition;
     CGFloat visibility = hideForPosition ? 0 : 1;
     if (root.alpha != visibility) {

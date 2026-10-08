@@ -136,13 +136,13 @@
 			<key>label</key>
 			<string>分屏切换</string>
 			<key>footerText</key>
-			<string>开启后，只关闭上一个仍展开的竖屏分屏窗口，不终止 App 后台。左上角、右上角小窗及横屏窗口均保留；状态无法确认时也保留。</string>
+			<string>开启后，切换分屏 App 时处理上一个仍展开的竖屏分屏窗口：已有小窗时把它缩小为角落小窗；没有小窗时直接关闭。均不终止 App 后台。横屏窗口及状态无法确认时保留。</string>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>label</key>
-			<string>切换时关闭上一个竖屏窗口</string>
+			<string>切换时处理上一个竖屏窗口</string>
 			<key>key</key>
 			<string>ClosePreviousSplit</string>
 			<key>default</key>

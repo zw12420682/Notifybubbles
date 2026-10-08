@@ -23,6 +23,10 @@ BOOL NFBFullscreenCurrentFloatingWindow(void);
 // across builds, so both are probed (class method first, then instance).
 BOOL NFBMinimizeCurrentFloatingWindow(void);
 
+// Shrink a SPECIFIC floating window (not necessarily the current one) to its
+// mini size. Probes the window's own minimize / mini-mode selectors.
+BOOL NFBMinimizeFloatingWindow(id window);
+
 // Current visible floating window, or nil when none is present. Returned as an
 // opaque object (id) so this header stays UIKit-free and the macOS test target
 // can compile it without the iOS SDK.

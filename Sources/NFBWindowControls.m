@@ -148,6 +148,37 @@ NSString *NFBSplitAttachmentApp(void) {
     @try { return appOfWindow(attachmentWindow()); }
     @catch (__unused NSException *exception) { return nil; }
 }
+static BOOL hasMiniInTree(UIView *view, Class floatingClass) {
+    if (view.hidden || view.alpha < 0.01) return NO;
+    if ([view isKindOfClass:floatingClass]) {
+        if (boolStateOf(view, @"isClosingWithKeepAliveAnimation") == 1) return NO;
+        return boolStateOf(view, @"miniWindowModeEnabled") == 1;
+    }
+    for (UIView *child in view.subviews)
+        if (hasMiniInTree(child, floatingClass)) return YES;
+    return NO;
+}
+// YES when at least one corner mini window is currently visible.
+static BOOL NFBHasMiniWindows(void) {
+    if (!NSThread.isMainThread) return NO;
+    @try {
+        Class floatingClass = NSClassFromString(@"FloatingAppWindow");
+        if (!floatingClass) return NO;
+        NSMutableOrderedSet<UIWindow *> *windows = [NSMutableOrderedSet orderedSet];
+        for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+            if (![scene isKindOfClass:UIWindowScene.class] || scene.activationState == UISceneActivationStateBackground ||
+                scene.activationState == UISceneActivationStateUnattached) continue;
+            [windows addObjectsFromArray:((UIWindowScene *)scene).windows];
+        }
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        [windows addObjectsFromArray:UIApplication.sharedApplication.windows];
+#pragma clang diagnostic pop
+        for (UIWindow *window in windows)
+            if (hasMiniInTree(window, floatingClass)) return YES;
+    } @catch (NSException *exception) { NFBDebugLog(@"mini-scan: %@", exception); }
+    return NO;
+}
 void NFBObserveSplitSwitch(NSString *app, BOOL enabled) {
     static __weak UIView *previousWindow;
     static NSString *previousApp;
@@ -196,12 +227,21 @@ void NFBObserveSplitSwitch(NSString *app, BOOL enabled) {
                 boolStateOf(previous, @"isTransitioningFromMiniMode"),
                 orientationOf(previous, @"sceneOrientation"),
                 orientationOf(previous, @"containerOrientation"))) return;
-        SEL close = NSSelectorFromString(@"closeWindowWithoutTerminatingProcessWithoutAnimation");
-        NSMethodSignature *sig = [previous methodSignatureForSelector:close];
-        if (sig.numberOfArguments != 2 || strcmp(sig.methodReturnType, @encode(void))) return;
-        // Always target the saved previous window; never close the current app.
-        ((void (*)(id, SEL))objc_msgSend)(previous, close);
-        NFBDebugLog(@"split-switch: current %@ settled portrait; closed previous %@", app, oldApp);
+        // With other mini windows present, shrink the previous portrait split into
+        // a mini window so it joins them; otherwise close it as before.
+        if (NFBHasMiniWindows()) {
+            if (NFBMinimizeFloatingWindow(previous))
+                NFBDebugLog(@"split-switch: current %@ settled portrait; minimized previous %@", app, oldApp);
+            else
+                NFBDebugLog(@"split-switch: current %@ settled portrait; minimize previous %@ failed", app, oldApp);
+        } else {
+            SEL close = NSSelectorFromString(@"closeWindowWithoutTerminatingProcessWithoutAnimation");
+            NSMethodSignature *sig = [previous methodSignatureForSelector:close];
+            if (sig.numberOfArguments != 2 || strcmp(sig.methodReturnType, @encode(void))) return;
+            // Always target the saved previous window; never close the current app.
+            ((void (*)(id, SEL))objc_msgSend)(previous, close);
+            NFBDebugLog(@"split-switch: current %@ settled portrait; closed previous %@", app, oldApp);
+        }
     } @catch (NSException *exception) { NFBDebugLog(@"split-switch: %@", exception); }
 }
 BOOL NFBCurrentSplitLandscape(void) {

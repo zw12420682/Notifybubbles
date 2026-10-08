@@ -13,4 +13,6 @@ int main(void){
  NFBTile miniOnly[]={{200,80,0,0},{250,350,0,0}};NFBArrangeMixed(miniOnly,2,1,0,844);assert(miniOnly[0].y==0);assert(fabs(miniOnly[1].y+miniOnly[1].height-844)<0.001);
  NFBTile miniRow[]={{200,80,0,0},{160,90,0,0}};NFBArrangeMixed(miniRow,2,2,0,844);assert(miniRow[0].x==0);assert(miniRow[1].x>=miniRow[0].width);assert(miniRow[0].y==0);assert(miniRow[1].y==0);
  NFBTile miniTop[]={{200,80,0,0},{300,100,0,0},{250,350,0,0}};NFBArrangeMixed(miniTop,3,1,1,844);assert(miniTop[0].y==0);assert(miniTop[1].y>=miniTop[0].height);assert(fabs(miniTop[2].y+miniTop[2].height-844)<0.001);
+ // Mini row moves together with the landscape group under the slider.
+ NFBTile miniSlider[]={{200,80,0,0},{300,100,0,0},{250,350,0,0}};NFBArrangeMixed(miniSlider,3,1,1,844);NFBPositionLandscape(miniSlider,3,1,1,844,0.5);assert(fabs(miniSlider[0].y-332)<0.001);assert(fabs(miniSlider[1].y-412)<0.001);assert(fabs(miniSlider[2].y-494)<0.001);
  return 0;}

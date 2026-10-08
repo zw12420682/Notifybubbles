@@ -173,6 +173,47 @@ BOOL NFBMinimizeCurrentFloatingWindow(void) {
     }
 }
 
+// Shrink a SPECIFIC floating window to mini size (used when the previous split
+// app should become a corner mini window instead of being closed). Probes the
+// window's own selectors so it works on any window object, not just the current.
+BOOL NFBMinimizeFloatingWindow(id window) {
+    if (!NSThread.isMainThread || !window) return NO;
+    @try {
+        // Preferred: the window's own no-arg minimize entry point.
+        if (NFBCallSimple(window, NSSelectorFromString(@"minimizeCurrentFloatingWindow"))) {
+            NFBDebugLog(@"minimize-window: invoked -[%@ minimizeCurrentFloatingWindow]",
+                        NSStringFromClass([window class]));
+            return YES;
+        }
+        // Fallback: set mini mode directly, with animation when available.
+        SEL animated = NSSelectorFromString(@"setMiniWindowModeEnabled:animated:");
+        NSMethodSignature *animatedSig = [window methodSignatureForSelector:animated];
+        if ([window respondsToSelector:animated] && animatedSig && animatedSig.numberOfArguments == 4 &&
+            strcmp(animatedSig.methodReturnType, @encode(void)) == 0) {
+            char a2 = [animatedSig getArgumentTypeAtIndex:2][0];
+            char a3 = [animatedSig getArgumentTypeAtIndex:3][0];
+            if ((a2 == 'B' || a2 == 'c') && (a3 == 'B' || a3 == 'c')) {
+                ((void (*)(id, SEL, BOOL, BOOL))objc_msgSend)(window, animated, YES, YES);
+                NFBDebugLog(@"minimize-window: setMiniWindowModeEnabled:animated:YES");
+                return YES;
+            }
+        }
+        SEL plain = NSSelectorFromString(@"setMiniWindowModeEnabled:");
+        NSMethodSignature *plainSig = [window methodSignatureForSelector:plain];
+        if ([window respondsToSelector:plain] && plainSig && plainSig.numberOfArguments == 3 &&
+            strcmp(plainSig.methodReturnType, @encode(void)) == 0) {
+            char a2 = [plainSig getArgumentTypeAtIndex:2][0];
+            if (a2 == 'B' || a2 == 'c') {
+                ((void (*)(id, SEL, BOOL))objc_msgSend)(window, plain, YES);
+                NFBDebugLog(@"minimize-window: setMiniWindowModeEnabled:YES");
+                return YES;
+            }
+        }
+        NFBDebugLog(@"minimize-window: no usable path");
+        return NO;
+    } @catch (NSException *error) { NFBDebugLog(@"minimize-window failed: %@", error); return NO; }
+}
+
 static BOOL NFBTrollSignature(id target, SEL selector, BOOL hasFlag) {
     if (![target respondsToSelector:selector]) return NO;
     NSMethodSignature *sig = [target methodSignatureForSelector:selector];
