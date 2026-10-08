@@ -14,11 +14,10 @@
 - (NSArray *)specifiers {
     if (!_specifiers) {
         _specifiers = [self loadSpecifiersFromPlistName:@"Root" target:self];
-        NSDictionary *symbols = @{@"LandscapeVerticalPosition": @"arrow.up.arrow.down", @"Enabled": @"bell.badge.fill", @"ShowOnLock": @"lock.fill",
+        NSDictionary *symbols = @{@"Enabled": @"bell.badge.fill", @"ShowOnLock": @"lock.fill",
             @"ShowOnHome": @"house.fill", @"ShowInApps": @"app.fill", @"IconSize": @"arrow.up.left.and.arrow.down.right",
             @"IconOpacity": @"circle.lefthalf.filled", @"ClosePreviousSplit": @"rectangle.on.rectangle",
-            @"FreezeDesktop": @"snowflake", @"DesktopBlurTransparency": @"drop.halffull", @"HideInScreenshots": @"eye.slash.fill",
-            @"SplitLockSize": @"arrow.up.and.down", @"ShowSplitIcons": @"rectangle.split.2x1"};
+            @"FreezeDesktop": @"snowflake", @"DesktopBlurTransparency": @"drop.halffull", @"HideInScreenshots": @"eye.slash.fill"};
         for (PSSpecifier *specifier in _specifiers) {
             NSString *key = [specifier propertyForKey:@"key"];
             NSString *symbol = key ? symbols[key] : nil;

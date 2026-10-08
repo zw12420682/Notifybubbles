@@ -142,18 +142,15 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, strong) NFBRail *rail;
 @property(nonatomic) BOOL backgroundCollapsed;
 
+@property(nonatomic, strong) NFBBubble *topActionButton;
+@property(nonatomic, strong) UITapGestureRecognizer *topActionTap;
+@property(nonatomic, weak) UIView *topActionTarget;
+@property(nonatomic, weak) UIView *topActionTouchTarget;
 @property(nonatomic, weak) UIView *observedActionTarget;
 @property(nonatomic) CGRect observedActionFrame;
 @property(nonatomic) BOOL observedActionLandscape;
-
-@property(nonatomic) double splitScale;
-@property(nonatomic, weak) UIView *pendingScaleWindow;
-@property(nonatomic) NSTimeInterval pendingScaleSince;
-@property(nonatomic, weak) UIView *appliedScaleWindow;
-@property(nonatomic, copy) NSString *appliedScaleApp;
-- (void)applySplitScale;
-- (void)observeSplitMinimizeAndRestore;
-- (void)restoreSplitApp:(NSString *)app;
+- (void)topActionTapped:(UITapGestureRecognizer *)gesture;
+- (void)layoutTopAction:(CGRect)frame target:(UIView *)target duration:(NSTimeInterval)duration;
 
 @property(nonatomic, strong) NFBRail *unreadRail;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NFBBubble *> *edgeCopies;
@@ -216,15 +213,6 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic) BOOL showLock;
 @property(nonatomic) BOOL showHome;
 @property(nonatomic) BOOL showApps;
-// Split-view bubbles toggle; when off the Open edge icon expands instead.
-@property(nonatomic) BOOL showSplitIcons;
-@property(nonatomic) BOOL splitIconsExpanded;
-// Recent split apps (most recent first) so a minimized split can restore the
-// previous one, plus the last observed split window/app for minimize detection.
-@property(nonatomic, strong) NSMutableArray<NSString *> *recentSplitApps;
-@property(nonatomic, copy) NSString *lastSplitApp;
-@property(nonatomic, weak) UIView *lastSplitWindow;
-@property(nonatomic) BOOL restoringSplit;
 @property(nonatomic) NSTimeInterval lastGestureAt;
 // Until when the folded (no-unread) bubbles stay spread out after a tap. When
 // in the past, they fold back into a thin stack at the bottom edge.
@@ -294,7 +282,6 @@ static double NFBNumber(NSString *key, double fallback) {
         _lastBadges = [NSMutableDictionary dictionary];
         _keyboardSuspended = [NSMutableSet set];
         _shakingApps = [NSMutableSet set];
-        _recentSplitApps = [NSMutableArray array];
         __weak NFBManager *weakSelf = self;
         NFBKeyboardInstall(^{ [weakSelf refresh]; });
         [self reloadPreferences];
@@ -312,17 +299,6 @@ static double NFBNumber(NSString *key, double fallback) {
     self.showLock = NFBPreference(@"ShowOnLock", YES);
     self.showHome = NFBPreference(@"ShowOnHome", YES);
     self.showApps = NFBPreference(@"ShowInApps", YES);
-    self.showSplitIcons = NFBPreference(@"ShowSplitIcons", YES);
-    NFBUpdateOpenEdgeSplitIcons(self.showSplitIcons);
-    double sizePercent = NFBNumber(@"SplitLockSize", 100);
-    if (sizePercent < 50 || sizePercent > 150) sizePercent = 100;
-    double newScale = sizePercent / 100.0;
-    if (newScale != self.splitScale) {
-        // Size changed: re-apply to the open split window.
-        self.appliedScaleWindow = nil; self.appliedScaleApp = nil;
-        self.pendingScaleWindow = nil; self.pendingScaleSince = 0;
-    }
-    self.splitScale = newScale;
 
     id favorites = CFBridgingRelease(CFPreferencesCopyAppValue(CFSTR("FavoriteApps"), NFBDomain));
     NSMutableOrderedSet *selected = [NSMutableOrderedSet orderedSet];
@@ -417,6 +393,51 @@ static double NFBNumber(NSString *key, double fallback) {
     if (!NFBCloseCurrentSplit()) [self showOpenNotice:@"未能读取 TrollOpen 右侧区域的单击接口"];
     else NFBOpenEdgeAfterClose();
     [self refresh];
+}
+- (void)topActionTapped:(UITapGestureRecognizer *)gesture {
+    if (gesture.state != UIGestureRecognizerStateEnded || !self.enabled || [self isLocked]) return;
+    UIView *target = self.topActionTouchTarget;
+    self.topActionTouchTarget = nil;
+    if (!target || target != self.topActionTarget || target != NFBTopActionWindow()) { [self refresh]; return; }
+    if (![self acceptGesture]) return;
+    if (!NFBPerformTopLongPress(target)) [self showOpenNotice:@"TrollOpen 顶部长按接口不可用"];
+    [self refresh];
+}
+- (void)layoutTopAction:(CGRect)frame target:(UIView *)target duration:(NSTimeInterval)duration {
+    BOOL visible = target && !CGRectIsNull(frame) && !CGRectIsEmpty(frame) && self.enabled;
+    self.topActionTarget = visible ? target : nil;
+    if (!self.topActionButton && !visible) return;
+    if (!self.topActionButton) {
+        NFBBubble *button = [[NFBBubble alloc] initWithFrame:frame];
+        button.badge.hidden = YES;
+        button.imageView.contentMode = UIViewContentModeCenter;
+        button.imageView.image = [UIImage systemImageNamed:@"rectangle.2.swap"] ?: [UIImage systemImageNamed:@"arrow.up.left.and.arrow.down.right"];
+        button.imageView.tintColor = UIColor.systemGreenColor;
+        button.imageView.backgroundColor = UIColor.secondarySystemBackgroundColor;
+        button.accessibilityLabel = @"TrollOpen 顶部长按功能";
+        button.accessibilityHint = @"点击执行此窗口顶部绿色区域的长按动作";
+        self.topActionTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(topActionTapped:)];
+        self.topActionTap.delegate = self;
+        [button addGestureRecognizer:self.topActionTap];
+        button.alpha = 0;
+        self.topActionButton = button;
+        [self.window.rootViewController.view addSubview:button];
+    }
+    NFBBubble *button = self.topActionButton;
+    CGFloat targetAlpha = visible ? (NFBWindowIsLandscape(target) ? 0.5 : 1.0) : 0;
+    button.userInteractionEnabled = visible;
+    if (visible && button.alpha < 0.01) button.frame = frame;
+    [self.window.rootViewController.view bringSubviewToFront:button];
+    [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : MAX(0.16, duration)
+        delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseInOut animations:^{
+        button.alpha = targetAlpha;
+        if (visible) {
+            button.frame = frame;
+            CGFloat imageSide = MAX(1, frame.size.width - 14);
+            button.imageView.frame = CGRectMake(7, 7, imageSide, imageSide);
+            button.imageView.layer.cornerRadius = imageSide * 0.23;
+        }
+    } completion:nil];
 }
 - (void)clearAllHeld:(UILongPressGestureRecognizer *)gesture {
     if (gesture.state != UIGestureRecognizerStateBegan || [self isLocked] || ![self acceptGesture]) return;
@@ -517,8 +538,6 @@ static double NFBNumber(NSString *key, double fallback) {
     [NSRunLoop.mainRunLoop addTimer:self.floatingWatch forMode:NSRunLoopCommonModes];
 }
 - (void)floatingWatchFired {
-    [self applySplitScale];
-    NFBObserveSplitPlacement(nil);
     NFBObserveRotationLayout();
     [self updatePrivacy];
     NFBUpdateOpenEdge(self.enabled);
@@ -542,74 +561,6 @@ static double NFBNumber(NSString *key, double fallback) {
     self.observedSplitFrame = frame;
     self.watchedFloating = now;
     [self refresh];
-}
-// Apply the configured split size once per window/app opening: wait past the
-// opening animation, then submit the visual scale (the "分屏大小" setting),
-// replacing the host's default 0.86 shrink. Manual resizing is never fought
-// back, so the scale is only set when the window or app first appears.
-- (void)applySplitScale {
-    if (!self.enabled) {
-        self.pendingScaleWindow = nil; self.pendingScaleSince = 0;
-        self.appliedScaleWindow = nil; self.appliedScaleApp = nil;
-        return;
-    }
-    double scale = self.splitScale;
-    NSString *app = NFBTrollVisibleApp();
-    UIView *window = NFBCurrentFloatingWindow();
-    BOOL portraitSplit = app.length > 0 && window && !NFBWindowIsLandscape(window);
-    if (!portraitSplit) { self.pendingScaleWindow = nil; self.pendingScaleSince = 0; return; }
-    if (window == self.appliedScaleWindow && [app isEqual:self.appliedScaleApp]) return;
-    if (window != self.pendingScaleWindow) {
-        self.pendingScaleWindow = window;
-        self.pendingScaleSince = CACurrentMediaTime();
-        return;
-    }
-    if (CACurrentMediaTime() - self.pendingScaleSince < 0.75) return;
-    self.pendingScaleWindow = nil; self.pendingScaleSince = 0;
-    if (NFBSetFloatingVisualScale(scale)) {
-        self.appliedScaleWindow = window;
-        self.appliedScaleApp = app;
-    }
-}
-// Track the recent split order and, when the current split window is minimized,
-// bring the previous split app back so the split position is not left empty.
-- (void)observeSplitMinimizeAndRestore {
-    if (self.restoringSplit) return;
-    NSString *splitApp = NFBTrollVisibleApp();
-    UIView *window = NFBCurrentFloatingWindow();
-    BOOL portraitSplit = splitApp.length > 0 && window && !NFBWindowIsLandscape(window);
-    if (portraitSplit) {
-        if (![splitApp isEqual:self.lastSplitApp]) {
-            [self.recentSplitApps removeObject:splitApp];
-            [self.recentSplitApps insertObject:splitApp atIndex:0];
-            while (self.recentSplitApps.count > 8) [self.recentSplitApps removeLastObject];
-        }
-        self.lastSplitApp = splitApp;
-        self.lastSplitWindow = window;
-        return;
-    }
-    NSString *minimized = self.lastSplitApp;
-    UIView *last = self.lastSplitWindow;
-    if (!minimized.length) return;
-    if (!last) { self.lastSplitApp = nil; return; } // the window closed, not minimized
-    if (!NFBWindowIsMini(last)) return;             // landscape target or still moving
-    self.lastSplitApp = nil; self.lastSplitWindow = nil;
-    NSString *previous = nil;
-    for (NSString *app in self.recentSplitApps) {
-        if (![app isEqualToString:minimized]) { previous = app; break; }
-    }
-    if (!previous.length) return;
-    self.restoringSplit = YES;
-    [self restoreSplitApp:previous];
-    self.restoringSplit = NO;
-    NFBDebugLog(@"split-minimize: %@ -> restored previous %@", minimized, previous);
-}
-// Expand the previous app's existing mini window when it still exists, otherwise
-// ask Open to open it as a fresh split window.
-- (void)restoreSplitApp:(NSString *)app {
-    UIView *window = NFBFloatingWindowForApp(app);
-    if (window && NFBWindowIsMini(window) && NFBExpandFloatingWindow(window)) return;
-    NFBOpenTrollApp(app);
 }
 - (void)extendApp:(NSString *)app {
     if (self.edgeMode) [self extendEdgeContainer];
@@ -785,7 +736,6 @@ static double NFBNumber(NSString *key, double fallback) {
     NSAssert(NSThread.isMainThread, @"UI must be on main thread");
     [self updatePrivacy];
     NFBUpdateOpenEdge(self.enabled);
-    [self observeSplitMinimizeAndRestore];
     // A dismissed app (long-press exit or one-click clear) is only marked
     // "dismissed" so its bubble doesn't instantly reappear while the process is
     // still being torn down — iOS keeps a stale switcher card for a killed app,
@@ -907,13 +857,14 @@ static double NFBNumber(NSString *key, double fallback) {
         } completion:^(__unused BOOL done) { [button removeFromSuperview]; }];
     }
     if (!self.enabled) {
+        NFBUpdateOpenEdgeSplitIconsVisible(NO);
         // Delay hiding until the removal animation completes; recheck new arrivals.
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.65 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             if (!self.enabled || !self.buttons.count) self.window.hidden = YES;
         });
         return;
     }
-    if (![self shouldShow]) { self.window.hidden = YES; return; }
+    if (![self shouldShow]) { NFBUpdateOpenEdgeSplitIconsVisible(NO); self.window.hidden = YES; return; }
     [self ensureWindow];
     NFBSetCaptureHidden(self.window.rootViewController.view, NFBPreference(@"HideInScreenshots", NO));
     self.window.hidden = NO;
@@ -938,9 +889,7 @@ static double NFBNumber(NSString *key, double fallback) {
     BOOL atBottomLeft = validSplit &&
         fabs(CGRectGetMinX(splitFrame) - CGRectGetMinX(bounds)) <= cornerTolerance &&
         fabs(CGRectGetMaxY(splitFrame) - CGRectGetMaxY(bounds)) <= cornerTolerance;
-    // Hide the split bubbles when the window is off the corner, the keyboard is
-    // up, or the user turned the split-icon toggle off.
-    BOOL hideForPosition = floatingApp.length && (!atBottomLeft || keyboardUp || !self.showSplitIcons);
+    BOOL hideForPosition = floatingApp.length && !atBottomLeft;
     root.userInteractionEnabled = !hideForPosition;
     CGFloat visibility = hideForPosition ? 0 : 1;
     if (root.alpha != visibility) {
@@ -948,15 +897,10 @@ static double NFBNumber(NSString *key, double fallback) {
             options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
             animations:^{ root.alpha = visibility; } completion:nil];
     }
-    // With the split bubbles off, expand Open's edge icon (left-swipe app list)
-    // when the split window is parked at the bottom-left over the desktop.
-    BOOL autoExpand = !self.showSplitIcons && floatingApp.length > 0 && atBottomLeft && home;
-    if (autoExpand && !self.splitIconsExpanded) {
-        self.splitIconsExpanded = YES;
-        NFBOpenEdgeExpand();
-    } else if (!autoExpand) {
-        self.splitIconsExpanded = NO;
-    }
+    // Open's edge icon is hidden only while these split bubbles are actually on
+    // screen. A fullscreen app, the desktop, landscape/mini-only, or a split
+    // parked away from the corner all fall back to Open's native decision.
+    NFBUpdateOpenEdgeSplitIconsVisible(floatingApp.length > 0 && !hideForPosition);
 
     BOOL containerMode = !edgeMode;
     BOOL attachmentChanged = attached != self.splitRailActive;
@@ -1006,6 +950,10 @@ static double NFBNumber(NSString *key, double fallback) {
     }
     CGFloat clearCenterY = railFrame.origin.y - 8 - side / 2;
     CGRect favoritesFrame = CGRectZero;
+    UIView *actionTarget = NFBTopActionWindow();
+    BOOL actionLandscape = NFBWindowIsLandscape(actionTarget);
+    CGRect actionWindowFrame = NFBWindowFrameInView(actionTarget, root);
+    CGRect topActionFrame = CGRectNull;
     if (containerMode) {
         CGFloat ceiling = MAX(safe.top, 12);
         CGFloat floor = CGRectGetHeight(bounds) - MAX(safe.bottom, 12);
@@ -1013,6 +961,11 @@ static double NFBNumber(NSString *key, double fallback) {
         if (keyboardUp) floor = MIN(floor, NFBKeyboardTopInView(root) - 12 - step);
         CGFloat desiredTop = attached ? NFBSplitRailTop(CGRectGetMinY(splitFrame), CGRectGetHeight(splitFrame)) : railFrame.origin.y;
         CGFloat y = MAX(ceiling, MIN(desiredTop, floor - side - 9));
+        // The action occupies its own row above both rails, never inside scrolling content.
+        if (actionTarget && !actionLandscape && !CGRectIsNull(actionWindowFrame) && floor - y >= 2 * side + 18) {
+            topActionFrame = CGRectMake(railFrame.origin.x, y, side, side);
+            y += side + 9;
+        }
         CGFloat room = MAX(0, floor - y - side - 9);
         NFBContainerHeights fit = NFBFitContainers(room, side, step, self.favoriteApps.count, rowCount);
         CGFloat favoriteHeight = fit.favorites, gap = fit.gap;
@@ -1049,7 +1002,18 @@ static double NFBNumber(NSString *key, double fallback) {
         unreadFrame = CGRectMake(CGRectGetWidth(bounds) - side, bottom - total,
             side + NFBRetraction(diameter), unreadHeight);
     }
+    if (actionTarget && actionLandscape && !CGRectIsNull(actionWindowFrame)) {
+        // Keep one button inside the landscape window's upper-right corner.
+        CGFloat actionSide = MIN((self.iconSize + 14) * 0.75, MIN(actionWindowFrame.size.width, actionWindowFrame.size.height) - 12);
+        CGFloat bottomLimit = keyboardUp ? NFBKeyboardTopInView(root) - 12 : CGRectGetHeight(bounds) - MAX(safe.bottom, 6);
+        CGFloat x = MAX(6, MIN(CGRectGetMaxX(actionWindowFrame) - actionSide - 6, CGRectGetWidth(bounds) - actionSide - 6));
+        CGFloat y = MAX(safe.top + 6, CGRectGetMinY(actionWindowFrame) + 6);
+        if (y + actionSide > bottomLimit) y = bottomLimit - actionSide;
+        if (actionSide >= 24 && y >= MAX(safe.top, CGRectGetMinY(actionWindowFrame)) &&
+            x >= CGRectGetMinX(actionWindowFrame)) topActionFrame = CGRectMake(x, y, actionSide, actionSide);
+    }
     [self layoutFavorites:favoritesFrame diameter:diameter active:active duration:layoutDuration];
+    [self layoutTopAction:topActionFrame target:actionTarget duration:layoutDuration];
     self.unreadRail.hidden = !edgeMode || !unreadApps.count;
     [UIView animateWithDuration:layoutDuration delay:0
         options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseInOut
@@ -1583,6 +1547,10 @@ static double NFBNumber(NSString *key, double fallback) {
     return CGRectGetMaxX(image) > CGRectGetWidth(self.window.rootViewController.view.bounds) + 0.5;
 }
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldReceiveTouch:(UITouch *)touch {
+    if (gesture == self.topActionTap) {
+        self.topActionTouchTarget = self.topActionTarget;
+        return self.enabled && ![self isLocked] && self.topActionTouchTarget != nil;
+    }
     if (gesture == self.edgeTap) {
         // Bubble taps handle their own reveal. Do not race them with a parent tap.
         for (UIView *view = touch.view; view && view != self.rail; view = view.superview)

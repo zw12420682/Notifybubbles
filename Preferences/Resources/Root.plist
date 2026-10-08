@@ -32,19 +32,7 @@
 			<key>label</key>
 			<string>显示位置</string>
 			<key>footerText</key>
-			<string>竖屏窗口贴合左下角时显示分屏图标，离开后隐藏，返回后恢复。有展开的竖屏窗口时，Open 边缘图标仍保持隐藏，不受窗口位置影响。关闭“分屏图标”后，分屏窗口在左下角且在桌面时改为自动展开 Open 边缘图标的应用列表；未读通知不受影响。</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>label</key>
-			<string>分屏图标</string>
-			<key>key</key>
-			<string>ShowSplitIcons</string>
-			<key>default</key>
-			<true/>
-			<key>defaults</key>
-			<string>local.notifybubbles</string>
+			<string>竖屏窗口贴合左下角时显示分屏图标，离开后隐藏，返回后恢复。有展开的竖屏窗口时，Open 边缘图标仍保持隐藏，不受窗口位置影响。</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -148,13 +136,13 @@
 			<key>label</key>
 			<string>分屏切换</string>
 			<key>footerText</key>
-			<string>开启后，切换分屏 App 时处理上一个仍展开的竖屏分屏窗口：已有小窗时把它缩小为角落小窗；没有小窗时直接关闭。均不终止 App 后台。横屏窗口及状态无法确认时保留。</string>
+			<string>开启后，只关闭上一个仍展开的竖屏分屏窗口，不终止 App 后台。左上角、右上角小窗及横屏窗口均保留；状态无法确认时也保留。</string>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSSwitchCell</string>
 			<key>label</key>
-			<string>切换时处理上一个竖屏窗口</string>
+			<string>切换时关闭上一个竖屏窗口</string>
 			<key>key</key>
 			<string>ClosePreviousSplit</string>
 			<key>default</key>
@@ -235,58 +223,6 @@
 			<string>选择常用 App</string>
 			<key>action</key>
 			<string>chooseFavorites</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>label</key>
-			<string>横屏窗口位置</string>
-			<key>footerText</key>
-			<string>0 为最顶部，100 为屏幕最下方。滑块值直接决定横屏窗口组的顶部位置；多个横屏窗口整体移动，无论是否有竖屏窗口都使用该位置。设置会保存，打开或旋转窗口后继续使用。</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSSliderCell</string>
-			<key>label</key>
-			<string>横屏窗口上下位置</string>
-			<key>key</key>
-			<string>LandscapeVerticalPosition</string>
-			<key>defaults</key>
-			<string>local.notifybubbles</string>
-			<key>default</key>
-			<integer>0</integer>
-			<key>min</key>
-			<integer>0</integer>
-			<key>max</key>
-			<integer>100</integer>
-			<key>showValue</key>
-			<true/>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>label</key>
-			<string>分屏大小</string>
-			<key>footerText</key>
-			<string>竖屏分屏窗口打开时自动套用下面的比例（取代 Open 默认的 0.86 缩放）。打开后仍可手动缩放调整。修改即时生效。</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSSliderCell</string>
-			<key>label</key>
-			<string>分屏大小（%）</string>
-			<key>key</key>
-			<string>SplitLockSize</string>
-			<key>defaults</key>
-			<string>local.notifybubbles</string>
-			<key>default</key>
-			<integer>100</integer>
-			<key>min</key>
-			<integer>50</integer>
-			<key>max</key>
-			<integer>150</integer>
-			<key>showValue</key>
-			<true/>
 		</dict>
 	</array>
 </dict>

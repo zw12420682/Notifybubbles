@@ -2,7 +2,6 @@
 #import "NFBDebugLog.h"
 #import <objc/message.h>
 #include <string.h>
-#include <math.h>
 
 // Forward declaration: fetches an object-returning no-argument method result.
 static id NFBTrollObject(id object, NSString *name);
@@ -173,79 +172,6 @@ BOOL NFBMinimizeCurrentFloatingWindow(void) {
     }
 }
 
-// Shrink a SPECIFIC floating window to mini size (used when the previous split
-// app should become a corner mini window instead of being closed). Probes the
-// window's own selectors so it works on any window object, not just the current.
-BOOL NFBMinimizeFloatingWindow(id window) {
-    if (!NSThread.isMainThread || !window) return NO;
-    @try {
-        // Preferred: the window's own no-arg minimize entry point.
-        if (NFBCallSimple(window, NSSelectorFromString(@"minimizeCurrentFloatingWindow"))) {
-            NFBDebugLog(@"minimize-window: invoked -[%@ minimizeCurrentFloatingWindow]",
-                        NSStringFromClass([window class]));
-            return YES;
-        }
-        // Fallback: set mini mode directly, with animation when available.
-        SEL animated = NSSelectorFromString(@"setMiniWindowModeEnabled:animated:");
-        NSMethodSignature *animatedSig = [window methodSignatureForSelector:animated];
-        if ([window respondsToSelector:animated] && animatedSig && animatedSig.numberOfArguments == 4 &&
-            strcmp(animatedSig.methodReturnType, @encode(void)) == 0) {
-            char a2 = [animatedSig getArgumentTypeAtIndex:2][0];
-            char a3 = [animatedSig getArgumentTypeAtIndex:3][0];
-            if ((a2 == 'B' || a2 == 'c') && (a3 == 'B' || a3 == 'c')) {
-                ((void (*)(id, SEL, BOOL, BOOL))objc_msgSend)(window, animated, YES, YES);
-                NFBDebugLog(@"minimize-window: setMiniWindowModeEnabled:animated:YES");
-                return YES;
-            }
-        }
-        SEL plain = NSSelectorFromString(@"setMiniWindowModeEnabled:");
-        NSMethodSignature *plainSig = [window methodSignatureForSelector:plain];
-        if ([window respondsToSelector:plain] && plainSig && plainSig.numberOfArguments == 3 &&
-            strcmp(plainSig.methodReturnType, @encode(void)) == 0) {
-            char a2 = [plainSig getArgumentTypeAtIndex:2][0];
-            if (a2 == 'B' || a2 == 'c') {
-                ((void (*)(id, SEL, BOOL))objc_msgSend)(window, plain, YES);
-                NFBDebugLog(@"minimize-window: setMiniWindowModeEnabled:YES");
-                return YES;
-            }
-        }
-        NFBDebugLog(@"minimize-window: no usable path");
-        return NO;
-    } @catch (NSException *error) { NFBDebugLog(@"minimize-window failed: %@", error); return NO; }
-}
-
-// Expand a SPECIFIC mini floating window back to its full split size.
-BOOL NFBExpandFloatingWindow(id window) {
-    if (!NSThread.isMainThread || !window) return NO;
-    @try {
-        SEL animated = NSSelectorFromString(@"setMiniWindowModeEnabled:animated:");
-        NSMethodSignature *sig = [window methodSignatureForSelector:animated];
-        if ([window respondsToSelector:animated] && sig && sig.numberOfArguments == 4 &&
-            strcmp(sig.methodReturnType, @encode(void)) == 0) {
-            char a2 = [sig getArgumentTypeAtIndex:2][0];
-            char a3 = [sig getArgumentTypeAtIndex:3][0];
-            if ((a2 == 'B' || a2 == 'c') && (a3 == 'B' || a3 == 'c')) {
-                ((void (*)(id, SEL, BOOL, BOOL))objc_msgSend)(window, animated, NO, YES);
-                NFBDebugLog(@"expand-window: setMiniWindowModeEnabled:NO animated:YES");
-                return YES;
-            }
-        }
-        SEL plain = NSSelectorFromString(@"setMiniWindowModeEnabled:");
-        sig = [window methodSignatureForSelector:plain];
-        if ([window respondsToSelector:plain] && sig && sig.numberOfArguments == 3 &&
-            strcmp(sig.methodReturnType, @encode(void)) == 0) {
-            char a2 = [sig getArgumentTypeAtIndex:2][0];
-            if (a2 == 'B' || a2 == 'c') {
-                ((void (*)(id, SEL, BOOL))objc_msgSend)(window, plain, NO);
-                NFBDebugLog(@"expand-window: setMiniWindowModeEnabled:NO");
-                return YES;
-            }
-        }
-        NFBDebugLog(@"expand-window: no usable path");
-        return NO;
-    } @catch (NSException *error) { NFBDebugLog(@"expand-window failed: %@", error); return NO; }
-}
-
 static BOOL NFBTrollSignature(id target, SEL selector, BOOL hasFlag) {
     if (![target respondsToSelector:selector]) return NO;
     NSMethodSignature *sig = [target methodSignatureForSelector:selector];
@@ -305,43 +231,4 @@ NSString *NFBTrollVisibleApp(void) {
     } @catch (__unused NSException *e) { return nil; }
     id app = NFBTrollObject(window, @"bundleID");
     return [app isKindOfClass:NSString.class] ? app : nil;
-}
-
-id NFBCurrentFloatingWindow(void) {
-    if (!NSThread.isMainThread) return nil;
-    id window = NFBTrollObject(NSClassFromString(@"TOJBBarGestureBridge"), @"currentVisibleFloatingWindow");
-    Class viewClass = NSClassFromString(@"UIView");
-    return (viewClass && [window isKindOfClass:viewClass]) ? window : nil;
-}
-
-BOOL NFBSetFloatingVisualScale(double scale) {
-    if (!NSThread.isMainThread || !isfinite(scale) || scale <= 0) return NO;
-    @try {
-        id window = NFBCurrentFloatingWindow();
-        if (!window) return NO;
-        // setVisualScale: is a plain double setter (v24@0:8d16), confirmed in the
-        // supplied 1.3.7 binary's Objective-C metadata.
-        SEL setScale = NSSelectorFromString(@"setVisualScale:");
-        NSMethodSignature *setSig = [window methodSignatureForSelector:setScale];
-        if (![window respondsToSelector:setScale] || !setSig || setSig.numberOfArguments != 3 ||
-            strcmp(setSig.methodReturnType, @encode(void)) != 0 ||
-            strcmp([setSig getArgumentTypeAtIndex:2], @encode(double)) != 0) {
-            NFBDebugLog(@"scale: setVisualScale: unavailable");
-            return NO;
-        }
-        ((void (*)(id, SEL, double))objc_msgSend)(window, setScale, scale);
-        // Re-sync the container frame to the new scale, keeping the window centered.
-        SEL sync = NSSelectorFromString(@"syncContainerFrameToVisualScalePreservingCenter:");
-        NSMethodSignature *syncSig = [window methodSignatureForSelector:sync];
-        if ([window respondsToSelector:sync] && syncSig && syncSig.numberOfArguments == 3) {
-            char argType = [syncSig getArgumentTypeAtIndex:2][0];
-            char retType = syncSig.methodReturnType[0];
-            if (argType == 'B' || argType == 'c') {
-                if (retType == 'v') ((void (*)(id, SEL, BOOL))objc_msgSend)(window, sync, YES);
-                else if (retType == 'B' || retType == 'c') ((BOOL (*)(id, SEL, BOOL))objc_msgSend)(window, sync, YES);
-            }
-        }
-        NFBDebugLog(@"scale: applied %.3f", scale);
-        return YES;
-    } @catch (NSException *error) { NFBDebugLog(@"scale failed: %@", error); return NO; }
 }

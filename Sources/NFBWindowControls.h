@@ -18,10 +18,4 @@ BOOL NFBWindowIsLandscape(UIView *window);
 CGRect NFBWindowFrameInView(UIView *window, UIView *root);
 BOOL NFBPerformTopLongPress(UIView *window);
 
-// YES while the window is a corner mini window.
-BOOL NFBWindowIsMini(UIView *window);
-
-// Find a floating window for the given bundle ID anywhere in the scene tree.
-UIView *NFBFloatingWindowForApp(NSString *bundleID);
-
 void NFBObserveRotationLayout(void);

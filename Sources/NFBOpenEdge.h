@@ -1,9 +1,10 @@
 #import <Foundation/Foundation.h>
 void NFBUpdateOpenEdge(BOOL enabled);
-// Split-icon toggle: YES keeps Open's edge icon suppressed while a split exists.
-void NFBUpdateOpenEdgeSplitIcons(BOOL show);
+
+// NotifyBubbles' split bubbles visibility. Open's edge icon is hidden only while
+// these split icons are actually on screen; every other case (fullscreen app,
+// desktop, landscape/mini only, split parked off the corner) falls back to
+// Open's own shouldShowEdgeIcon decision.
+void NFBUpdateOpenEdgeSplitIconsVisible(BOOL visible);
 
 void NFBOpenEdgeAfterClose(void);
-void NFBOpenEdgeExpandAfterRotation(void);
-// Expand the edge icon into its app list (left-swipe/inward-pan action).
-void NFBOpenEdgeExpand(void);

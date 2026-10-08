@@ -8,14 +8,10 @@
 #import <QuartzCore/QuartzCore.h>
 #import <objc/message.h>
 #include <string.h>
-#include <stdlib.h>
-#import "NFBArrangement.h"
-#import "NFBOpenEdge.h"
 
-static NSString *arrangementSignature;
-static NSTimeInterval arrangementSince;
-static NSMapTable *arrangementStates;
-static NSUInteger arrangementOrder;
+static __weak UIView *lastWindow;
+static NSString *lastApp;
+static NSUInteger placementGeneration;
 static id currentWindow(void) {
     Class bridge = NSClassFromString(@"TOJBBarGestureBridge");
     SEL sel = NSSelectorFromString(@"currentVisibleFloatingWindow");
@@ -144,79 +140,9 @@ CGRect NFBWindowFrameInView(UIView *window, UIView *root) {
     @try { return visibleView(window) ? [window convertRect:window.bounds toView:root] : CGRectNull; }
     @catch (__unused NSException *exception) { return CGRectNull; }
 }
-BOOL NFBWindowIsMini(UIView *window) {
-    if (!window) return NO;
-    @try { return boolStateOf(window, @"miniWindowModeEnabled") == 1; }
-    @catch (__unused NSException *exception) { return NO; }
-}
-static UIView *floatingForAppInTree(UIView *view, Class floatingClass, NSString *bundleID) {
-    if (view.hidden || view.alpha < 0.01) return nil;
-    if ([view isKindOfClass:floatingClass]) {
-        if (boolStateOf(view, @"isClosingWithKeepAliveAnimation") == 1) return nil;
-        return [appOfWindow(view) isEqualToString:bundleID] ? view : nil;
-    }
-    for (UIView *child in view.subviews) {
-        UIView *found = floatingForAppInTree(child, floatingClass, bundleID);
-        if (found) return found;
-    }
-    return nil;
-}
-UIView *NFBFloatingWindowForApp(NSString *bundleID) {
-    if (!NSThread.isMainThread || !bundleID.length) return nil;
-    @try {
-        Class floatingClass = NSClassFromString(@"FloatingAppWindow");
-        if (!floatingClass) return nil;
-        NSMutableOrderedSet<UIWindow *> *windows = [NSMutableOrderedSet orderedSet];
-        for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
-            if (![scene isKindOfClass:UIWindowScene.class] || scene.activationState == UISceneActivationStateBackground ||
-                scene.activationState == UISceneActivationStateUnattached) continue;
-            [windows addObjectsFromArray:((UIWindowScene *)scene).windows];
-        }
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-        [windows addObjectsFromArray:UIApplication.sharedApplication.windows];
-#pragma clang diagnostic pop
-        for (UIWindow *window in windows) {
-            UIView *found = floatingForAppInTree(window, floatingClass, bundleID);
-            if (found) return found;
-        }
-    } @catch (NSException *exception) { NFBDebugLog(@"floating-app lookup: %@", exception); }
-    return nil;
-}
 NSString *NFBSplitAttachmentApp(void) {
     @try { return appOfWindow(attachmentWindow()); }
     @catch (__unused NSException *exception) { return nil; }
-}
-static BOOL hasMiniInTree(UIView *view, Class floatingClass) {
-    if (view.hidden || view.alpha < 0.01) return NO;
-    if ([view isKindOfClass:floatingClass]) {
-        if (boolStateOf(view, @"isClosingWithKeepAliveAnimation") == 1) return NO;
-        return boolStateOf(view, @"miniWindowModeEnabled") == 1;
-    }
-    for (UIView *child in view.subviews)
-        if (hasMiniInTree(child, floatingClass)) return YES;
-    return NO;
-}
-// YES when at least one corner mini window is currently visible.
-static BOOL NFBHasMiniWindows(void) {
-    if (!NSThread.isMainThread) return NO;
-    @try {
-        Class floatingClass = NSClassFromString(@"FloatingAppWindow");
-        if (!floatingClass) return NO;
-        NSMutableOrderedSet<UIWindow *> *windows = [NSMutableOrderedSet orderedSet];
-        for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
-            if (![scene isKindOfClass:UIWindowScene.class] || scene.activationState == UISceneActivationStateBackground ||
-                scene.activationState == UISceneActivationStateUnattached) continue;
-            [windows addObjectsFromArray:((UIWindowScene *)scene).windows];
-        }
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-        [windows addObjectsFromArray:UIApplication.sharedApplication.windows];
-#pragma clang diagnostic pop
-        for (UIWindow *window in windows)
-            if (hasMiniInTree(window, floatingClass)) return YES;
-    } @catch (NSException *exception) { NFBDebugLog(@"mini-scan: %@", exception); }
-    return NO;
 }
 void NFBObserveSplitSwitch(NSString *app, BOOL enabled) {
     static __weak UIView *previousWindow;
@@ -266,21 +192,12 @@ void NFBObserveSplitSwitch(NSString *app, BOOL enabled) {
                 boolStateOf(previous, @"isTransitioningFromMiniMode"),
                 orientationOf(previous, @"sceneOrientation"),
                 orientationOf(previous, @"containerOrientation"))) return;
-        // With other mini windows present, shrink the previous portrait split into
-        // a mini window so it joins them; otherwise close it as before.
-        if (NFBHasMiniWindows()) {
-            if (NFBMinimizeFloatingWindow(previous))
-                NFBDebugLog(@"split-switch: current %@ settled portrait; minimized previous %@", app, oldApp);
-            else
-                NFBDebugLog(@"split-switch: current %@ settled portrait; minimize previous %@ failed", app, oldApp);
-        } else {
-            SEL close = NSSelectorFromString(@"closeWindowWithoutTerminatingProcessWithoutAnimation");
-            NSMethodSignature *sig = [previous methodSignatureForSelector:close];
-            if (sig.numberOfArguments != 2 || strcmp(sig.methodReturnType, @encode(void))) return;
-            // Always target the saved previous window; never close the current app.
-            ((void (*)(id, SEL))objc_msgSend)(previous, close);
-            NFBDebugLog(@"split-switch: current %@ settled portrait; closed previous %@", app, oldApp);
-        }
+        SEL close = NSSelectorFromString(@"closeWindowWithoutTerminatingProcessWithoutAnimation");
+        NSMethodSignature *sig = [previous methodSignatureForSelector:close];
+        if (sig.numberOfArguments != 2 || strcmp(sig.methodReturnType, @encode(void))) return;
+        // Always target the saved previous window; never close the current app.
+        ((void (*)(id, SEL))objc_msgSend)(previous, close);
+        NFBDebugLog(@"split-switch: current %@ settled portrait; closed previous %@", app, oldApp);
     } @catch (NSException *exception) { NFBDebugLog(@"split-switch: %@", exception); }
 }
 BOOL NFBCurrentSplitLandscape(void) {
@@ -292,122 +209,56 @@ BOOL NFBCurrentSplitLandscape(void) {
         return scene == 3 || scene == 4 || container == 3 || container == 4;
     } @catch (__unused NSException *exception) { return NO; }
 }
-static void collectArrangement(UIView *view, Class cls, NSMutableOrderedSet *result) {
-    if (view.hidden || view.alpha < 0.01) return;
-    if ([view isKindOfClass:cls]) {
-        if (visibleView(view) && boolStateOf(view, @"isClosingWithKeepAliveAnimation") != 1)
-            [result addObject:view];
-        return;
-    }
-    for (UIView *child in view.subviews) collectArrangement(child, cls, result);
+void NFBResetSplitPlacement(void) {
+    lastApp = nil; lastWindow = nil; placementGeneration++;
 }
-static BOOL busyArrangement(UIView *view) {
-    for (UIGestureRecognizer *gesture in view.gestureRecognizers)
-        if (gesture.state == UIGestureRecognizerStateBegan || gesture.state == UIGestureRecognizerStateChanged) return YES;
-    // Only check window chrome; do not traverse the app's hosted scene.
-    for (UIView *child in view.subviews)
-        for (UIGestureRecognizer *gesture in child.gestureRecognizers)
-            if (gesture.state == UIGestureRecognizerStateBegan || gesture.state == UIGestureRecognizerStateChanged) return YES;
-    return NO;
-}
-void NFBResetSplitPlacement(void) { arrangementSignature = nil; arrangementSince = CACurrentMediaTime(); }
 void NFBObserveSplitPlacement(NSString *app) {
-    (void)app;
     if (!NSThread.isMainThread) return;
+    if (!app.length) { NFBResetSplitPlacement(); return; }
     @try {
-        Class cls = NSClassFromString(@"FloatingAppWindow");
-        if (!cls) return;
-        if (!arrangementStates) arrangementStates = [NSMapTable weakToStrongObjectsMapTable];
-        NSMutableOrderedSet *found = [NSMutableOrderedSet orderedSet];
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-        for (UIWindow *window in UIApplication.sharedApplication.windows) collectArrangement(window, cls, found);
-#pragma clang diagnostic pop
-        for (UIScene *scene in UIApplication.sharedApplication.connectedScenes)
-            if ([scene isKindOfClass:UIWindowScene.class] && scene.activationState != UISceneActivationStateBackground && scene.activationState != UISceneActivationStateUnattached)
-                for (UIWindow *window in ((UIWindowScene *)scene).windows) collectArrangement(window, cls, found);
-        BOOL hasLandscape = NO, hasPortrait = NO, rotatedToLandscape = NO;
-        NSMutableArray *participants = [NSMutableArray array];
-        for (UIView *view in found) {
-            if (busyArrangement(view) || boolStateOf(view, @"isTransitioningFromMiniMode") == 1) {
-                arrangementSince = CACurrentMediaTime(); return;
-            }
-            NSInteger mini = boolStateOf(view, @"miniWindowModeEnabled");
-            NSInteger scene = orientationOf(view, @"sceneOrientation");
-            NSInteger container = orientationOf(view, @"containerOrientation");
-            NSInteger kind = mini == 1 ? 3 : NFBExpandedWindowKind(mini, 0, scene, container);
-            if (!kind) { arrangementSince = CACurrentMediaTime(); return; }
-            NSMutableDictionary *state = [arrangementStates objectForKey:view];
-            if (!state) {
-                state = [@{@"order": @(++arrangementOrder)} mutableCopy];
-                [arrangementStates setObject:state forKey:view];
-            }
-            NSInteger previous = [state[@"kind"] integerValue];
-            if (previous == 1 && kind == 2) rotatedToLandscape = YES;
-            // The window's current transform gives its natural rendered size.
-            state[@"base"] = [NSValue valueWithCGAffineTransform:view.transform];
-            state[@"kind"] = @(kind);
-            hasLandscape |= kind == 2; hasPortrait |= kind == 1;
-        }
-        if (rotatedToLandscape && !hasPortrait) NFBOpenEdgeExpandAfterRotation();
-        // Mini windows participate too: they form a horizontal row at the top,
-        // left to right, instead of being left to the host's corner-avoidance.
-        for (UIView *view in found) [participants addObject:view];
-        [participants sortUsingComparator:^NSComparisonResult(UIView *a, UIView *b) {
-            NSDictionary *sa = [arrangementStates objectForKey:a], *sb = [arrangementStates objectForKey:b];
-            NSInteger ka = [sa[@"kind"] integerValue], kb = [sb[@"kind"] integerValue];
-            NSInteger ra = ka == 3 ? 0 : (ka == 2 ? 1 : 2), rb = kb == 3 ? 0 : (kb == 2 ? 1 : 2);
-            return ra == rb ? [sa[@"order"] compare:sb[@"order"]] : (ra < rb ? NSOrderedAscending : NSOrderedDescending);
-        }];
-        UIScreen *screen = ((UIView *)participants.firstObject).window.screen;
-        CGRect area = screen.bounds;
-        if (!participants.count || !screen || CGRectIsEmpty(area)) { arrangementSignature = nil; return; }
-        id savedPosition = CFBridgingRelease(CFPreferencesCopyAppValue(CFSTR("LandscapeVerticalPosition"), CFSTR("local.notifybubbles")));
-        double position = [savedPosition isKindOfClass:NSNumber.class] ? [savedPosition doubleValue] / 100.0 : 0;
-        if (!isfinite(position)) position = 0;
-        position = MAX(0, MIN(1, position));
-        NSMutableString *signature = [NSMutableString stringWithFormat:@"%@|position=%.6f", NSStringFromCGRect(area), position];
-        for (UIView *view in participants) {
-            NSDictionary *state = [arrangementStates objectForKey:view];
-            [signature appendFormat:@"|%@:%@:%@:%@", state[@"order"], state[@"kind"], NSStringFromCGRect(view.bounds), state[@"base"]];
-        }
-        if (![signature isEqual:arrangementSignature]) {
-            arrangementSignature = [signature copy]; arrangementSince = CACurrentMediaTime(); return;
-        }
-        if (!arrangementSince || CACurrentMediaTime()-arrangementSince < 0.75) return;
-        arrangementSince = 0; // Layout once per membership/orientation/size change, not per drag.
-        NFBTile *tiles = calloc(participants.count, sizeof(NFBTile));
-        if (!tiles) return;
-        for (NSUInteger i=0; i<participants.count; i++) {
-            UIView *view=participants[i]; NSDictionary *state=[arrangementStates objectForKey:view];
-            CGAffineTransform base=[state[@"base"] CGAffineTransformValue];
-            CGRect natural=CGRectApplyAffineTransform((CGRect){CGPointZero,view.bounds.size},base);
-            tiles[i].width=natural.size.width; tiles[i].height=natural.size.height;
-        }
-        // Sorted mini, landscape, portrait: mini forms the top row, landscape is
-        // the vertical top group, portrait stays bottom-aligned.
-        NSUInteger rowCount = 0, topCount = 0;
-        for (UIView *view in participants) {
-            NSInteger kind = [[arrangementStates objectForKey:view][@"kind"] integerValue];
-            if (kind == 3) rowCount++;
-            else if (kind == 2) topCount++;
-        }
-        if (!NFBArrangeMixed(tiles,participants.count,rowCount,topCount,area.size.height)) { free(tiles); return; }
-        NFBPositionLandscape(tiles,participants.count,rowCount,topCount,area.size.height,position);
-        [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled()?0:0.35 delay:0
-            options:UIViewAnimationOptionBeginFromCurrentState|UIViewAnimationOptionAllowUserInteraction|UIViewAnimationOptionCurveEaseInOut animations:^{
-                for (NSUInteger i=0; i<participants.count; i++) {
-                    UIView *view=participants[i]; if (!view.superview) continue;
-                    CGRect actual=[view convertRect:view.bounds toCoordinateSpace:screen.coordinateSpace];
-                    CGPoint delta=CGPointMake(CGRectGetMinX(area)+tiles[i].x-CGRectGetMinX(actual),CGRectGetMinY(area)+tiles[i].y-CGRectGetMinY(actual));
-                    CGPoint p=[view.superview convertPoint:CGPointZero fromCoordinateSpace:screen.coordinateSpace];
-                    CGPoint q=[view.superview convertPoint:delta fromCoordinateSpace:screen.coordinateSpace];
-                    view.center=CGPointMake(view.center.x+q.x-p.x,view.center.y+q.y-p.y);
-                }
-            } completion:nil];
-        free(tiles);
-        NFBDebugLog(@"arrange: windows=%lu landscape=%d portrait=%d",(unsigned long)participants.count,hasLandscape,hasPortrait);
-    } @catch (NSException *exception) { NFBDebugLog(@"arrange failed: %@",exception); }
+        id object = currentWindow();
+        if (![object isKindOfClass:UIView.class]) return;
+        UIView *view = object;
+        if (lastWindow == view && [lastApp isEqual:app]) return;
+        lastWindow = view; lastApp = [app copy];
+        NSUInteger generation = ++placementGeneration;
+        __weak UIView *weakWindow = view;
+        // Let TrollOpen finish restoring its previous layout before applying ours.
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.75 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                UIView *window = weakWindow;
+            // Placement follows the actual current window, not the rail fallback.
+            NSInteger scene = orientationOf(window, @"sceneOrientation");
+            NSInteger container = orientationOf(window, @"containerOrientation");
+            if (scene == 3 || scene == 4 || container == 3 || container == 4) return;
+            if (!window || generation != placementGeneration || currentWindow() != window ||
+                ![NFBTrollVisibleApp() isEqual:app] ||
+                (!window.superview && ![window isKindOfClass:UIWindow.class])) return;
+            @try {
+                SEL scale = NSSelectorFromString(@"setVisualScale:");
+                NSMethodSignature *sig = [window methodSignatureForSelector:scale];
+                if (sig.numberOfArguments != 3 || strcmp(sig.methodReturnType, @encode(void)) ||
+                    strcmp([sig getArgumentTypeAtIndex:2], @encode(double))) return;
+                SEL sync = NSSelectorFromString(@"syncContainerFrameToVisualScalePreservingCenter:");
+                NSMethodSignature *syncSig = [window methodSignatureForSelector:sync];
+                if (syncSig.numberOfArguments != 3 || strcmp(syncSig.methodReturnType, @encode(void)) ||
+                    strcmp([syncSig getArgumentTypeAtIndex:2], @encode(BOOL))) return;
+                ((void (*)(id, SEL, double))objc_msgSend)(window, scale, 0.86);
+                ((void (*)(id, SEL, BOOL))objc_msgSend)(window, sync, YES);
+                [window setNeedsLayout]; [window layoutIfNeeded];
+                UIView *parent = window.superview;
+                CGRect area = parent ? [parent convertRect:parent.window.bounds fromView:parent.window]
+                    : ((UIWindow *)window).screen.bounds;
+                CGRect frame = window.frame;
+                if (CGRectIsEmpty(frame) || CGRectIsEmpty(area)) return;
+                // Adjust center using the rendered frame, preserving rotation/transform.
+                CGPoint center = window.center;
+                center.x += CGRectGetMinX(area) - CGRectGetMinX(frame);
+                center.y += CGRectGetMaxY(area) - CGRectGetMaxY(frame);
+                window.center = center;
+                NFBDebugLog(@"placement: %@ requested scale=0.86 frame=%@", app, NSStringFromCGRect(window.frame));
+            } @catch (NSException *exception) { NFBDebugLog(@"placement: %@", exception); }
+        });
+    } @catch (NSException *exception) { NFBDebugLog(@"placement lookup: %@", exception); }
 }
 
 // Supply the ended tap expected by the original handler without dispatching a
