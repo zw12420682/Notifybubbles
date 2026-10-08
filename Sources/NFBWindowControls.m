@@ -265,10 +265,8 @@ void NFBObserveSplitPlacement(NSString *app) {
             }
             NSInteger previous = [state[@"kind"] integerValue];
             if (previous == 1 && kind == 2) rotatedToLandscape = YES;
-            NSValue *applied = state[@"applied"];
-            // A native/manual transform change establishes a new natural size.
-            if (!applied || !CGAffineTransformEqualToTransform(view.transform, applied.CGAffineTransformValue))
-                state[@"base"] = [NSValue valueWithCGAffineTransform:view.transform];
+            // The window's current transform gives its natural rendered size.
+            state[@"base"] = [NSValue valueWithCGAffineTransform:view.transform];
             state[@"kind"] = @(kind);
             hasLandscape |= kind == 2; hasPortrait |= kind == 1;
         }
@@ -315,17 +313,12 @@ void NFBObserveSplitPlacement(NSString *app) {
             if (kind == 3) rowCount++;
             else if (kind == 2) topCount++;
         }
-        double factor=NFBArrangeMixed(tiles,participants.count,rowCount,topCount,area.size.width,area.size.height);
-        if (factor<=0) { free(tiles); return; }
+        if (!NFBArrangeMixed(tiles,participants.count,rowCount,topCount,area.size.height)) { free(tiles); return; }
         NFBPositionLandscape(tiles,participants.count,rowCount,topCount,area.size.height,position);
         [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled()?0:0.35 delay:0
             options:UIViewAnimationOptionBeginFromCurrentState|UIViewAnimationOptionAllowUserInteraction|UIViewAnimationOptionCurveEaseInOut animations:^{
                 for (NSUInteger i=0; i<participants.count; i++) {
                     UIView *view=participants[i]; if (!view.superview) continue;
-                    NSMutableDictionary *state=[arrangementStates objectForKey:view];
-                    CGAffineTransform base=[state[@"base"] CGAffineTransformValue];
-                    view.transform=CGAffineTransformScale(base,factor,factor);
-                    state[@"applied"]=[NSValue valueWithCGAffineTransform:view.transform];
                     CGRect actual=[view convertRect:view.bounds toCoordinateSpace:screen.coordinateSpace];
                     CGPoint delta=CGPointMake(CGRectGetMinX(area)+tiles[i].x-CGRectGetMinX(actual),CGRectGetMinY(area)+tiles[i].y-CGRectGetMinY(actual));
                     CGPoint p=[view.superview convertPoint:CGPointZero fromCoordinateSpace:screen.coordinateSpace];
@@ -334,7 +327,7 @@ void NFBObserveSplitPlacement(NSString *app) {
                 }
             } completion:nil];
         free(tiles);
-        NFBDebugLog(@"arrange: windows=%lu factor=%.3f landscape=%d portrait=%d",(unsigned long)participants.count,factor,hasLandscape,hasPortrait);
+        NFBDebugLog(@"arrange: windows=%lu landscape=%d portrait=%d",(unsigned long)participants.count,hasLandscape,hasPortrait);
     } @catch (NSException *exception) { NFBDebugLog(@"arrange failed: %@",exception); }
 }
 
