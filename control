@@ -1,6 +1,6 @@
 Package: local.notifybubbles
 Name: NotifyBubbles (Open 1.3.7 专用版)
-Version: 0.48.27
+Version: 0.48.28
 Architecture: iphoneos-arm64e
 Description: Notification bubbles for iOS 16 and Dopamine RootHide. Experimental first build.
 Maintainer: NotifyBubbles
