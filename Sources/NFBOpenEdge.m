@@ -29,13 +29,16 @@ static void (*originalShowTray)(id, SEL);
 static BOOL shouldTuck(void) {
     id sb = UIApplication.sharedApplication;
     if ([sb respondsToSelector:@selector(isShowingHomescreen)] && [sb isShowingHomescreen]) return NO;
-    // The bridge also reports windows that are not in UIApplication.windows.
+    // The bridge also reports windows that are not attached to a window scene.
     id floating = NFBGet(NSClassFromString(@"TOJBBarGestureBridge"), @"currentVisibleFloatingWindow");
     if ([floating isKindOfClass:UIView.class] && ![(UIView *)floating isHidden] &&
         [(UIView *)floating alpha] > 0.01) return NO;
-    for (UIWindow *window in UIApplication.sharedApplication.windows) {
-        if ([window isKindOfClass:NSClassFromString(@"FloatingAppWindow")] &&
-            !window.hidden && window.alpha > 0.01) return NO;
+    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+        if (![scene isKindOfClass:UIWindowScene.class]) continue;
+        for (UIWindow *window in ((UIWindowScene *)scene).windows) {
+            if ([window isKindOfClass:NSClassFromString(@"FloatingAppWindow")] &&
+                !window.hidden && window.alpha > 0.01) return NO;
+        }
     }
     return NFBString(NFBGet(NFBGet(sb, @"_accessibilityFrontMostApplication"), @"bundleIdentifier")).length > 0;
 }
