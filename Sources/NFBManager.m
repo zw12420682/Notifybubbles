@@ -899,7 +899,7 @@ static double NFBNumber(NSString *key, double fallback) {
     // Open's edge icon is hidden only while these split bubbles are actually on
     // screen. A fullscreen app, the desktop, landscape/mini-only, or a split
     // parked away from the corner restore native visibility; the adapter separately
-    // keeps fullscreen tucked and every other visible edge extended.
+    // keeps the fullscreen tray closed and other eligible states expanded.
     NFBUpdateOpenEdgeSplitIconsVisible(floatingApp.length > 0 && !hideForPosition);
 
     BOOL containerMode = !edgeMode;
