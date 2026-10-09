@@ -19,6 +19,9 @@ static BOOL lastFullscreen;
 static BOOL lastEnabled;
 static BOOL applyingPresentation;
 static CFTimeInterval trayDismissUntil;
+static NSUInteger sceneEpoch = 1;
+static NSString *lastSceneKey;
+static NSMapTable *appliedEpochs;
 static void (*originalHideTray)(id, SEL, BOOL);
 static NSHashTable *owners;
 static BOOL (*originalShouldShow)(id, SEL);
@@ -47,13 +50,36 @@ static BOOL suppressed(void) {
     // horizontal position of a single edge button.
     return enabledByOwner && splitIconsVisible && NSThread.isMainThread;
 }
+static NSString *sceneKey(void) {
+    id sb = UIApplication.sharedApplication;
+    BOOL home = [sb respondsToSelector:@selector(isShowingHomescreen)] && [sb isShowingHomescreen];
+    NSString *front = home ? @"home" : NFBString(NFBGet(NFBGet(sb,
+        @"_accessibilityFrontMostApplication"), @"bundleIdentifier"));
+    id floating = NFBGet(NSClassFromString(@"TOJBBarGestureBridge"), @"currentVisibleFloatingWindow");
+    BOOL visible = [floating isKindOfClass:UIView.class] &&
+        ![(UIView *)floating isHidden] && [(UIView *)floating alpha] > 0.01;
+    BOOL mini = NO;
+    if (visible) {
+        SEL getter = NSSelectorFromString(@"miniWindowModeEnabled");
+        NSMethodSignature *sig = [floating methodSignatureForSelector:getter];
+        if (sig && sig.numberOfArguments == 2 && !strcmp(sig.methodReturnType, @encode(BOOL)))
+            mini = ((BOOL (*)(id, SEL))objc_msgSend)(floating, getter);
+    }
+    NSString *floatingApp = visible ? NFBString(NFBGet(floating, @"bundleID")) : nil;
+    return [NSString stringWithFormat:@"%@|%@|%d|%d", front ?: @"none",
+        floatingApp ?: @"none", visible, mini];
+}
 // All panel content and gestures remain owned by Open. Reentrancy is possible:
 // showing/hiding its tray can call the intercepted edge/refresh methods.
 static void applyPresentation(id owner, BOOL animated) {
     if (applyingPresentation || !enabledByOwner || !NSThread.isMainThread) return;
+    // A scene transition supplies one default action. Refreshes and delayed
+    // reconciliation must not undo subsequent manual collapse/expansion.
+    if ([[appliedEpochs objectForKey:owner] unsignedIntegerValue] == sceneEpoch) return;
     applyingPresentation = YES;
     @try {
         if (suppressed()) {
+            [appliedEpochs setObject:@(sceneEpoch) forKey:owner];
             if (NFBGet(owner, @"trayBackdrop"))
                 originalHideTray(owner, NSSelectorFromString(@"hideTrayAnimated:"), NO);
             ((void (*)(id, SEL, BOOL))objc_msgSend)(owner,
@@ -62,6 +88,7 @@ static void applyPresentation(id owner, BOOL animated) {
         }
         if (!originalShouldShow(owner, NSSelectorFromString(@"shouldShowEdgeIcon"))) return;
         if (shouldTuck()) {
+            [appliedEpochs setObject:@(sceneEpoch) forKey:owner];
             if (NFBGet(owner, @"trayBackdrop"))
                 originalHideTray(owner, NSSelectorFromString(@"hideTrayAnimated:"), NO);
             ((void (*)(id, SEL, BOOL, BOOL))objc_msgSend)(owner,
@@ -70,8 +97,13 @@ static void applyPresentation(id owner, BOOL animated) {
             // This is the exact native panel displayed in the reference image.
             // Do not replace the separate up/down swipe-selection gesture.
             SEL active = NSSelectorFromString(@"swipeGestureActive");
-            if (!((BOOL (*)(id, SEL))objc_msgSend)(owner, active))
+            if (!((BOOL (*)(id, SEL))objc_msgSend)(owner, active)) {
                 originalShowTray(owner, NSSelectorFromString(@"showTray"));
+                if (NFBGet(owner, @"trayBackdrop"))
+                    [appliedEpochs setObject:@(sceneEpoch) forKey:owner];
+            }
+        } else if (NFBGet(owner, @"trayBackdrop")) {
+            [appliedEpochs setObject:@(sceneEpoch) forKey:owner];
         }
     } @finally {
         applyingPresentation = NO;
@@ -100,16 +132,18 @@ static void showEdge(id owner, SEL cmd, BOOL animated) {
 }
 static void showTray(id owner, SEL cmd) {
     remember(owner);
-    if (!suppressed() && (!enabledByOwner || !shouldTuck())) originalShowTray(owner, cmd);
+    if (!suppressed()) {
+        originalShowTray(owner, cmd);
+        if (enabledByOwner && !applyingPresentation && NFBGet(owner, @"trayBackdrop"))
+            [appliedEpochs setObject:@(sceneEpoch) forKey:owner];
+    }
 }
 static void hideTray(id owner, SEL cmd, BOOL animated) {
     remember(owner);
     if (enabledByOwner && !applyingPresentation)
         trayDismissUntil = CACurrentMediaTime() + (animated ? 0.45 : 0);
     originalHideTray(owner, cmd, animated);
-    // Allow native selection/collapse/teardown to finish before applying the
-    // current state again. Fullscreen and split suppression will stay closed.
-    if (enabledByOwner && !applyingPresentation) NFBOpenEdgeAfterClose();
+    // Native collapse is final for this scene; do not schedule automatic reopen.
 }
 // Native hide completion writes hidden=YES even when its animation was interrupted.
 // Reconcile after transitions, retaining the native eligibility/settings decision.
@@ -160,12 +194,16 @@ static void applySuppression(void) {
     if (!installed) return;
     BOOL now = suppressed();
     BOOL fullscreen = shouldTuck();
-    if (now == lastSuppressed && fullscreen == lastFullscreen && enabledByOwner == lastEnabled) {
-        // Reopen after native dismissal/animation completion, even when the
-        // desktop state itself did not change between manager ticks.
+    NSString *key = sceneKey();
+    if (now == lastSuppressed && fullscreen == lastFullscreen && enabledByOwner == lastEnabled &&
+        [lastSceneKey isEqualToString:key]) {
+        // Only incomplete transition work may retry. Completed actions are
+        // consumed per owner, so manual control remains untouched.
         if (!now) for (id owner in owners.allObjects) applyPresentation(owner, NO);
         return;
     }
+    ++sceneEpoch;
+    lastSceneKey = [key copy];
     lastSuppressed = now;
     lastFullscreen = fullscreen;
     lastEnabled = enabledByOwner;
@@ -199,6 +237,7 @@ void NFBUpdateOpenEdge(BOOL enabled) {
             strcmp([tuckSig getArgumentTypeAtIndex:2], @encode(BOOL)) ||
             strcmp([tuckSig getArgumentTypeAtIndex:3], @encode(BOOL))) return;
         owners = [NSHashTable weakObjectsHashTable];
+        appliedEpochs = [NSMapTable weakToStrongObjectsMapTable];
         MSHookMessageEx(cls, NSSelectorFromString(@"shouldShowEdgeIcon"), (IMP)shouldShow, (IMP *)&originalShouldShow);
         MSHookMessageEx(cls, NSSelectorFromString(@"refreshUI"), (IMP)refresh, (IMP *)&originalRefresh);
         MSHookMessageEx(cls, NSSelectorFromString(@"showEdgeButtonAnimated:"), (IMP)showEdge, (IMP *)&originalShowEdge);
