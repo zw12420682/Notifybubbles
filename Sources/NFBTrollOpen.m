@@ -5,7 +5,24 @@
 #define NFB_PORTABLE_ADAPTER_TEST 1
 #endif
 #import "NFBTrollOpen.h"
+#ifdef NFB_PORTABLE_ADAPTER_TEST
+// Contract tests also work with the original Foundation-only compile command.
+// Production logging remains in NFBDebugLog.m on iOS.
+#include <stdarg.h>
+static void NFBAdapterDebugLog(NSString *format, ...) NS_FORMAT_FUNCTION(1, 2);
+static void NFBAdapterDebugLog(__unused NSString *format, ...) {}
+static void NFBAdapterErrorLog(NSString *format, ...) NS_FORMAT_FUNCTION(1, 2);
+static void NFBAdapterErrorLog(NSString *format, ...) {
+    va_list arguments; va_start(arguments, format);
+    NSString *message = [[NSString alloc] initWithFormat:format arguments:arguments];
+    va_end(arguments);
+    NSLog(@"[NFB adapter test] %@", message);
+}
+#define NFBDebugLog NFBAdapterDebugLog
+#define NFBErrorLog NFBAdapterErrorLog
+#else
 #import "NFBDebugLog.h"
+#endif
 #import "NFBInterfaces.h"
 #ifndef NFB_PORTABLE_ADAPTER_TEST
 #import "NFBWindowState.h"
@@ -26,7 +43,8 @@ static id NFBTrollObject(id object, NSString *name);
 // closeCurrentFloatingWindow live on the BRIDGE CLASS, not on the floating window
 // instance. Dump the methods containing control-related keywords exactly once so
 // the debug file reveals the correct selector names instead of us guessing again.
-static void NFBDumpFloatingWindowInterfaces(id window) {
+static void NFBDumpFloatingWindowInterfaces(__unused id window) {
+#ifndef NFB_PORTABLE_ADAPTER_TEST
     static BOOL dumped = NO;
     if (dumped) return;
     dumped = YES;
@@ -36,6 +54,7 @@ static void NFBDumpFloatingWindowInterfaces(id window) {
     Class bridge = NSClassFromString(@"TOJBBarGestureBridge");
     NFBDumpMethods(bridge, YES, @"bridge", @[@"floating", @"split", @"close", @"full", @"mini",
                                              @"orientation", @"gesture", @"current", @"visible"]);
+#endif
 }
 
 BOOL NFBSplitTrollFrontmostApp(void) {

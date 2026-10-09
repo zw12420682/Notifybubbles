@@ -67,6 +67,7 @@ print("PASS: current version and new runtime sources")
 adapter = (root / "Sources/NFBTrollOpen.m").read_text(encoding="utf-8")
 workflow = (root / ".github/workflows/build.yml").read_text(encoding="utf-8")
 assert "TARGET_OS_OSX && !defined(NFB_PORTABLE_ADAPTER_TEST)" in adapter
-assert "-DNFB_PORTABLE_ADAPTER_TEST" in workflow
-assert "Sources/NFBDebugLog.m Sources/NFBTrollOpen.m Tests/TrollOpenTests.m" in workflow
-print("PASS: macOS adapter isolation and test logger linkage")
+assert "#define NFBDebugLog NFBAdapterDebugLog" in adapter
+assert "#define NFBErrorLog NFBAdapterErrorLog" in adapter
+assert "Sources/NFBTrollOpen.m" in workflow and "Tests/TrollOpenTests.m" in workflow
+print("PASS: automatic macOS adapter isolation; both old and current test commands supported")
