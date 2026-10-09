@@ -2,6 +2,8 @@
 #import <Preferences/PSListController.h>
 #import <Preferences/PSSpecifier.h>
 #import <objc/message.h>
+#import "../Sources/NFBInterfaces.h"
+#import "../Sources/NFBIcon.h"
 
 @interface NFBFavoritesController : UITableViewController
 @property(nonatomic, copy) NSArray<NSDictionary *> *apps;
@@ -17,7 +19,7 @@
         NSDictionary *symbols = @{@"Enabled": @"bell.badge.fill", @"ShowOnLock": @"lock.fill",
             @"ShowOnHome": @"house.fill", @"ShowInApps": @"app.fill", @"IconSize": @"arrow.up.left.and.arrow.down.right",
             @"IconOpacity": @"circle.lefthalf.filled", @"ClosePreviousSplit": @"rectangle.on.rectangle",
-            @"FreezeDesktop": @"snowflake", @"DesktopBlurTransparency": @"drop.halffull", @"HideInScreenshots": @"eye.slash.fill"};
+            @"FreezeDesktop": @"snowflake", @"DesktopBlurTransparency": @"drop.halffull", @"HideInScreenshots": @"eye.slash.fill", @"DebugLogging": @"ladybug.fill"};
         for (PSSpecifier *specifier in _specifiers) {
             NSString *key = [specifier propertyForKey:@"key"];
             NSString *symbol = key ? symbols[key] : nil;
@@ -54,12 +56,7 @@
 }
 @end
 
-static id NFBPreferenceObject(id object, NSString *name) {
-    SEL sel = NSSelectorFromString(name);
-    if (![object respondsToSelector:sel]) return nil;
-    @try { return ((id (*)(id, SEL))objc_msgSend)(object, sel); }
-    @catch (__unused NSException *e) { return nil; }
-}
+static id NFBPreferenceObject(id object, NSString *name) { return NFBCheckedObject(object, name); }
 @implementation NFBFavoritesController
 - (void)viewDidLoad {
     [super viewDidLoad];
@@ -90,7 +87,7 @@ static id NFBPreferenceObject(id object, NSString *name) {
 }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
     (void)tableView; (void)section;
-    return self.apps.count ? @"点选后即时保存，初始按选择顺序排列，当前 App 不改变排序，只滚动到可见位置。上方常用容器最多显示 4 个，其余可滚动查看；从下往上排列，最下面为第一位；已选 App 不再显示在下方容器。" : @"未能读取已安装 App，请重新打开设置并确认插件正常加载。";
+    return self.apps.count ? @"点选后即时保存，初始按选择顺序排列，当前 App 不改变排序，只滚动到可见位置。上方常用容器按可用空间显示，其余可滚动查看；从下往上排列，最下面为第一位；已选 App 不再显示在下方容器。" : @"未能读取已安装 App，请重新打开设置并确认插件正常加载。";
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
     UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"app"];
@@ -99,11 +96,7 @@ static id NFBPreferenceObject(id object, NSString *name) {
     cell.textLabel.text = app[@"name"]; cell.detailTextLabel.text = app[@"id"];
     cell.accessoryType = [self.selected containsObject:app[@"id"]] ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
     cell.imageView.image = [UIImage systemImageNamed:@"app.fill"];
-    SEL sel = NSSelectorFromString(@"_applicationIconImageForBundleIdentifier:format:scale:");
-    if ([UIImage respondsToSelector:sel]) {
-        @try { cell.imageView.image = ((id (*)(id, SEL, id, int, CGFloat))objc_msgSend)(UIImage.class, sel, app[@"id"], 0, UIScreen.mainScreen.scale) ?: cell.imageView.image; }
-        @catch (__unused NSException *e) {}
-    }
+    cell.imageView.image = NFBApplicationImage(app[@"id"], 0, UIScreen.mainScreen.scale) ?: cell.imageView.image;
     return cell;
 }
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {

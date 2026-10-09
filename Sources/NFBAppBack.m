@@ -110,7 +110,7 @@ static NFBEdgeSwipe *runningSwipe;
             [UIApplication.sharedApplication sendEvent:event];
             sent = YES;
         }
-    } @catch (NSException *e) { NFBDebugLog(@"edge swipe event failed: %@", e); }
+    } @catch (NSException *e) { NFBErrorLog(@"edge swipe event failed: %@", e); }
     if (finger) CFRelease(finger);
     if (hand) CFRelease(hand);
     return sent;
@@ -180,7 +180,7 @@ static void NFBPerformSwipe(void (^done)(uint8_t)) {
             if (!swipe.finished) [swipe finish:NFBBackStatusTransitioning];
         });
     } @catch (NSException *e) {
-        NFBDebugLog(@"edge swipe start failed: %@", e);
+        NFBErrorLog(@"edge swipe start failed: %@", e);
         if (runningSwipe) [runningSwipe finish:NFBBackStatusException]; else done(NFBBackStatusException);
     }
 }

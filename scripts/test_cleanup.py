@@ -16,6 +16,14 @@ with tempfile.TemporaryDirectory(prefix='cleanup-test-', dir=root.parent) as tem
     protected = folder/'NotifyBubblesKeyboard.plist'; protected.write_text('another-package')
     unrelated = folder/'TrollOpenKeyboard.dylib'; unrelated.write_text('keep-trollopen')
     other = tmp/'other-bootstrap/NotifyBubblesKeyboard.dylib'; other.parent.mkdir(); other.write_text('keep-other-root')
+    symlink = folder/'NotifyBubblesKeyboard.plist.disabled'
+    symlink_created = True
+    try:
+        symlink.symlink_to(other)
+    except OSError as error:
+        if os.name != "nt" or getattr(error,"winerror",None) != 1314: raise
+        symlink_created = False
+        print("SKIP: symlink case requires Windows symlink privilege; mandatory in macOS CI")
     bindir = tmp/'bin'; bindir.mkdir()
     mock = bindir/'dpkg-query'
     mock.write_text("#!/bin/sh\ncase \"$1\" in\n-L) printf '%s\\n' \"$NFB_TEST_MAIN\" ;;\n-S) case \"$2\" in *.plist) printf 'other.package: %s\\n' \"$2\" ;; *) exit 1 ;; esac ;;\nesac\n", encoding='utf-8', newline='\n')
@@ -26,6 +34,7 @@ with tempfile.TemporaryDirectory(prefix='cleanup-test-', dir=root.parent) as tem
     subprocess.run(args+['abort-upgrade'],env=env,check=True,capture_output=True,text=True)
     assert retired.exists(), 'Non-configure invocation must not delete'
     result = subprocess.run(args+['configure'],env=env,check=True,capture_output=True,text=True)
+    if symlink_created: assert symlink.is_symlink() and symlink.read_text() == 'keep-other-root', 'Symlink or target altered'
     assert not retired.exists() and not disabled.exists(), result.stdout+result.stderr
     for path, value in [(main,'keep-main'),(protected,'another-package'),(unrelated,'keep-trollopen'),(other,'keep-other-root')]:
         assert path.read_text() == value, path

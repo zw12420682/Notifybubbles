@@ -1,5 +1,6 @@
 #import <UIKit/UIKit.h>
 #import <objc/message.h>
+#import "NFBInterfaces.h"
 
 // Minimal declarations, resolved at runtime; no private class is linked directly.
 @interface NSObject (NFBPrivate)
@@ -22,11 +23,9 @@
 @end
 
 static inline id NFBGet(id object, NSString *name) {
-    SEL selector = NSSelectorFromString(name);
-    if (![object respondsToSelector:selector]) return nil;
-    @try { return ((id (*)(id, SEL))objc_msgSend)(object, selector); }
-    @catch (__unused NSException *error) { return nil; }
+    return NFBCheckedObject(object, name);
 }
+
 static inline id NFBSingleton(NSString *className) {
     return NFBGet(NSClassFromString(className), @"sharedInstance");
 }

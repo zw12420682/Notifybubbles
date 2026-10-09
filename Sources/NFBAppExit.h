@@ -4,3 +4,6 @@
 // Runs in SpringBoard on the main thread. YES means a termination request was
 // accepted, not that the app is already gone.
 BOOL NFBTerminateApp(NSString *bundleID);
+
+// Identity snapshot for delayed exits; zero means unavailable.
+NSInteger NFBRunningProcessID(NSString *bundleID);

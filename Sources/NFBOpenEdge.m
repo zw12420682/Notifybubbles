@@ -1,3 +1,5 @@
+#import "NFBWindowState.h"
+#import "NFBTransitionPolicy.h"
 #import "NFBOpenEdge.h"
 #import "NFBWindowControls.h"
 #import "NFBPrivate.h"
@@ -28,54 +30,27 @@ static BOOL (*originalShouldShow)(id, SEL);
 static void (*originalRefresh)(id, SEL);
 static void (*originalShowEdge)(id, SEL, BOOL);
 static void (*originalShowTray)(id, SEL);
-static BOOL shouldTuck(void) {
-    id sb = UIApplication.sharedApplication;
-    if ([sb respondsToSelector:@selector(isShowingHomescreen)] && [sb isShowingHomescreen]) return NO;
-    // The bridge also reports windows that are not attached to a window scene.
-    id floating = NFBGet(NSClassFromString(@"TOJBBarGestureBridge"), @"currentVisibleFloatingWindow");
-    if ([floating isKindOfClass:UIView.class] && ![(UIView *)floating isHidden] &&
-        [(UIView *)floating alpha] > 0.01) return NO;
-    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
-        if (![scene isKindOfClass:UIWindowScene.class]) continue;
-        for (UIWindow *window in ((UIWindowScene *)scene).windows) {
-            if ([window isKindOfClass:NSClassFromString(@"FloatingAppWindow")] &&
-                !window.hidden && window.alpha > 0.01) return NO;
-        }
-    }
-    return NFBString(NFBGet(NFBGet(sb, @"_accessibilityFrontMostApplication"), @"bundleIdentifier")).length > 0;
-}
+static BOOL shouldTuck(void) { return NFBCurrentWindowState().fullscreen; }
 static BOOL suppressed(void) {
     // Hide Open's edge icon only while NotifyBubbles' split bubbles are on screen.
     // Expansion means the native tray (delete/collapse/app icons), not the
     // horizontal position of a single edge button.
     return enabledByOwner && splitIconsVisible && NSThread.isMainThread;
 }
-static NSString *sceneKey(void) {
-    id sb = UIApplication.sharedApplication;
-    BOOL home = [sb respondsToSelector:@selector(isShowingHomescreen)] && [sb isShowingHomescreen];
-    NSString *front = home ? @"home" : NFBString(NFBGet(NFBGet(sb,
-        @"_accessibilityFrontMostApplication"), @"bundleIdentifier"));
-    id floating = NFBGet(NSClassFromString(@"TOJBBarGestureBridge"), @"currentVisibleFloatingWindow");
-    BOOL visible = [floating isKindOfClass:UIView.class] &&
-        ![(UIView *)floating isHidden] && [(UIView *)floating alpha] > 0.01;
-    BOOL mini = NO;
-    if (visible) {
-        SEL getter = NSSelectorFromString(@"miniWindowModeEnabled");
-        NSMethodSignature *sig = [floating methodSignatureForSelector:getter];
-        if (sig && sig.numberOfArguments == 2 && !strcmp(sig.methodReturnType, @encode(BOOL)))
-            mini = ((BOOL (*)(id, SEL))objc_msgSend)(floating, getter);
-    }
-    NSString *floatingApp = visible ? NFBString(NFBGet(floating, @"bundleID")) : nil;
-    return [NSString stringWithFormat:@"%@|%@|%d|%d", front ?: @"none",
-        floatingApp ?: @"none", visible, mini];
-}
+static NSString *candidateSceneKey;
+static NSUInteger candidateRevision;
+static CFTimeInterval candidateSince;
+static NSMapTable *manualSceneKeys;
+static NSString *sceneKey(void) { return NFBCurrentWindowState().sceneKey; }
+static void applySuppression(void);
 // All panel content and gestures remain owned by Open. Reentrancy is possible:
 // showing/hiding its tray can call the intercepted edge/refresh methods.
 static void applyPresentation(id owner, BOOL animated) {
     if (applyingPresentation || !enabledByOwner || !NSThread.isMainThread) return;
     // A scene transition supplies one default action. Refreshes and delayed
     // reconciliation must not undo subsequent manual collapse/expansion.
-    if ([[appliedEpochs objectForKey:owner] unsignedIntegerValue] == sceneEpoch) return;
+    if (!suppressed() && candidateSceneKey) return;
+    if (!NFBTransitionNeedsAction(sceneEpoch, [[appliedEpochs objectForKey:owner] unsignedIntegerValue])) return;
     applyingPresentation = YES;
     @try {
         if (suppressed()) {
@@ -87,7 +62,7 @@ static void applyPresentation(id owner, BOOL animated) {
             return;
         }
         if (!originalShouldShow(owner, NSSelectorFromString(@"shouldShowEdgeIcon"))) return;
-        if (shouldTuck()) {
+        if (lastFullscreen) {
             [appliedEpochs setObject:@(sceneEpoch) forKey:owner];
             if (NFBGet(owner, @"trayBackdrop"))
                 originalHideTray(owner, NSSelectorFromString(@"hideTrayAnimated:"), NO);
@@ -118,7 +93,9 @@ static BOOL shouldShow(id owner, SEL cmd) {
 }
 static void refresh(id owner, SEL cmd) {
     remember(owner);
-    originalRefresh(owner, cmd);
+    BOOL wasApplying = applyingPresentation;
+    applyingPresentation = YES;
+    @try { originalRefresh(owner, cmd); } @finally { applyingPresentation = wasApplying; }
     applyPresentation(owner, YES);
 }
 static void showEdge(id owner, SEL cmd, BOOL animated) {
@@ -134,14 +111,19 @@ static void showTray(id owner, SEL cmd) {
     remember(owner);
     if (!suppressed()) {
         originalShowTray(owner, cmd);
-        if (enabledByOwner && !applyingPresentation && NFBGet(owner, @"trayBackdrop"))
+        if (enabledByOwner && !applyingPresentation && NFBGet(owner, @"trayBackdrop")) {
+            [manualSceneKeys setObject:sceneKey() forKey:owner];
             [appliedEpochs setObject:@(sceneEpoch) forKey:owner];
+        }
     }
 }
 static void hideTray(id owner, SEL cmd, BOOL animated) {
     remember(owner);
-    if (enabledByOwner && !applyingPresentation)
+    if (enabledByOwner && !applyingPresentation) {
         trayDismissUntil = CACurrentMediaTime() + (animated ? 0.45 : 0);
+        [manualSceneKeys setObject:sceneKey() forKey:owner];
+        [appliedEpochs setObject:@(sceneEpoch) forKey:owner];
+    }
     originalHideTray(owner, cmd, animated);
     // Native collapse is final for this scene; do not schedule automatic reopen.
 }
@@ -151,16 +133,16 @@ static NSUInteger restoreGeneration;
 static void reconcile(void) {
     if (!installed || suppressed()) return;
     for (id owner in owners.allObjects) {
-        originalRefresh(owner, NSSelectorFromString(@"refreshUI"));
+        refresh(owner, NSSelectorFromString(@"refreshUI"));
         BOOL allowed = originalShouldShow(owner, NSSelectorFromString(@"shouldShowEdgeIcon"));
         SEL getter = NSSelectorFromString(@"edgeButton");
-        NSMethodSignature *sig = [owner methodSignatureForSelector:getter];
+        NSMethodSignature *sig = NFBSignature(owner, getter);
         if (!sig || sig.numberOfArguments != 2 || sig.methodReturnType[0] != '@') continue;
         UIView *button = ((id (*)(id, SEL))objc_msgSend)(owner, getter);
         if (![button isKindOfClass:UIView.class]) continue;
         // Do not expose the button behind an intentionally open tray.
         SEL trayGetter = NSSelectorFromString(@"trayBackdrop");
-        NSMethodSignature *traySig = [owner methodSignatureForSelector:trayGetter];
+        NSMethodSignature *traySig = NFBSignature(owner, trayGetter);
         if (!traySig || traySig.numberOfArguments != 2 || traySig.methodReturnType[0] != '@') continue;
         id tray = ((id (*)(id, SEL))objc_msgSend)(owner, trayGetter);
         if (allowed && !tray && (button.hidden || button.alpha < 0.01))
@@ -170,16 +152,25 @@ static void reconcile(void) {
             allowed, button.hidden, button.alpha, (unsigned long)owners.count);
     }
 }
+static void scheduleRestore(NSUInteger generation, NSUInteger attempt) {
+    static const double delays[] = {0.15, 0.30, 0.45, 0.60, 0.70};
+    if (attempt >= 5) return;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delays[attempt] * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (generation != restoreGeneration || !enabledByOwner || suppressed()) return;
+        NFBInvalidateWindowState();
+        reconcile();
+        BOOL allApplied = !candidateSceneKey;
+        for (id owner in owners.allObjects) {
+            if (NFBTransitionNeedsAction(sceneEpoch, [[appliedEpochs objectForKey:owner] unsignedIntegerValue])) allApplied = NO;
+            UIView *button = NFBGet(owner, @"edgeButton");
+            if ([button isKindOfClass:UIView.class] && button.hidden && !NFBGet(owner, @"trayBackdrop") && originalShouldShow(owner, NSSelectorFromString(@"shouldShowEdgeIcon"))) allApplied = NO;
+        }
+        if (NFBShouldRetryRestore(enabledByOwner, suppressed(), owners.count > 0, allApplied)) scheduleRestore(generation, attempt + 1);
+    });
+}
 void NFBOpenEdgeAfterClose(void) {
-    if (!NSThread.isMainThread) return;
-    NSUInteger generation = ++restoreGeneration;
-    // Bounded retries cover scene removal, hide completion and late edge registration.
-    for (NSNumber *delay in @[@0.15, @0.45, @0.9, @1.5, @2.2]) {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay.doubleValue * NSEC_PER_SEC)),
-            dispatch_get_main_queue(), ^{
-                if (generation == restoreGeneration) reconcile();
-            });
-    }
+    if (!NSThread.isMainThread || !enabledByOwner) return;
+    scheduleRestore(++restoreGeneration, 0);
 }
 static BOOL matches(Class cls, NSString *name, const char *result, const char *argument) {
     Method method = class_getInstanceMethod(cls, NSSelectorFromString(name));
@@ -195,6 +186,23 @@ static void applySuppression(void) {
     BOOL now = suppressed();
     BOOL fullscreen = shouldTuck();
     NSString *key = sceneKey();
+    BOOL immediate = !lastSceneKey || now != lastSuppressed || enabledByOwner != lastEnabled;
+    if (!immediate && (![lastSceneKey isEqual:key] || fullscreen != lastFullscreen)) {
+        if (![candidateSceneKey isEqual:key]) {
+            candidateSceneKey = [key copy];
+            candidateSince = CACurrentMediaTime();
+            NSUInteger revision = ++candidateRevision;
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.13 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                if (revision != candidateRevision) return;
+                NFBInvalidateWindowState();
+                applySuppression();
+            });
+            return;
+        }
+        if (!NFBTransitionStable(CACurrentMediaTime(), candidateSince)) return;
+    }
+    candidateSceneKey = nil;
+    ++candidateRevision;
     if (now == lastSuppressed && fullscreen == lastFullscreen && enabledByOwner == lastEnabled &&
         [lastSceneKey isEqualToString:key]) {
         // Only incomplete transition work may retry. Completed actions are
@@ -203,6 +211,10 @@ static void applySuppression(void) {
         return;
     }
     ++sceneEpoch;
+    for (id owner in owners.allObjects) {
+        if (!now && [[manualSceneKeys objectForKey:owner] isEqual:key]) [appliedEpochs setObject:@(sceneEpoch) forKey:owner];
+        [manualSceneKeys removeObjectForKey:owner];
+    }
     lastSceneKey = [key copy];
     lastSuppressed = now;
     lastFullscreen = fullscreen;
@@ -210,7 +222,7 @@ static void applySuppression(void) {
     if (now) ++restoreGeneration;
     else NFBOpenEdgeAfterClose();
     for (id owner in owners.allObjects) {
-        originalRefresh(owner, NSSelectorFromString(@"refreshUI"));
+        refresh(owner, NSSelectorFromString(@"refreshUI"));
         applyPresentation(owner, YES);
     }
     // On restoration, native shouldShowEdgeIcon still checks the user's own settings.
@@ -238,6 +250,7 @@ void NFBUpdateOpenEdge(BOOL enabled) {
             strcmp([tuckSig getArgumentTypeAtIndex:3], @encode(BOOL))) return;
         owners = [NSHashTable weakObjectsHashTable];
         appliedEpochs = [NSMapTable weakToStrongObjectsMapTable];
+        manualSceneKeys = [NSMapTable weakToStrongObjectsMapTable];
         MSHookMessageEx(cls, NSSelectorFromString(@"shouldShowEdgeIcon"), (IMP)shouldShow, (IMP *)&originalShouldShow);
         MSHookMessageEx(cls, NSSelectorFromString(@"refreshUI"), (IMP)refresh, (IMP *)&originalRefresh);
         MSHookMessageEx(cls, NSSelectorFromString(@"showEdgeButtonAnimated:"), (IMP)showEdge, (IMP *)&originalShowEdge);

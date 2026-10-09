@@ -9,7 +9,7 @@ void NFBRequestAppBack(NSString *app, void (^completion)(NSInteger, NSInteger)) 
     NSString *reply = [name stringByAppendingString:@".reply"];
     int requestToken = 0;
     if (notify_register_check(name.UTF8String, &requestToken) != NOTIFY_STATUS_OK) {
-        NFBDebugLog(@"back: request register_check failed for %@", app);
+        NFBErrorLog(@"back: request register_check failed for %@", app);
         completion(-1, 0); return;
     }
     uint64_t request = NFBBackTime();
@@ -22,16 +22,16 @@ void NFBRequestAppBack(NSString *app, void (^completion)(NSInteger, NSInteger)) 
         finished = YES;
         notify_cancel(replyToken); notify_cancel(requestToken);
         NSInteger reason = (NSInteger)(state & 0xF);
-        NFBDebugLog(@"back: reply status=%ld (0=ok 1=noWindow 2=noBackAction 3=customItem 4=transitioning 5=exception)",
+        NFBErrorLog(@"back: reply status=%ld (0=ok 1=noWindow 2=noBackAction 3=customItem 4=transitioning 5=exception)",
                     (long)reason);
         completion(reason == NFBBackStatusPerformed ? 1 : 0, reason);
     });
     if (status != NOTIFY_STATUS_OK) {
-        NFBDebugLog(@"back: reply register_dispatch failed status=%u", status);
+        NFBErrorLog(@"back: reply register_dispatch failed status=%u", status);
         notify_cancel(requestToken); completion(-1, 0); return;
     }
     if (notify_set_state(requestToken, request) != NOTIFY_STATUS_OK || notify_post(name.UTF8String) != NOTIFY_STATUS_OK) {
-        NFBDebugLog(@"back: set_state/post failed for %@", app);
+        NFBErrorLog(@"back: set_state/post failed for %@", app);
         finished = YES; notify_cancel(replyToken); notify_cancel(requestToken); completion(-1, 0); return;
     }
     NFBDebugLog(@"back: posted request=%llu name=%@", request, name);

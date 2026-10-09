@@ -1,3 +1,4 @@
+#import "NFBInterfaces.h"
 #import "NFBNotificationPolicy.h"
 #import <UserNotifications/UserNotifications.h>
 @interface UNUserNotificationCenter (NFBSystemSettings)
@@ -19,8 +20,10 @@ BOOL NFBSystemNotificationsAllowed(NSString *app, void (^changed)(void)) {
         NSNumber *generation = @(now);
         queried[app] = generation;
         @try {
-            if ([UNUserNotificationCenter instancesRespondToSelector:@selector(initWithBundleIdentifier:)]) {
-                UNUserNotificationCenter *center = [[UNUserNotificationCenter alloc] initWithBundleIdentifier:app];
+            UNUserNotificationCenter *instance = [UNUserNotificationCenter alloc];
+            NSMethodSignature *signature = NFBSignature(instance, @selector(initWithBundleIdentifier:));
+            if (signature && signature.numberOfArguments == 3 && signature.methodReturnType[0] == '@' && [signature getArgumentTypeAtIndex:2][0] == '@') {
+                UNUserNotificationCenter *center = [instance initWithBundleIdentifier:app];
                 if (center) {
                     centers[app] = center;
                     [center getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings *settings) {

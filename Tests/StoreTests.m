@@ -50,6 +50,17 @@ static void Check(BOOL value, NSString *message) {
 }
 int main(void) {
     @autoreleasepool {
+        NFBStore *revisionStore = [NFBStore new];
+        id revisionDestination = [NSObject new];
+        Check([revisionStore putApp:@"revision" notification:@"same" request:Request(1) destination:revisionDestination], @"First revision inserted");
+        Check([revisionStore putApp:@"revision" notification:@"same" request:Request(2) destination:revisionDestination], @"New revision replaces old");
+        [revisionStore removeApp:@"revision" notification:@"same" revision:NFBRevisionForRequest(Request(1))];
+        Check([revisionStore countForApp:@"revision"] == 1, @"Late withdrawal preserves newer same-ID notification");
+        [revisionStore removeApp:@"revision" notification:@"same" revision:NFBRevisionForRequest(Request(2))];
+        Check(revisionStore.count == 0 && [revisionStore countForApp:@"revision"] == 0, @"Matching withdrawal removes index and global record");
+        for (int index = 0; index < 600; index++) [revisionStore putApp:@"bulk" notification:[NSString stringWithFormat:@"%d", index] request:Request(index) destination:revisionDestination];
+        Check(revisionStore.count == 512 && [revisionStore countForApp:@"bulk"] == 512, @"Trim updates both indexes");
+        [revisionStore removeApp:@"bulk"]; Check(revisionStore.count == 0 && [revisionStore countForApp:@"bulk"] == 0, @"App clear updates both indexes");
         NSArray *overlapBackground = NFBRecentFour(@[@"mail", @"chat", @"video", @"maps", @"fifth"],
             @[@"mail", @"chat", @"video", @"maps", @"fifth"], @[], @"chat", @[]);
         Check([overlapBackground isEqual:@[@"mail", @"chat", @"video", @"maps"]],

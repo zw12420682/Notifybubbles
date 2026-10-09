@@ -1,5 +1,14 @@
 #import "NFBTrollOpen.h"
 #import "NFBDebugLog.h"
+#import "NFBInterfaces.h"
+#ifndef NFB_PORTABLE_ADAPTER_TEST
+#import "NFBWindowState.h"
+#endif
+static void NFBTrollDidMutate(void) {
+#ifndef NFB_PORTABLE_ADAPTER_TEST
+    NFBInvalidateWindowState();
+#endif
+}
 #import <objc/message.h>
 #include <string.h>
 
@@ -32,12 +41,15 @@ BOOL NFBSplitTrollFrontmostApp(void) {
     SEL selector = NSSelectorFromString(@"splitFrontmostApplication");
     @try {
         if (![bridge respondsToSelector:selector]) return NO;
-        NSMethodSignature *sig = [bridge methodSignatureForSelector:selector];
+        NSMethodSignature *sig = NFBSignature(bridge, selector);
         if (!sig || sig.numberOfArguments != 2 || strcmp(sig.methodReturnType, @encode(void)) != 0) return NO;
         ((void (*)(id, SEL))objc_msgSend)(bridge, selector);
+#ifndef NFB_PORTABLE_ADAPTER_TEST
+        NFBInvalidateWindowState();
+#endif
         return YES;
     } @catch (__unused NSException *error) {
-        NFBDebugLog(@"TrollOpen foreground split failed: %@", error);
+        NFBErrorLog(@"TrollOpen foreground split failed: %@", error);
         return NO;
     }
 }
@@ -56,16 +68,16 @@ BOOL NFBCloseCurrentFloatingWindow(void) {
         NFBDumpFloatingWindowInterfaces(NFBTrollObject(bridge, @"currentVisibleFloatingWindow"));
         SEL selector = NSSelectorFromString(@"closeCurrentFloatingWindow");
         if (bridge && [bridge respondsToSelector:selector]) {
-            NSMethodSignature *sig = [bridge methodSignatureForSelector:selector];
+            NSMethodSignature *sig = NFBSignature(bridge, selector);
             char ret = sig ? sig.methodReturnType[0] : '?';
             if (sig && sig.numberOfArguments == 2 && (ret == 'v' || ret == 'B' || ret == 'c')) {
                 BOOL accepted = ret == 'v' ? YES : ((BOOL (*)(id, SEL))objc_msgSend)(bridge, selector);
                 if (ret == 'v') ((void (*)(id, SEL))objc_msgSend)(bridge, selector);
                 if (!accepted) return NO;
                 NFBDebugLog(@"close: invoked +[TOJBBarGestureBridge closeCurrentFloatingWindow]");
-                return YES;
+                NFBTrollDidMutate(); return YES;
             }
-            NFBDebugLog(@"close: class method signature mismatch ret=%c args=%lu", ret,
+            NFBErrorLog(@"close: class method signature mismatch ret=%c args=%lu", ret,
                         sig ? (unsigned long)sig.numberOfArguments : 0);
         } else {
             NFBDebugLog(@"close: +[TOJBBarGestureBridge closeCurrentFloatingWindow] not available");
@@ -77,16 +89,16 @@ BOOL NFBCloseCurrentFloatingWindow(void) {
                                  @"closeWindowWithoutTerminatingProcessWithoutAnimation"]) {
             SEL sel = NSSelectorFromString(name);
             if (![window respondsToSelector:sel]) continue;
-            NSMethodSignature *sig = [window methodSignatureForSelector:sel];
+            NSMethodSignature *sig = NFBSignature(window, sel);
             if (!sig || sig.numberOfArguments != 2 || sig.methodReturnType[0] != 'v') continue;
             ((void (*)(id, SEL))objc_msgSend)(window, sel);
             NFBDebugLog(@"close: invoked -%@ (fallback)", name);
-            return YES;
+            NFBTrollDidMutate(); return YES;
         }
         NFBDebugLog(@"close: no usable close path");
         return NO;
     } @catch (__unused NSException *error) {
-        NFBDebugLog(@"TrollOpen close failed: %@", error);
+        NFBErrorLog(@"TrollOpen close failed: %@", error);
         return NO;
     }
 }
@@ -95,12 +107,14 @@ BOOL NFBCloseCurrentFloatingWindow(void) {
 // be a same-named helper with a different contract.
 static BOOL NFBCallSimple(id target, SEL selector) {
     if (!target || ![target respondsToSelector:selector]) return NO;
-    NSMethodSignature *sig = [target methodSignatureForSelector:selector];
+    NSMethodSignature *sig = NFBSignature(target, selector);
     if (!sig || sig.numberOfArguments != 2) return NO;
     char ret = sig.methodReturnType[0];
     if (ret != 'v' && ret != 'B' && ret != 'c') return NO;
-    if (ret == 'v') { ((void (*)(id, SEL))objc_msgSend)(target, selector); return YES; }
-    return ((BOOL (*)(id, SEL))objc_msgSend)(target, selector);
+    if (ret == 'v') { ((void (*)(id, SEL))objc_msgSend)(target, selector); NFBTrollDidMutate(); return YES; }
+    BOOL accepted = ((BOOL (*)(id, SEL))objc_msgSend)(target, selector);
+    if (accepted) NFBTrollDidMutate();
+    return accepted;
 }
 
 BOOL NFBFullscreenCurrentFloatingWindow(void) {
@@ -113,20 +127,20 @@ BOOL NFBFullscreenCurrentFloatingWindow(void) {
         SEL selector = NSSelectorFromString(@"fullscreenCurrentFloatingWindow");
         if (NFBCallSimple(bridge, selector)) {
             NFBDebugLog(@"fullscreen: invoked +[TOJBBarGestureBridge fullscreenCurrentFloatingWindow]");
-            return YES;
+            NFBTrollDidMutate(); return YES;
         }
         id window = NFBTrollObject(bridge, @"currentVisibleFloatingWindow");
         NFBDumpFloatingWindowInterfaces(window);
         if (NFBCallSimple(window, selector)) {
             NFBDebugLog(@"fullscreen: invoked -[%@ fullscreenCurrentFloatingWindow]",
                         NSStringFromClass([window class]));
-            return YES;
+            NFBTrollDidMutate(); return YES;
         }
         NFBDebugLog(@"fullscreen: no usable path (bridge class=%d window=%d)",
                     bridge != nil, window != nil);
         return NO;
     } @catch (__unused NSException *error) {
-        NFBDebugLog(@"TrollOpen fullscreen failed: %@", error);
+        NFBErrorLog(@"TrollOpen fullscreen failed: %@", error);
         return NO;
     }
 }
@@ -143,38 +157,38 @@ BOOL NFBMinimizeCurrentFloatingWindow(void) {
         SEL selector = NSSelectorFromString(@"minimizeCurrentFloatingWindow");
         if (NFBCallSimple(bridge, selector)) {
             NFBDebugLog(@"minimize: invoked +[TOJBBarGestureBridge minimizeCurrentFloatingWindow]");
-            return YES;
+            NFBTrollDidMutate(); return YES;
         }
         id window = NFBTrollObject(bridge, @"currentVisibleFloatingWindow");
         NFBDumpFloatingWindowInterfaces(window);
         if (NFBCallSimple(window, selector)) {
             NFBDebugLog(@"minimize: invoked -[%@ minimizeCurrentFloatingWindow]",
                         NSStringFromClass([window class]));
-            return YES;
+            NFBTrollDidMutate(); return YES;
         }
         // Some builds split the action into "shrink" rather than "minimize".
         SEL shrink = NSSelectorFromString(@"shrinkFloatingWindows");
         if (NFBCallSimple(bridge, shrink)) {
             NFBDebugLog(@"minimize: invoked +[TOJBBarGestureBridge shrinkFloatingWindows]");
-            return YES;
+            NFBTrollDidMutate(); return YES;
         }
         if (NFBCallSimple(window, shrink)) {
             NFBDebugLog(@"minimize: invoked -[%@ shrinkFloatingWindows]",
                         NSStringFromClass([window class]));
-            return YES;
+            NFBTrollDidMutate(); return YES;
         }
         NFBDebugLog(@"minimize: no usable path (bridge class=%d window=%d)",
                     bridge != nil, window != nil);
         return NO;
     } @catch (__unused NSException *error) {
-        NFBDebugLog(@"TrollOpen minimize failed: %@", error);
+        NFBErrorLog(@"TrollOpen minimize failed: %@", error);
         return NO;
     }
 }
 
 static BOOL NFBTrollSignature(id target, SEL selector, BOOL hasFlag) {
     if (![target respondsToSelector:selector]) return NO;
-    NSMethodSignature *sig = [target methodSignatureForSelector:selector];
+    NSMethodSignature *sig = NFBSignature(target, selector);
     if (!sig || sig.numberOfArguments != (hasFlag ? 4u : 3u) ||
         strcmp(sig.methodReturnType, @encode(void)) != 0 ||
         [sig getArgumentTypeAtIndex:2][0] != '@') return NO;
@@ -196,9 +210,12 @@ BOOL NFBOpenTrollApp(NSString *bundleID) {
     @try {
         if (!NFBTrollSignature(target, open, NO) || !NFBTrollSignature(target, fingerprint, YES)) return NO;
         ((void (*)(id, SEL, id))objc_msgSend)(target, open, bundleID);
+#ifndef NFB_PORTABLE_ADAPTER_TEST
+        NFBInvalidateWindowState();
+#endif
         return YES;
     } @catch (__unused NSException *error) {
-        NFBDebugLog(@"TrollOpen open app failed: %@", error);
+        NFBErrorLog(@"TrollOpen open app failed: %@", error);
         return NO;
     }
 }
@@ -206,25 +223,29 @@ BOOL NFBOpenTrollApp(NSString *bundleID) {
 static id NFBTrollObject(id object, NSString *name) {
     SEL sel = NSSelectorFromString(name);
     @try {
-        NSMethodSignature *sig = [object methodSignatureForSelector:sel];
+        NSMethodSignature *sig = NFBSignature(object, sel);
         if (![object respondsToSelector:sel] || !sig || sig.numberOfArguments != 2 || sig.methodReturnType[0] != '@') return nil;
         return ((id (*)(id, SEL))objc_msgSend)(object, sel);
     } @catch (__unused NSException *e) { return nil; }
 }
 NSString *NFBTrollVisibleApp(void) {
     if (!NSThread.isMainThread) return nil;
+#ifdef NFB_PORTABLE_ADAPTER_TEST
     id window = NFBTrollObject(NSClassFromString(@"TOJBBarGestureBridge"), @"currentVisibleFloatingWindow");
+#else
+    id window = NFBCurrentWindowState().floatingWindow;
+#endif
     // Stop following the window as soon as its keep-alive close begins.
     SEL closing = NSSelectorFromString(@"isClosingWithKeepAliveAnimation");
     @try {
-        NSMethodSignature *sig = [window methodSignatureForSelector:closing];
+        NSMethodSignature *sig = NFBSignature(window, closing);
         if (sig.numberOfArguments == 2 && (sig.methodReturnType[0] == 'B' || sig.methodReturnType[0] == 'c') &&
             ((BOOL (*)(id, SEL))objc_msgSend)(window, closing)) return nil;
     } @catch (__unused NSException *error) { return nil; }
     // A reduced mini-window is no longer the expanded split window.
     SEL mini = NSSelectorFromString(@"miniWindowModeEnabled");
     @try {
-        NSMethodSignature *sig = [window methodSignatureForSelector:mini];
+        NSMethodSignature *sig = NFBSignature(window, mini);
         if ([window respondsToSelector:mini] && sig.numberOfArguments == 2 &&
             (sig.methodReturnType[0] == 'B' || sig.methodReturnType[0] == 'c') &&
             ((BOOL (*)(id, SEL))objc_msgSend)(window, mini)) return nil;

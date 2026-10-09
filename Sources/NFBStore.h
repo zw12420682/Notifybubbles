@@ -1,4 +1,5 @@
 #import <Foundation/Foundation.h>
+NSString *NFBRevisionForRequest(id request);
 @interface NFBRecord : NSObject
 @property(nonatomic, copy) NSString *appID;
 @property(nonatomic, copy) NSString *notificationID;
@@ -18,6 +19,7 @@
 - (NSUInteger)countForApp:(NSString *)appID;
 - (void)consumeRecord:(NFBRecord *)record;
 - (void)removeApp:(NSString *)appID notification:(NSString *)notificationID;
+- (void)removeApp:(NSString *)appID notification:(NSString *)notificationID revision:(NSString *)revision;
 - (void)removeApp:(NSString *)appID;
 - (void)closeApp:(NSString *)appID;
 - (void)clear;

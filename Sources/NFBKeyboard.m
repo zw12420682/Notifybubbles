@@ -1,3 +1,4 @@
+#import "NFBWindowState.h"
 #import "NFBKeyboard.h"
 #import "NFBPrivate.h"
 #import "NFBDebugLog.h"
@@ -17,6 +18,23 @@ CGFloat NFBKeyboardTopInView(UIView *root) {
     return CGRectGetHeight(root.bounds) * 0.40;
 }
 static void (^NFBKeyboardChange)(void);
+
+static void NFBKeyboardScheduleChange(void) {
+    static BOOL queued;
+    if (queued) return;
+    queued = YES;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        queued = NO;
+        if (NFBKeyboardChange) NFBKeyboardChange();
+    });
+}
+static void NFBKeyboardUpdateFrame(NSValue *value) {
+    if (!value || strcmp(value.objCType, @encode(CGRect))) return;
+    CGRect frame = value.CGRectValue;
+    if (CGRectEqualToRect(frame, NFBKeyboardScreenFrame)) return;
+    NFBKeyboardScreenFrame = frame;
+    NFBKeyboardScheduleChange();
+}
 
 // A keyboard window among SpringBoard's own windows. Conservative: the window
 // must be visible and keyboard-sized, otherwise a permanently present-but-empty
@@ -58,7 +76,7 @@ static BOOL NFBKeyboardSystemUp(void) {
     for (NSString *name in names) {
         SEL selector = NSSelectorFromString(name);
         if (![controller respondsToSelector:selector]) continue;
-        NSMethodSignature *signature = [controller methodSignatureForSelector:selector];
+        NSMethodSignature *signature = NFBSignature(controller, selector);
         if (!signature || signature.numberOfArguments != 2) continue;
         char type = signature.methodReturnType[0];
         if (type != 'B' && type != 'c') continue;
@@ -70,8 +88,14 @@ static BOOL NFBKeyboardSystemUp(void) {
 
 BOOL NFBKeyboardVisible(void) {
     BOOL notified = NFBKeyboardNotified;
-    BOOL window = NFBKeyboardWindowUp();
-    BOOL system = NFBKeyboardSystemUp();
+    static NFBWindowState *sample;
+    static BOOL window, system;
+    NFBWindowState *current = NFBCurrentWindowState();
+    if (!current || sample != current) {
+        sample = current;
+        window = NFBKeyboardWindowUp();
+        system = NFBKeyboardSystemUp();
+    }
     BOOL up = notified || window || system;
     // Log every flip, not just notification-driven ones, so a polled source
     // (window/system) that is stuck high shows up here with its per-source flags.
@@ -90,7 +114,7 @@ static void NFBKeyboardSet(BOOL notified) {
     NFBKeyboardNotified = notified;
     BOOL after = NFBKeyboardVisible();
     if (before == after) return;
-    if (NFBKeyboardChange) NFBKeyboardChange();
+    NFBKeyboardScheduleChange();
 }
 
 void NFBKeyboardInstall(void (^onChange)(void)) {
@@ -107,17 +131,15 @@ void NFBKeyboardInstall(void (^onChange)(void)) {
         NSOperationQueue *main = NSOperationQueue.mainQueue;
         void (^show)(NSNotification *) = ^(NSNotification *note) {
             NSValue *value = note.userInfo[UIKeyboardFrameEndUserInfoKey];
-            if (value) NFBKeyboardScreenFrame = value.CGRectValue;
+            NFBKeyboardUpdateFrame(value);
             NFBKeyboardSet(YES);
-            if (NFBKeyboardChange) NFBKeyboardChange();
         };
         void (^hide)(NSNotification *) = ^(__unused NSNotification *note) {
-            NFBKeyboardScreenFrame = CGRectZero; NFBKeyboardSet(NO);
+            NFBKeyboardUpdateFrame([NSValue valueWithCGRect:CGRectZero]); NFBKeyboardSet(NO);
         };
         [center addObserverForName:UIKeyboardWillChangeFrameNotification object:nil queue:main usingBlock:^(NSNotification *note) {
             NSValue *value = note.userInfo[UIKeyboardFrameEndUserInfoKey];
-            if (value) NFBKeyboardScreenFrame = value.CGRectValue;
-            if (NFBKeyboardChange) NFBKeyboardChange();
+            NFBKeyboardUpdateFrame(value);
         }];
         [center addObserverForName:UIKeyboardWillShowNotification object:nil queue:main usingBlock:show];
         [center addObserverForName:UIKeyboardDidShowNotification object:nil queue:main usingBlock:show];

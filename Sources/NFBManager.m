@@ -1,3 +1,6 @@
+#import "NFBWindowState.h"
+#import "NFBTransitionPolicy.h"
+#import "NFBIcon.h"
 #import "NFBManager.h"
 #import "NFBPrivate.h"
 #import "NFBStore.h"
@@ -153,8 +156,6 @@ static double NFBNumber(NSString *key, double fallback) {
 - (void)layoutTopAction:(CGRect)frame target:(UIView *)target duration:(NSTimeInterval)duration;
 
 @property(nonatomic, strong) NFBRail *unreadRail;
-@property(nonatomic, strong) NSMutableDictionary<NSString *, NFBBubble *> *edgeCopies;
-- (void)layoutEdgeCopies:(NSArray<NSString *> *)apps unread:(NSArray<NSString *> *)unread diameter:(CGFloat)diameter active:(NSString *)active duration:(NSTimeInterval)duration;
 @property(nonatomic, strong) NFBRail *favoritesRail;
 @property(nonatomic, strong) UIVisualEffectView *favoritesMaterial;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NFBBubble *> *favoriteButtons;
@@ -191,11 +192,14 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NFBBubble *> *buttons;
 @property(nonatomic, strong) NSTimer *timer;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *expandedUntil;
-@property(nonatomic, strong) NSMutableDictionary<NSString *, UIImage *> *icons;
+@property(nonatomic, strong) NSCache<NSString *, UIImage *> *icons;
 @property(nonatomic, strong) NSMutableSet<NSString *> *burstApps;
 @property(nonatomic, strong) NSArray<NSString *> *lastSwitcher;
 @property(nonatomic, strong) NSMutableSet<NSString *> *dismissedSwitcher;
 @property(nonatomic, strong) NSMutableSet<NSString *> *closingApps;
+@property(nonatomic) NSUInteger exitEpoch;
+@property(nonatomic) BOOL closePreviousSplit, freezeDesktop, hideInScreenshots;
+@property(nonatomic) CGFloat desktopBlurTransparency, favoriteScrollRows;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *generations;
 @property(nonatomic, strong) NSMutableSet<NSString *> *needsReveal;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *lastBadges;
@@ -272,7 +276,7 @@ static double NFBNumber(NSString *key, double fallback) {
         _store = [NFBStore new];
         _buttons = [NSMutableDictionary dictionary];
         _expandedUntil = [NSMutableDictionary dictionary];
-        _icons = [NSMutableDictionary dictionary];
+        _icons = [NSCache new]; _icons.countLimit = 128;
         _burstApps = [NSMutableSet set];
         _retracting = [NSMutableSet set];
         _dismissedSwitcher = [NSMutableSet set];
@@ -294,7 +298,15 @@ static double NFBNumber(NSString *key, double fallback) {
     self.verticalPosition = NFBPosition(NFBNumber(@"EdgeVerticalPosition", NFBNumber(@"VerticalPosition", 0.7)));
     self.iconSize = NFBSize(NFBNumber(@"IconSize", 48));
     self.iconOpacity = NFBOpacity(NFBNumber(@"IconOpacity", 1));
-    self.enabled = NFBPreference(@"Enabled", YES);
+    BOOL nextEnabled = NFBPreference(@"Enabled", YES);
+    if (self.enabled != nextEnabled) ++self.exitEpoch;
+    self.enabled = nextEnabled;
+    NFBConfigureDebugLogging(NFBPreference(@"DebugLogging", NO));
+    self.closePreviousSplit = NFBPreference(@"ClosePreviousSplit", YES);
+    self.freezeDesktop = NFBPreference(@"FreezeDesktop", NO);
+    self.hideInScreenshots = NFBPreference(@"HideInScreenshots", NO);
+    self.desktopBlurTransparency = NFBNumber(@"DesktopBlurTransparency", 35);
+    self.favoriteScrollRows = NFBNumber(@"FavoriteScrollRows", 0);
     NFBUpdateOpenEdge(self.enabled);
     self.showLock = NFBPreference(@"ShowOnLock", YES);
     self.showHome = NFBPreference(@"ShowOnHome", YES);
@@ -325,7 +337,7 @@ static double NFBNumber(NSString *key, double fallback) {
     self.generations[appID] = @([self.generations[appID] unsignedIntegerValue] + 1);
     [self.dismissedSwitcher removeObject:appID];
     id image = NFBGet(NFBGet(request, @"content"), @"icon");
-    if ([image isKindOfClass:UIImage.class]) self.icons[appID] = image;
+    if ([image isKindOfClass:UIImage.class]) [self.icons setObject:image forKey:appID];
     if ([self shouldShow]) [self extendApp:appID];
     else [self.needsReveal addObject:appID];
     [self startTimer];
@@ -345,7 +357,7 @@ static double NFBNumber(NSString *key, double fallback) {
 - (void)withdrawRequest:(id)request {
     NSString *appID = NFBString(NFBGet(request, @"sectionIdentifier"));
     NSString *notificationID = NFBString(NFBGet(request, @"notificationIdentifier"));
-    if (appID && notificationID) [self.store removeApp:appID notification:notificationID];
+    if (appID && notificationID) [self.store removeApp:appID notification:notificationID revision:(NFBRevisionForRequest(request) ?: @"undated")];
     [self refresh];
 }
 - (void)removeSection:(NSString *)section {
@@ -380,10 +392,15 @@ static double NFBNumber(NSString *key, double fallback) {
     NFBDebugLog(@"gesture: clear-background -> %lu apps", (unsigned long)targets.count);
     [self.dismissedSwitcher addObjectsFromArray:targets];
     [self closeAppsInOrder:targets];
+    NSDictionary *exitVersions = [self.generations copy];
+    NSUInteger exitEpoch = self.exitEpoch;
     [targets enumerateObjectsUsingBlock:^(NSString *app, __unused NSUInteger index, __unused BOOL *stop) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((0.35 + index * 0.16) * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
-            NFBTerminateApp(app);
+            NFBInvalidateWindowState();
+            NFBWindowState *state = NFBCurrentWindowState();
+            BOOL protected = [app isEqual:state.frontApp] || [app isEqual:state.floatingApp];
+            if (NFBExitStillCurrent([exitVersions[app] unsignedIntegerValue], [self.generations[app] unsignedIntegerValue], self.enabled && self.exitEpoch == exitEpoch, NO, protected)) NFBTerminateApp(app);
             [self refresh];
         });
     }];
@@ -493,7 +510,7 @@ static double NFBNumber(NSString *key, double fallback) {
 }
 - (BOOL)isLocked {
     id lock = NFBSingleton(@"SBLockScreenManager");
-    return ![lock respondsToSelector:@selector(isUILocked)] || [lock isUILocked];
+    return NFBCheckedBool(lock, @"isUILocked", YES);
 }
 - (void)startTimer {
     if (self.timer || !self.enabled) return;
@@ -545,7 +562,7 @@ static double NFBNumber(NSString *key, double fallback) {
     NSString *currentApp = NFBTrollVisibleApp();
     // Orientation can change while app identity and window frame stay the same.
     NSString *switchApp = [self.retracting containsObject:currentApp ?: @""] ? nil : currentApp;
-    NFBObserveSplitSwitch(switchApp, self.enabled && NFBPreference(@"ClosePreviousSplit", YES));
+    NFBObserveSplitSwitch(switchApp, self.enabled && self.closePreviousSplit);
     CGRect frame = NFBSplitFrameInView(self.window.rootViewController.view);
     BOOL sameFrame = CGRectEqualToRect(frame, self.observedSplitFrame) ||
         (CGRectIsNull(frame) && CGRectIsNull(self.observedSplitFrame));
@@ -628,11 +645,11 @@ static double NFBNumber(NSString *key, double fallback) {
 - (BOOL)shouldShow {
     id lock = NFBSingleton(@"SBLockScreenManager");
     // An unknown lock state must not display an interactive overlay.
-    if (![lock respondsToSelector:@selector(isUILocked)]) return NO;
-    if ([lock isUILocked]) return self.showLock;
+    if (!NFBBooleanGetterCompatible(lock, @selector(isUILocked))) return NO;
+    if (NFBCheckedBool(lock, @"isUILocked", YES)) return self.showLock;
     id springboard = UIApplication.sharedApplication;
-    if (![springboard respondsToSelector:@selector(isShowingHomescreen)]) return NO;
-    return [springboard isShowingHomescreen] ? self.showHome : self.showApps;
+    if (!NFBBooleanGetterCompatible(springboard, @selector(isShowingHomescreen))) return NO;
+    return NFBCurrentWindowState().home ? self.showHome : self.showApps;
 }
 - (void)ensureWindow {
     if (self.window) return;
@@ -678,9 +695,19 @@ static double NFBNumber(NSString *key, double fallback) {
     // Never take the key window; keyboard and app focus belong to the system.
 }
 - (id)iconForApp:(NSString *)appID {
-    id model = NFBGet(NFBSingleton(@"SBIconController"), @"model");
-    if (![model respondsToSelector:@selector(applicationIconForBundleIdentifier:)]) return nil;
-    @try { return [model applicationIconForBundleIdentifier:appID]; }
+    static NFBWindowState *sample;
+    static id model;
+    static NSMutableDictionary *objects;
+    NFBWindowState *current = NFBCurrentWindowState();
+    if (sample != current || !objects) {
+        sample = current; objects = [NSMutableDictionary dictionary];
+        model = NFBGet(NFBSingleton(@"SBIconController"), @"model");
+    }
+    id cached = objects[appID];
+    if (cached) return cached == NSNull.null ? nil : cached;
+    NSMethodSignature *signature = NFBSignature(model, @selector(applicationIconForBundleIdentifier:));
+    if (!signature || signature.numberOfArguments != 3 || signature.methodReturnType[0] != '@' || [signature getArgumentTypeAtIndex:2][0] != '@') return nil;
+    @try { id icon = [model applicationIconForBundleIdentifier:appID]; objects[appID] = icon ?: NSNull.null; return icon; }
     @catch (__unused NSException *error) { return nil; }
 }
 - (void)updateBubble:(NFBBubble *)button record:(NFBRecord *)record {
@@ -689,16 +716,17 @@ static double NFBNumber(NSString *key, double fallback) {
     // system icon's badge number. That keeps the badge visible for every app
     // with a pending notification (including in split view) and lets it clear
     // the moment the record is consumed — i.e. when the app is opened.
-    button.badge.font = [UIFont boldSystemFontOfSize:12];
-    button.badge.layer.cornerRadius = 10;
+    if (button.badge.font.pointSize != 12) button.badge.font = [UIFont boldSystemFontOfSize:12];
+    if (button.badge.layer.cornerRadius != 10) button.badge.layer.cornerRadius = 10;
     NSUInteger unread = [self.store countForApp:button.appID];
     NSString *text = unread > 0 ? [NSString stringWithFormat:@"%lu", (unsigned long)unread] : nil;
     button.badge.hidden = !text.length;
-    button.badge.text = text;
+    if (![button.badge.text isEqual:text]) button.badge.text = text;
     CGFloat width = MAX(20, [text sizeWithAttributes:@{NSFontAttributeName:button.badge.font}].width + 10);
     button.badge.frame = CGRectMake(0, 0, width, 20);
     NSString *name = NFBString(NFBGet(icon, @"displayName")) ?: button.appID;
-    button.accessibilityLabel = [NSString stringWithFormat:@"%@，%@", name, text ?: (record ? @"有通知" : @"暂无新通知")];
+    NSString *label = [NSString stringWithFormat:@"%@，%@", name, text ?: (record ? @"有通知" : @"暂无新通知")];
+    if (![button.accessibilityLabel isEqual:label]) button.accessibilityLabel = label;
     button.accessibilityHint = @"点击伸出并打开；缩回时长按拖动，伸出后长按清除图标及 App";
     // Secondary cleanup: when the system icon's own badge drops to zero (the app
     // was opened and cleared it) but no withdraw reached us, drop this app's
@@ -711,26 +739,21 @@ static double NFBNumber(NSString *key, double fallback) {
     if (previous.doubleValue > 0 && systemCleared) [self.store removeApp:button.appID];
     if ([systemBadge isKindOfClass:NSNumber.class]) self.lastBadges[button.appID] = systemBadge;
     else if (systemCleared) self.lastBadges[button.appID] = @0;
-    id image = self.icons[button.appID];
+    id image = [self.icons objectForKey:button.appID];
     if (!image) {
-        SEL sel = NSSelectorFromString(@"_applicationIconImageForBundleIdentifier:format:scale:");
-        if ([UIImage respondsToSelector:sel]) {
-            @try { image = ((id (*)(id, SEL, id, int, CGFloat))objc_msgSend)(UIImage.class, sel, button.appID, 2, UIScreen.mainScreen.scale); }
-            @catch (__unused NSException *error) {}
-        }
-        if ([image isKindOfClass:UIImage.class]) self.icons[button.appID] = image;
+        image = NFBApplicationImage(button.appID, 2, UIScreen.mainScreen.scale);
+        if ([image isKindOfClass:UIImage.class]) [self.icons setObject:image forKey:button.appID];
     }
     button.imageView.image = [image isKindOfClass:UIImage.class] ? image : [UIImage systemImageNamed:@"bell.fill"];
 }
 - (void)updatePrivacy {
-    id desktopSB = UIApplication.sharedApplication;
-    BOOL desktopVisible = [desktopSB respondsToSelector:@selector(isShowingHomescreen)] && [desktopSB isShowingHomescreen];
+    BOOL desktopVisible = NFBCurrentWindowState().home;
     // Attachment lookup includes all expanded portrait windows, even behind a landscape window.
     BOOL splitVisible = NFBSplitAttachmentApp().length > 0;
-    NFBUpdateDesktopFreeze(self.enabled && NFBPreference(@"FreezeDesktop", NO) &&
+    NFBUpdateDesktopFreeze(self.enabled && self.freezeDesktop &&
         desktopVisible && ![self isLocked] && splitVisible,
-        1.0 - NFBNumber(@"DesktopBlurTransparency", 35) / 100.0);
-    NFBSetCaptureHidden(self.window.rootViewController.view, self.enabled && NFBPreference(@"HideInScreenshots", NO));
+        1.0 - self.desktopBlurTransparency / 100.0);
+    NFBSetCaptureHidden(self.window.rootViewController.view, self.enabled && self.hideInScreenshots);
 }
 - (void)refresh {
     NSAssert(NSThread.isMainThread, @"UI must be on main thread");
@@ -758,12 +781,12 @@ static double NFBNumber(NSString *key, double fallback) {
     NSMutableArray<NSString *> *apps = [NSMutableArray array];
     for (NSString *app in self.store.appIDs) {
         BOOL fromSwitcher = [self.lastSwitcher containsObject:app];
-        BOOL notificationsAllowed = NFBSystemNotificationsAllowed(app, ^{ [self refresh]; });
+        BOOL notificationsAllowed = fromSwitcher || NFBSystemNotificationsAllowed(app, ^{ [self refresh]; });
         if (fromSwitcher || notificationsAllowed) [apps addObject:app];
     }
     NSString *floatingApp = NFBTrollVisibleApp();
     if ([self.retracting containsObject:floatingApp ?: @""]) floatingApp = nil;
-    NFBObserveSplitSwitch(floatingApp, NFBPreference(@"ClosePreviousSplit", YES));
+    NFBObserveSplitSwitch(floatingApp, self.closePreviousSplit);
     NFBObserveRotationLayout();
     NFBObserveSplitPlacement(floatingApp);
     // An attachment fallback is layout-only: do not treat it as an app switch.
@@ -799,12 +822,9 @@ static double NFBNumber(NSString *key, double fallback) {
         }
         self.keyboardUp = keyboardUp;
     }
-    id springboard = UIApplication.sharedApplication;
-    BOOL home = [springboard respondsToSelector:@selector(isShowingHomescreen)] && [springboard isShowingHomescreen];
+    BOOL home = NFBCurrentWindowState().home;
     BOOL edgeMode = !floatingApp.length;
-    NSString *active = NFBTrollVisibleApp() ?: floatingApp ?: (home ? nil : NFBString(NFBGet(NFBGet(springboard, @"_accessibilityFrontMostApplication"), @"bundleIdentifier")));
-    NSString *fullscreenApp = nil; // Dedicated build has no standalone edge icons.
-    if (fullscreenApp.length && ![apps containsObject:fullscreenApp]) [apps addObject:fullscreenApp];
+    NSString *active = NFBTrollVisibleApp() ?: floatingApp ?: (home ? nil : NFBCurrentWindowState().frontApp);
     // Recency decides membership, never a forced jump of an existing icon.
     if (active.length && ![self.closingApps containsObject:active] && ![self.dismissedSwitcher containsObject:active] && ![apps containsObject:active])
         [apps addObject:active];
@@ -834,7 +854,6 @@ static double NFBNumber(NSString *key, double fallback) {
         railApps = NFBRecentBackgroundThree(background, history.array, self.favoriteApps);
     }
     NSMutableArray<NSString *> *displayApps = [railApps mutableCopy];
-    if (fullscreenApp.length) [displayApps addObject:fullscreenApp];
     if (!edgeMode) [displayApps addObject:NFBClearAllID];
     self.storedApps = @[];
     BOOL orderChanged = ![self.lastLayoutApps isEqualToArray:displayApps];
@@ -866,7 +885,7 @@ static double NFBNumber(NSString *key, double fallback) {
     }
     if (![self shouldShow]) { NFBUpdateOpenEdgeSplitIconsVisible(NO); self.window.hidden = YES; return; }
     [self ensureWindow];
-    NFBSetCaptureHidden(self.window.rootViewController.view, NFBPreference(@"HideInScreenshots", NO));
+    NFBSetCaptureHidden(self.window.rootViewController.view, self.hideInScreenshots);
     self.window.hidden = NO;
     for (NSString *app in [self.needsReveal copy]) {
         // An open keyboard outranks even a fresh notification: leave the reveal
@@ -979,7 +998,7 @@ static double NFBNumber(NSString *key, double fallback) {
     if (edgeMode) {
         CGFloat edgeFloor = keyboardUp ? NFBKeyboardTopInView(root) - 12 - step
             : CGRectGetHeight(bounds) - MAX(safe.bottom, 12);
-        CGFloat outsideHeight = fullscreenApp.length ? side + 9 : 0;
+        CGFloat outsideHeight = 0;
         CGFloat room = MAX(0, edgeFloor - top - side - 9 - outsideHeight);
         height = MIN(MIN(6 * step + side, contentHeight), room);
         // Reserve a separate transparent strip for unread apps above the container.
@@ -1064,14 +1083,14 @@ static double NFBNumber(NSString *key, double fallback) {
                 ![self.lastRailActive isEqual:active] || keyboardUp != previousKeyboardUp || railSizeChanged))
             offset = NFBRevealOffset(offset, height, contentHeight, NFBRowCenter(rowCount, activeIndex, step, side), side);
         self.lastRailActive = active;
-        [UIView animateWithDuration:layoutDuration delay:0
+        if (!CGPointEqualToPoint(self.rail.contentOffset, CGPointMake(0, offset))) [UIView animateWithDuration:layoutDuration delay:0
             options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseOut
             animations:^{ self.rail.contentOffset = CGPointMake(0, offset); } completion:nil];
     }
     [displayApps enumerateObjectsUsingBlock:^(NSString *appID, __unused NSUInteger index, __unused BOOL *stop) {
         BOOL isClearAll = [appID isEqualToString:NFBClearAllID];
         BOOL isStorage = [appID isEqualToString:NFBStorageID];
-        BOOL isFullscreen = [appID isEqualToString:fullscreenApp];
+        BOOL isFullscreen = NO; // Open exclusively owns fullscreen edge presentation.
         BOOL isOutside = edgeMode && [unreadApps containsObject:appID];
         NSUInteger rowIndex = isOutside ? [unreadApps indexOfObject:appID] : [railApps indexOfObject:appID];
         UIView *parent = (isClearAll || isStorage || isFullscreen) ? root : (isOutside ? self.unreadRail : self.rail);
@@ -1196,45 +1215,6 @@ static double NFBNumber(NSString *key, double fallback) {
                 } completion:nil];
         }
     }];
-    [self layoutEdgeCopies:railApps unread:unreadApps diameter:diameter active:active duration:layoutDuration];
-}
-- (void)layoutEdgeCopies:(NSArray<NSString *> *)apps unread:(NSArray<NSString *> *)unread diameter:(CGFloat)diameter active:(NSString *)active duration:(NSTimeInterval)duration {
-    if (!self.edgeCopies) self.edgeCopies = [NSMutableDictionary dictionary];
-    NSMutableArray *wanted = [NSMutableArray array];
-    if (self.edgeMode) for (NSString *app in apps) if ([unread containsObject:app]) [wanted addObject:app];
-    for (NSString *app in self.edgeCopies.allKeys) if (![wanted containsObject:app]) {
-        NFBBubble *old = self.edgeCopies[app]; [self.edgeCopies removeObjectForKey:app];
-        old.userInteractionEnabled = NO;
-        if ([self.closingApps containsObject:app]) { [self burstBubble:old]; [old removeFromSuperview]; }
-        else [UIView animateWithDuration:duration animations:^{ old.alpha = 0; } completion:^(__unused BOOL done) { [old removeFromSuperview]; }];
-    }
-    CGFloat side = diameter + 14, step = diameter + 9;
-    for (NSString *app in wanted) {
-        NFBBubble *button = self.edgeCopies[app];
-        if (!button) {
-            button = [[NFBBubble alloc] initWithFrame:CGRectMake(0, 0, side, side)]; button.appID = app;
-            UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(singleTapped:)];
-            UILongPressGestureRecognizer *hold = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(edgeLongPressed:)];
-            hold.minimumPressDuration = 0.45; hold.delegate = self; tap.delegate = self;
-            [tap requireGestureRecognizerToFail:hold]; [self.edgeTap requireGestureRecognizerToFail:hold];
-            [button addGestureRecognizer:tap]; [button addGestureRecognizer:hold];
-            self.edgeCopies[app] = button; [self.rail addSubview:button]; button.alpha = 0;
-        }
-        [self updateBubble:button record:[self.store latestForApp:app]];
-        [button updateActiveMark:[app isEqual:active] diameter:diameter duration:duration];
-        CGFloat badgeHeight = MIN(16, diameter * 0.5);
-        button.badge.frame = CGRectMake(7, 7, MIN(diameter, 24), badgeHeight);
-        button.badge.layer.cornerRadius = badgeHeight / 2;
-        button.badge.font = [UIFont boldSystemFontOfSize:MIN(11, badgeHeight * 0.7)];
-        button.badge.adjustsFontSizeToFitWidth = YES;
-        [UIView animateWithDuration:duration delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{
-            button.bounds = CGRectMake(0, 0, side, side);
-            button.center = CGPointMake(side/2, NFBRowCenter(apps.count, [apps indexOfObject:app], step, side));
-            button.imageView.frame = CGRectMake(7, 7, diameter, diameter);
-            button.imageView.layer.cornerRadius = diameter * 0.23;
-            button.alpha = [app isEqual:active] ? 1 : self.iconOpacity;
-        } completion:nil];
-    }
 }
 - (void)layoutFavorites:(CGRect)frame diameter:(CGFloat)diameter active:(NSString *)active duration:(NSTimeInterval)duration {
     UIView *root = self.window.rootViewController.view;
@@ -1266,7 +1246,7 @@ static double NFBNumber(NSString *key, double fallback) {
     BOOL wasHidden = self.favoritesRail.alpha < 0.01 || CGRectIsEmpty(self.favoritesRail.frame);
     BOOL resized = !CGSizeEqualToSize(self.favoritesRail.bounds.size, frame.size);
     if (wasHidden && visible) { self.favoritesRail.frame = frame; self.favoritesMaterial.frame = frame; }
-    [UIView animateWithDuration:duration delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{
+    if ((visible && !CGRectEqualToRect(self.favoritesRail.frame, frame)) || self.favoritesRail.alpha != (visible ? 1 : 0) || self.favoritesMaterial.alpha != (visible ? 0.55 : 0) || self.favoritesRail.layer.cornerRadius != MIN(14, side / 4)) [UIView animateWithDuration:duration delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{
         if (visible) { self.favoritesRail.frame = frame; self.favoritesMaterial.frame = frame; }
         self.favoritesRail.alpha = visible ? 1 : 0;
         self.favoritesMaterial.alpha = visible ? 0.55 : 0;
@@ -1276,18 +1256,19 @@ static double NFBNumber(NSString *key, double fallback) {
     for (NSString *app in self.favoriteButtons.allKeys) if (![self.favoriteApps containsObject:app]) {
         [self.favoriteButtons[app] removeFromSuperview]; [self.favoriteButtons removeObjectForKey:app];
     }
+    if (!visible) return;
     CGFloat content = self.favoriteApps.count ? (self.favoriteApps.count - 1) * step + side : 0;
     CGFloat maxOffset = MAX(0, content - frame.size.height);
     self.favoritesRail.contentSize = CGSizeMake(side, content);
     self.favoritesRail.alwaysBounceVertical = content > frame.size.height;
     if (!self.favoriteDrag && !self.favoritesRail.dragging && !self.favoritesRail.decelerating && visible) {
-        CGFloat offset = MAX(0, MIN(maxOffset, maxOffset - (wasHidden ? MAX(0, NFBNumber(@"FavoriteScrollRows", 0)) * step : oldBottomDistance)));
+        CGFloat offset = MAX(0, MIN(maxOffset, maxOffset - (wasHidden ? MAX(0, self.favoriteScrollRows) * step : oldBottomDistance)));
         NSUInteger activeIndex = [self.favoriteApps indexOfObject:active ?: @""];
         if (activeIndex != NSNotFound && (wasHidden || resized || ![self.lastFavoritesActive isEqual:active]))
             offset = NFBRevealOffset(offset, frame.size.height, content,
                 NFBRowCenter(self.favoriteApps.count, activeIndex, step, side), side);
         self.lastFavoritesActive = active;
-        [UIView animateWithDuration:duration delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{
+        if (!CGPointEqualToPoint(self.favoritesRail.contentOffset, CGPointMake(0, offset))) [UIView animateWithDuration:duration delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{
             self.favoritesRail.contentOffset = CGPointMake(0, offset);
         } completion:nil];
     }
@@ -1305,7 +1286,9 @@ static double NFBNumber(NSString *key, double fallback) {
         button.badge.layer.cornerRadius = badgeHeight / 2;
         button.badge.font = [UIFont boldSystemFontOfSize:MIN(11, badgeHeight * 0.7)];
         button.badge.adjustsFontSizeToFitWidth = YES; button.badge.minimumScaleFactor = 0.65;
-        [UIView animateWithDuration:duration delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{
+        CGPoint targetCenter = CGPointMake(side / 2, NFBRowCenter(self.favoriteApps.count, index, step, side));
+        BOOL changed = !CGRectEqualToRect(button.bounds, CGRectMake(0,0,side,side)) || (button != self.favoriteDrag && !CGPointEqualToPoint(button.center, targetCenter)) || !CGRectEqualToRect(button.imageView.frame, CGRectMake(7,7,diameter,diameter)) || button.imageView.layer.cornerRadius != diameter * 0.23 || button.alpha != ([app isEqual:active] ? 1 : self.iconOpacity);
+        if (changed) [UIView animateWithDuration:duration delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{
             button.bounds = CGRectMake(0, 0, side, side);
             if (button != self.favoriteDrag) button.center = CGPointMake(side / 2, NFBRowCenter(self.favoriteApps.count, index, step, side));
             button.imageView.frame = CGRectMake(7, 7, diameter, diameter);
@@ -1318,7 +1301,8 @@ static double NFBNumber(NSString *key, double fallback) {
     if (!self.favoritesRail || self.favoritesRail.alpha < 0.01) return;
     CGFloat step = MAX(1, self.favoritesRail.contentSize.width - 5);
     CGFloat distance = MAX(0, self.favoritesRail.contentSize.height - self.favoritesRail.bounds.size.height - self.favoritesRail.contentOffset.y);
-    CFPreferencesSetAppValue(CFSTR("FavoriteScrollRows"), (__bridge CFPropertyListRef)@(distance / step), NFBDomain);
+    self.favoriteScrollRows = distance / step;
+    CFPreferencesSetAppValue(CFSTR("FavoriteScrollRows"), (__bridge CFPropertyListRef)@(self.favoriteScrollRows), NFBDomain);
     CFPreferencesAppSynchronize(NFBDomain);
 }
 - (void)finishFavoriteDrag {
@@ -1410,9 +1394,14 @@ static double NFBNumber(NSString *key, double fallback) {
         [self showOpenNotice:@"TrollOpen 全屏接口不可用，请确认已安装适配的 1.3.7 隐根版并重启桌面"];
 }
 - (void)closeBubble:(NFBBubble *)button {
-    if (self.buttons[button.appID] != button && self.edgeCopies[button.appID] != button) return;
+    if (self.buttons[button.appID] != button) return;
     if (![self acceptGesture]) return;
     NSString *app = button.appID;
+    NSUInteger exitVersion = [self.generations[app] unsignedIntegerValue];
+    NSUInteger exitEpoch = self.exitEpoch;
+    NSInteger processID = NFBRunningProcessID(app);
+    NFBWindowState *initial = NFBCurrentWindowState();
+    BOOL wasActive = [app isEqual:initial.frontApp] || [app isEqual:initial.floatingApp];
     // Suppress touch-up activation while the queued burst removes this control.
     button.opening = YES;
     button.userInteractionEnabled = NO;
@@ -1421,7 +1410,7 @@ static double NFBNumber(NSString *key, double fallback) {
     [self closeAppsInOrder:@[app]];
     dispatch_async(dispatch_get_main_queue(), ^{
         // If a new notification cancelled dismissal, leave that surviving icon usable.
-        if (self.buttons[app] == button || self.edgeCopies[app] == button) {
+        if (self.buttons[app] == button) {
             button.opening = NO; button.userInteractionEnabled = YES;
         }
     });
@@ -1429,7 +1418,10 @@ static double NFBNumber(NSString *key, double fallback) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         NFBDebugLog(@"gesture: long press on app %@ -> terminate", app);
-        NFBTerminateApp(app);
+        NFBInvalidateWindowState();
+        NFBWindowState *state = NFBCurrentWindowState();
+        BOOL becameActive = (!wasActive && ([app isEqual:state.frontApp] || [app isEqual:state.floatingApp])) || (processID > 1 && processID != NFBRunningProcessID(app));
+        if (NFBExitStillCurrent(exitVersion, [self.generations[app] unsignedIntegerValue], self.enabled && self.exitEpoch == exitEpoch, becameActive, NO)) NFBTerminateApp(app);
         [self refresh];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             [self.closingApps removeObject:app];
@@ -1648,9 +1640,11 @@ static double NFBNumber(NSString *key, double fallback) {
     [self tapped:button];
 }
 - (void)tapped:(NFBBubble *)button {
-    if (button.opening || (self.buttons[button.appID] != button && self.favoriteButtons[button.appID] != button && self.edgeCopies[button.appID] != button)) return;
+    if (button.opening || (self.buttons[button.appID] != button && self.favoriteButtons[button.appID] != button)) return;
     if (self.pendingRecord && [self.pendingRecord.appID isEqual:button.appID]) return;
     if (![self acceptGesture]) return;
+    self.generations[button.appID] = @([self.generations[button.appID] unsignedIntegerValue] + 1);
+    [self.closingApps removeObject:button.appID];
     button.opening = YES;
     if (self.edgeMode && button.superview == self.rail) [self extendEdgeContainer];
     [self extendApp:button.appID];
@@ -1707,7 +1701,7 @@ static double NFBNumber(NSString *key, double fallback) {
     }
     id springboard = UIApplication.sharedApplication;
     NSString *front = NFBString(NFBGet(NFBGet(springboard, @"_accessibilityFrontMostApplication"), @"bundleIdentifier"));
-    BOOL home = [springboard respondsToSelector:@selector(isShowingHomescreen)] && [springboard isShowingHomescreen];
+    BOOL home = NFBCurrentWindowState().home;
     BOOL submitted;
     if (!home && [front isEqualToString:app]) {
         // Do not fall back to the generic path: that path left a black backdrop
@@ -1723,7 +1717,7 @@ static double NFBNumber(NSString *key, double fallback) {
     id action = NFBGet(record.request, @"defaultAction");
     id delegate = NFBGet(record.destination, @"delegate");
     SEL selector = @selector(destination:executeAction:forNotificationRequest:requestAuthentication:withParameters:completion:);
-    NSMethodSignature *signature = [delegate methodSignatureForSelector:selector];
+    NSMethodSignature *signature = NFBSignature(delegate, selector);
     BOOL compatible = signature && signature.numberOfArguments == 8 &&
         signature.methodReturnType[0] == 'v';
     if (compatible) {

@@ -1,3 +1,4 @@
+#import "NFBWindowState.h"
 #import "NFBPrivacy.h"
 #import "NFBDebugLog.h"
 #import <QuartzCore/QuartzCore.h>
@@ -46,7 +47,15 @@ void NFBUpdateDesktopFreeze(BOOL enabled, CGFloat opacity) {
 #pragma clang diagnostic pop
         }
         // Never disable an ancestor of TrollOpen's interactive window.
-        if (home && NFBContainsFloatingView(home)) home = nil;
+        static __weak UIView *checkedHome;
+        static NFBWindowState *checkedState;
+        static BOOL containsFloating;
+        NFBWindowState *state = NFBCurrentWindowState();
+        if (home != checkedHome || state != checkedState) {
+            checkedHome = home; checkedState = state;
+            containsFloating = home && NFBContainsFloatingView(home);
+        }
+        if (containsFloating) home = nil;
     }
     if (home != frozenHome || !enabled) {
         if (frozenHome) frozenHome.userInteractionEnabled = savedInteraction;
@@ -74,7 +83,7 @@ void NFBUpdateDesktopFreeze(BOOL enabled, CGFloat opacity) {
     }
     // A fully transparent blur still freezes desktop interaction.
     home.userInteractionEnabled = NO;
-    [home bringSubviewToFront:desktopBlur];
+    if (home.subviews.lastObject != desktopBlur) [home bringSubviewToFront:desktopBlur];
 }
 void NFBSetCaptureHidden(UIView *view, BOOL hidden) {
     if (!view) return;
@@ -90,10 +99,14 @@ void NFBSetCaptureHidden(UIView *view, BOOL hidden) {
                 saved = [layer valueForKey:key];
                 objc_setAssociatedObject(layer, &savedMaskKey, saved, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
             }
-            [layer setValue:@(saved.unsignedIntValue | 0x12) forKey:key];
+            NSNumber *current = [layer valueForKey:key];
+            unsigned int target = current.unsignedIntValue | 0x12;
+            if (current.unsignedIntValue != target) [layer setValue:@(target) forKey:key];
         } else if (saved) {
-            [layer setValue:saved forKey:key];
+            NSNumber *current = [layer valueForKey:key];
+            unsigned int restored = (current.unsignedIntValue & ~0x12u) | (saved.unsignedIntValue & 0x12u);
+            if (current.unsignedIntValue != restored) [layer setValue:@(restored) forKey:key];
             objc_setAssociatedObject(layer, &savedMaskKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         }
-    } @catch (NSException *exception) { NFBDebugLog(@"capture hiding unavailable: %@", exception); }
+    } @catch (NSException *exception) { NFBErrorLog(@"capture hiding unavailable: %@", exception); }
 }

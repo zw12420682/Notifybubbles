@@ -42,7 +42,7 @@ assert 'Sources/NFBAppExit.m' in (root / 'Makefile').read_text(), 'Update the ro
 assert 'NotifyBubblesBack_FILES' not in (root / 'Makefile').read_text()
 assert 'Sources/NFBBackRequest.m' not in (root / 'Makefile').read_text()
 prefs = plistlib.loads((root / 'Preferences/Resources/Root.plist').read_bytes())
-assert {x['key'] for x in prefs['items'] if 'key' in x} == {'Enabled','ShowOnLock','ShowOnHome','ShowInApps','IconSize','IconOpacity','ClosePreviousSplit','FreezeDesktop','HideInScreenshots','DesktopBlurTransparency'}
+assert {x['key'] for x in prefs['items'] if 'key' in x} == {'Enabled','ShowOnLock','ShowOnHome','ShowInApps','IconSize','IconOpacity','ClosePreviousSplit','FreezeDesktop','HideInScreenshots','DesktopBlurTransparency','DebugLogging'}
 filter_ = plistlib.loads((root / 'NotifyBubbles.plist').read_bytes())
 assert filter_['Filter']['Bundles'] == ['com.apple.springboard']
 print('PASS: required files, property lists, RootHide configuration, preference keys and injection filter')
@@ -57,3 +57,9 @@ for relative in ['Sources/NFBOpenEdge.m', 'Sources/NFBWindowControls.m', 'Source
     for forbidden in ['class_getInstanceVariable', 'object_getIvar', 'ivar_getOffset', 'valueForKey:@"_targets"', 'NSStringFromSelector']:
         assert forbidden not in source, f'Unsafe gesture action inspection reintroduced: {relative}: {forbidden}'
 print('PASS: close adapter and edge diagnostics do not read private gesture action pointers')
+
+assert control["Version"] == "0.48.33"
+assert plistlib.loads((root/"Preferences/Resources/Info.plist").read_bytes())["CFBundleVersion"] == control["Version"]
+for name in ["NFBDebugLog.m", "NFBWindowState.m"]:
+    assert "Sources/" + name in (root/"Makefile").read_text()
+print("PASS: current version and new runtime sources")

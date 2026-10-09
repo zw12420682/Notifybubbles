@@ -1,5 +1,7 @@
 #import "NFBWindowControls.h"
 #import "NFBTrollOpen.h"
+#import "NFBWindowState.h"
+#import "NFBInterfaces.h"
 #import "NFBRightEdgeAction.h"
 #import "NFBTopAction.h"
 #import "NFBSplitClosePolicy.h"
@@ -13,11 +15,7 @@ static __weak UIView *lastWindow;
 static NSString *lastApp;
 static NSUInteger placementGeneration;
 static id currentWindow(void) {
-    Class bridge = NSClassFromString(@"TOJBBarGestureBridge");
-    SEL sel = NSSelectorFromString(@"currentVisibleFloatingWindow");
-    NSMethodSignature *sig = [bridge methodSignatureForSelector:sel];
-    if (sig.numberOfArguments != 2 || sig.methodReturnType[0] != '@') return nil;
-    return ((id (*)(id, SEL))objc_msgSend)(bridge, sel);
+    return NFBCurrentWindowState().floatingWindow;
 }
 static UIView *attachmentWindow(void);
 CGRect NFBSplitFrameInView(UIView *root) {
@@ -32,13 +30,13 @@ CGRect NFBSplitFrameInView(UIView *root) {
 }
 static NSInteger orientationOf(id window, NSString *name) {
     SEL selector = NSSelectorFromString(name);
-    NSMethodSignature *sig = [window methodSignatureForSelector:selector];
+    NSMethodSignature *sig = NFBSignature(window, selector);
     if (sig.numberOfArguments != 2 || strcmp(sig.methodReturnType, @encode(NSInteger))) return 0;
     return ((NSInteger (*)(id, SEL))objc_msgSend)(window, selector);
 }
 static NSInteger boolStateOf(id window, NSString *name) {
     SEL selector = NSSelectorFromString(name);
-    NSMethodSignature *sig = [window methodSignatureForSelector:selector];
+    NSMethodSignature *sig = NFBSignature(window, selector);
     if (sig.numberOfArguments != 2 ||
         (sig.methodReturnType[0] != 'B' && sig.methodReturnType[0] != 'c')) return -1;
     return ((BOOL (*)(id, SEL))objc_msgSend)(window, selector) ? 1 : 0;
@@ -47,7 +45,7 @@ static NSInteger boolStateOf(id window, NSString *name) {
 // or lifecycle action is performed while choosing an attachment target.
 static NSString *appOfWindow(UIView *view) {
     SEL selector = NSSelectorFromString(@"bundleID");
-    NSMethodSignature *sig = [view methodSignatureForSelector:selector];
+    NSMethodSignature *sig = NFBSignature(view, selector);
     if (sig.numberOfArguments != 2 || sig.methodReturnType[0] != '@') return nil;
     id app = ((id (*)(id, SEL))objc_msgSend)(view, selector);
     return [app isKindOfClass:NSString.class] ? app : nil;
@@ -85,6 +83,13 @@ static UIView *floatingInTree(UIView *view, Class floatingClass, BOOL landscape)
 }
 static UIView *frontmostFloatingWindow(BOOL landscape) {
     if (!NSThread.isMainThread) return nil;
+    static NFBWindowState *sample;
+    static __weak UIView *portrait, *wide;
+    static BOOL portraitRead, wideRead;
+    NFBWindowState *now = NFBCurrentWindowState();
+    if (sample != now) { sample = now; portraitRead = NO; wideRead = NO; portrait = nil; wide = nil; }
+    if (landscape ? wideRead : portraitRead) return landscape ? wide : portrait;
+    if (landscape) wideRead = YES; else portraitRead = YES;
     @try {
         Class floatingClass = NSClassFromString(@"FloatingAppWindow");
         if (!floatingClass) return nil;
@@ -107,7 +112,7 @@ static UIView *frontmostFloatingWindow(BOOL landscape) {
             }];
         for (UIWindow *window in frontFirst) {
             UIView *candidate = floatingInTree(window, floatingClass, landscape);
-            if (candidate) return candidate;
+            if (candidate) { if (landscape) wide = candidate; else portrait = candidate; return candidate; }
         }
     } @catch (NSException *exception) { NFBDebugLog(@"floating lookup: %@", exception); }
     return nil;
@@ -193,10 +198,11 @@ void NFBObserveSplitSwitch(NSString *app, BOOL enabled) {
                 orientationOf(previous, @"sceneOrientation"),
                 orientationOf(previous, @"containerOrientation"))) return;
         SEL close = NSSelectorFromString(@"closeWindowWithoutTerminatingProcessWithoutAnimation");
-        NSMethodSignature *sig = [previous methodSignatureForSelector:close];
+        NSMethodSignature *sig = NFBSignature(previous, close);
         if (sig.numberOfArguments != 2 || strcmp(sig.methodReturnType, @encode(void))) return;
         // Always target the saved previous window; never close the current app.
         ((void (*)(id, SEL))objc_msgSend)(previous, close);
+        NFBInvalidateWindowState();
         NFBDebugLog(@"split-switch: current %@ settled portrait; closed previous %@", app, oldApp);
     } @catch (NSException *exception) { NFBDebugLog(@"split-switch: %@", exception); }
 }
@@ -235,11 +241,11 @@ void NFBObserveSplitPlacement(NSString *app) {
                 (!window.superview && ![window isKindOfClass:UIWindow.class])) return;
             @try {
                 SEL scale = NSSelectorFromString(@"setVisualScale:");
-                NSMethodSignature *sig = [window methodSignatureForSelector:scale];
+                NSMethodSignature *sig = NFBSignature(window, scale);
                 if (sig.numberOfArguments != 3 || strcmp(sig.methodReturnType, @encode(void)) ||
                     strcmp([sig getArgumentTypeAtIndex:2], @encode(double))) return;
                 SEL sync = NSSelectorFromString(@"syncContainerFrameToVisualScalePreservingCenter:");
-                NSMethodSignature *syncSig = [window methodSignatureForSelector:sync];
+                NSMethodSignature *syncSig = NFBSignature(window, sync);
                 if (syncSig.numberOfArguments != 3 || strcmp(syncSig.methodReturnType, @encode(void)) ||
                     strcmp([syncSig getArgumentTypeAtIndex:2], @encode(BOOL))) return;
                 ((void (*)(id, SEL, double))objc_msgSend)(window, scale, 0.86);
@@ -283,15 +289,16 @@ BOOL NFBCloseCurrentSplit(void) {
             boolStateOf(window, @"miniWindowModeEnabled") != 0 ||
             boolStateOf(window, @"isClosingWithKeepAliveAnimation") == 1) return NO;
         SEL getter = NSSelectorFromString(@"rightTouchRegion");
-        NSMethodSignature *sig = [window methodSignatureForSelector:getter];
+        NSMethodSignature *sig = NFBSignature(window, getter);
         if (sig.numberOfArguments != 2 || sig.methodReturnType[0] != '@') return NO;
         id region = ((id (*)(id, SEL))objc_msgSend)(window, getter);
         if (![region isKindOfClass:UIView.class] || ![region isDescendantOfView:window]) {
-            NFBDebugLog(@"orange-close: rightTouchRegion unavailable");
+            NFBErrorLog(@"orange-close: rightTouchRegion unavailable");
             return NO;
         }
         NFBRightEdgeTap *tap = [NFBRightEdgeTap new]; tap.edgeRegion = region;
         BOOL sent = NFBDispatchRightEdgeTap(window, tap);
+        if (sent) NFBInvalidateWindowState();
         NFBDebugLog(@"orange-close: original right-region tap dispatched=%d app=%@", sent, appOfWindow(window));
         return sent;
     } @catch (NSException *exception) { NFBDebugLog(@"orange-close: %@", exception); return NO; }
@@ -317,12 +324,13 @@ BOOL NFBPerformTopLongPress(UIView *window) {
                 boolStateOf(window, @"isTransitioningFromMiniMode"),
                 orientationOf(window, @"sceneOrientation"), orientationOf(window, @"containerOrientation"))) return NO;
         SEL getter = NSSelectorFromString(@"titleBar");
-        NSMethodSignature *sig = [window methodSignatureForSelector:getter];
+        NSMethodSignature *sig = NFBSignature(window, getter);
         if (sig.numberOfArguments != 2 || sig.methodReturnType[0] != '@') return NO;
         id region = ((id (*)(id, SEL))objc_msgSend)(window, getter);
         if (![region isKindOfClass:UIView.class] || ![region isDescendantOfView:window]) return NO;
         NFBTopLongPress *gesture = [NFBTopLongPress new]; gesture.titleRegion = region;
         BOOL sent = NFBDispatchTopLongPress(window, gesture);
+        if (sent) NFBInvalidateWindowState();
         NFBDebugLog(@"top-long-press: dispatched=%d app=%@", sent, appOfWindow(window));
         return sent;
     } @catch (NSException *exception) { NFBDebugLog(@"top-long-press: %@", exception); return NO; }
@@ -355,11 +363,11 @@ void NFBObserveRotationLayout(void) {
         if (now - [state[@"since"] doubleValue] < 0.65) return;
         if (!state[@"requested"]) {
             SEL request = NSSelectorFromString(@"requestSceneOrientationOnce:");
-            NSMethodSignature *requestSig = [window methodSignatureForSelector:request];
+            NSMethodSignature *requestSig = NFBSignature(window, request);
             if (requestSig.numberOfArguments != 3 || strcmp(requestSig.methodReturnType, @encode(void)) ||
                 strcmp([requestSig getArgumentTypeAtIndex:2], @encode(NSInteger))) {
                 state[@"landscape"] = @NO;
-                NFBDebugLog(@"portrait-content: scene request unavailable app=%@", appOfWindow(window));
+                NFBErrorLog(@"portrait-content: scene request unavailable app=%@", appOfWindow(window));
                 return;
             }
             // Mark before dispatch so a synchronous callback cannot send twice.
@@ -371,7 +379,7 @@ void NFBObserveRotationLayout(void) {
         if (now - [state[@"requested"] doubleValue] < 0.35) return;
         state[@"landscape"] = @NO;
         SEL layout = NSSelectorFromString(@"updateHostViewLayoutForCurrentBounds");
-        NSMethodSignature *sig = [window methodSignatureForSelector:layout];
+        NSMethodSignature *sig = NFBSignature(window, layout);
         if (sig.numberOfArguments != 2 || strcmp(sig.methodReturnType, @encode(void))) return;
         [UIView performWithoutAnimation:^{
             ((void (*)(id, SEL))objc_msgSend)(window, layout);
