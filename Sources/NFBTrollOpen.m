@@ -1,3 +1,9 @@
+#import <TargetConditionals.h>
+// macOS contract tests always use the Foundation-only adapter, even when an
+// older workflow omits the test macro. iOS keeps the shared UIKit snapshot.
+#if TARGET_OS_OSX && !defined(NFB_PORTABLE_ADAPTER_TEST)
+#define NFB_PORTABLE_ADAPTER_TEST 1
+#endif
 #import "NFBTrollOpen.h"
 #import "NFBDebugLog.h"
 #import "NFBInterfaces.h"
