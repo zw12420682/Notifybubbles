@@ -1,3 +1,4 @@
+#import "NFBOpenConsole.h"
 #import "NFBWindowState.h"
 #import "NFBTransitionPolicy.h"
 #import "NFBIcon.h"
@@ -147,6 +148,7 @@ static double NFBNumber(NSString *key, double fallback) {
 
 @property(nonatomic, strong) NFBBubble *topActionButton;
 @property(nonatomic, strong) UITapGestureRecognizer *topActionTap;
+@property(nonatomic, strong) UILongPressGestureRecognizer *topActionHold;
 @property(nonatomic, weak) UIView *topActionTarget;
 @property(nonatomic, weak) UIView *topActionTouchTarget;
 @property(nonatomic, weak) UIView *observedActionTarget;
@@ -420,6 +422,15 @@ static double NFBNumber(NSString *key, double fallback) {
     if (!NFBPerformTopLongPress(target)) [self showOpenNotice:@"TrollOpen 顶部长按接口不可用"];
     [self refresh];
 }
+- (void)topActionHeld:(UILongPressGestureRecognizer *)gesture {
+    if (gesture.state != UIGestureRecognizerStateBegan || !self.enabled || [self isLocked]) return;
+    UIView *target = self.topActionTouchTarget;
+    self.topActionTouchTarget = nil;
+    if (!target || target != self.topActionTarget || target != NFBTopActionWindow() || !NFBWindowIsLandscape(target)) { [self refresh]; return; }
+    if (![self acceptGesture]) return;
+    if (!NFBOpenNativeConsole()) [self showOpenNotice:@"Open 控制台入口不可用，请确认使用适配的定制版 1.3.7"];
+    [self refresh];
+}
 - (void)layoutTopAction:(CGRect)frame target:(UIView *)target duration:(NSTimeInterval)duration {
     BOOL visible = target && !CGRectIsNull(frame) && !CGRectIsEmpty(frame) && self.enabled;
     self.topActionTarget = visible ? target : nil;
@@ -435,13 +446,21 @@ static double NFBNumber(NSString *key, double fallback) {
         button.accessibilityHint = @"点击执行此窗口顶部绿色区域的长按动作";
         self.topActionTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(topActionTapped:)];
         self.topActionTap.delegate = self;
+        self.topActionHold = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(topActionHeld:)];
+        self.topActionHold.minimumPressDuration = 0.45;
+        self.topActionHold.delegate = self;
+        [self.topActionTap requireGestureRecognizerToFail:self.topActionHold];
+        [button addGestureRecognizer:self.topActionHold];
         [button addGestureRecognizer:self.topActionTap];
         button.alpha = 0;
         self.topActionButton = button;
         [self.window.rootViewController.view addSubview:button];
     }
     NFBBubble *button = self.topActionButton;
-    CGFloat targetAlpha = visible ? (NFBWindowIsLandscape(target) ? 0.5 : 1.0) : 0;
+    BOOL landscape = visible && NFBWindowIsLandscape(target);
+    button.accessibilityLabel = landscape ? @"横屏旋转 / Open 控制台" : @"TrollOpen 顶部长按功能";
+    button.accessibilityHint = landscape ? @"单击旋转，长按打开 Open 控制台" : @"点击执行此窗口顶部绿色区域的长按动作";
+    CGFloat targetAlpha = visible ? (landscape ? 0.5 : 1.0) : 0;
     button.userInteractionEnabled = visible;
     if (visible && button.alpha < 0.01) button.frame = frame;
     [self.window.rootViewController.view bringSubviewToFront:button];
@@ -1539,9 +1558,10 @@ static double NFBNumber(NSString *key, double fallback) {
     return CGRectGetMaxX(image) > CGRectGetWidth(self.window.rootViewController.view.bounds) + 0.5;
 }
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldReceiveTouch:(UITouch *)touch {
-    if (gesture == self.topActionTap) {
+    if (gesture == self.topActionTap || gesture == self.topActionHold) {
         self.topActionTouchTarget = self.topActionTarget;
-        return self.enabled && ![self isLocked] && self.topActionTouchTarget != nil;
+        return self.enabled && ![self isLocked] && self.topActionTouchTarget != nil &&
+            (gesture != self.topActionHold || NFBWindowIsLandscape(self.topActionTouchTarget));
     }
     if (gesture == self.edgeTap) {
         // Bubble taps handle their own reveal. Do not race them with a parent tap.

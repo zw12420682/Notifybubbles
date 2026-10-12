@@ -12,3 +12,9 @@ static inline bool NFBExitStillCurrent(uint64_t captured, uint64_t current,
 static inline bool NFBShouldRetryRestore(bool enabled, bool suppressed, bool ownersKnown, bool allApplied) {
     return enabled && !suppressed && (!ownersKnown || !allApplied);
 }
+static inline bool NFBEdgeShouldHide(bool enabled, bool splitIcons, bool keyboard) {
+    return enabled && (splitIcons || keyboard);
+}
+static inline bool NFBRestoreAfterKeyboard(bool ended, bool enabled, bool suppressed, bool sameScene) {
+    return ended && enabled && !suppressed && sameScene;
+}

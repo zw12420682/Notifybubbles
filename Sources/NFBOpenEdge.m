@@ -1,3 +1,4 @@
+#import "NFBKeyboard.h"
 #import "NFBWindowState.h"
 #import "NFBTransitionPolicy.h"
 #import "NFBOpenEdge.h"
@@ -19,6 +20,9 @@ static BOOL installed;
 static BOOL lastSuppressed;
 static BOOL lastFullscreen;
 static BOOL lastEnabled;
+static BOOL lastKeyboardVisible;
+static NSString *keyboardSceneKey;
+static NSMapTable *keyboardRestoreStates;
 static BOOL applyingPresentation;
 static CFTimeInterval trayDismissUntil;
 static NSUInteger sceneEpoch = 1;
@@ -35,7 +39,7 @@ static BOOL suppressed(void) {
     // Hide Open's edge icon only while NotifyBubbles' split bubbles are on screen.
     // Expansion means the native tray (delete/collapse/app icons), not the
     // horizontal position of a single edge button.
-    return enabledByOwner && splitIconsVisible && NSThread.isMainThread;
+    return NSThread.isMainThread && NFBEdgeShouldHide(enabledByOwner, splitIconsVisible, enabledByOwner && NFBKeyboardVisible());
 }
 static NSString *candidateSceneKey;
 static NSUInteger candidateRevision;
@@ -186,7 +190,22 @@ static void applySuppression(void) {
     BOOL now = suppressed();
     BOOL fullscreen = shouldTuck();
     NSString *key = sceneKey();
-    BOOL immediate = !lastSceneKey || now != lastSuppressed || enabledByOwner != lastEnabled;
+    BOOL keyboard = enabledByOwner && NFBKeyboardVisible();
+    BOOL keyboardChanged = keyboard != lastKeyboardVisible;
+    BOOL keyboardEnded = !keyboard && lastKeyboardVisible;
+    if (keyboard && !lastKeyboardVisible) {
+        keyboardSceneKey = [key copy];
+        for (id owner in owners.allObjects) [keyboardRestoreStates setObject:@{
+            @"tray": @(NFBGet(owner,@"trayBackdrop") != nil),
+            @"tucked": @(NFBCheckedBool(owner,@"edgeButtonAutoHidden",NO))
+        } forKey:owner];
+    }
+    BOOL restoreKeyboard = NFBRestoreAfterKeyboard(keyboardEnded, enabledByOwner, now, [keyboardSceneKey isEqual:key]);
+    if (restoreKeyboard) for (id owner in owners.allObjects)
+        if ([keyboardRestoreStates objectForKey:owner]) [manualSceneKeys setObject:key forKey:owner];
+    if (keyboardEnded && !restoreKeyboard) [keyboardRestoreStates removeAllObjects];
+    lastKeyboardVisible = keyboard;
+    BOOL immediate = keyboardChanged || !lastSceneKey || now != lastSuppressed || enabledByOwner != lastEnabled;
     if (!immediate && (![lastSceneKey isEqual:key] || fullscreen != lastFullscreen)) {
         if (![candidateSceneKey isEqual:key]) {
             candidateSceneKey = [key copy];
@@ -203,7 +222,7 @@ static void applySuppression(void) {
     }
     candidateSceneKey = nil;
     ++candidateRevision;
-    if (now == lastSuppressed && fullscreen == lastFullscreen && enabledByOwner == lastEnabled &&
+    if (!keyboardChanged && now == lastSuppressed && fullscreen == lastFullscreen && enabledByOwner == lastEnabled &&
         [lastSceneKey isEqualToString:key]) {
         // Only incomplete transition work may retry. Completed actions are
         // consumed per owner, so manual control remains untouched.
@@ -224,7 +243,19 @@ static void applySuppression(void) {
     for (id owner in owners.allObjects) {
         refresh(owner, NSSelectorFromString(@"refreshUI"));
         applyPresentation(owner, YES);
+        NSDictionary *saved = restoreKeyboard ? [keyboardRestoreStates objectForKey:owner] : nil;
+        if (saved && originalShouldShow(owner,NSSelectorFromString(@"shouldShowEdgeIcon"))) {
+            applyingPresentation = YES;
+            @try {
+                if ([saved[@"tray"] boolValue]) originalShowTray(owner,NSSelectorFromString(@"showTray"));
+                else {
+                    originalShowEdge(owner,NSSelectorFromString(@"showEdgeButtonAnimated:"),NO);
+                    ((void (*)(id,SEL,BOOL,BOOL))objc_msgSend)(owner,NSSelectorFromString(@"setEdgeButtonAutoHidden:animated:"),[saved[@"tucked"] boolValue],NO);
+                }
+            } @finally { applyingPresentation = NO; }
+        }
     }
+    if (keyboardEnded) { [keyboardRestoreStates removeAllObjects]; keyboardSceneKey = nil; }
     // On restoration, native shouldShowEdgeIcon still checks the user's own settings.
     NFBDebugLog(@"Open tray policy: hidden=%d fullscreen=%d owners=%lu", now, fullscreen, (unsigned long)owners.count);
 }
@@ -251,6 +282,7 @@ void NFBUpdateOpenEdge(BOOL enabled) {
         owners = [NSHashTable weakObjectsHashTable];
         appliedEpochs = [NSMapTable weakToStrongObjectsMapTable];
         manualSceneKeys = [NSMapTable weakToStrongObjectsMapTable];
+        keyboardRestoreStates = [NSMapTable weakToStrongObjectsMapTable];
         MSHookMessageEx(cls, NSSelectorFromString(@"shouldShowEdgeIcon"), (IMP)shouldShow, (IMP *)&originalShouldShow);
         MSHookMessageEx(cls, NSSelectorFromString(@"refreshUI"), (IMP)refresh, (IMP *)&originalRefresh);
         MSHookMessageEx(cls, NSSelectorFromString(@"showEdgeButtonAnimated:"), (IMP)showEdge, (IMP *)&originalShowEdge);

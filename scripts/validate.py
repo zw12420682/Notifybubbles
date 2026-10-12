@@ -58,7 +58,7 @@ for relative in ['Sources/NFBOpenEdge.m', 'Sources/NFBWindowControls.m', 'Source
         assert forbidden not in source, f'Unsafe gesture action inspection reintroduced: {relative}: {forbidden}'
 print('PASS: close adapter and edge diagnostics do not read private gesture action pointers')
 
-assert control["Version"] == "0.48.33"
+assert control["Version"] == "0.48.34"
 assert plistlib.loads((root/"Preferences/Resources/Info.plist").read_bytes())["CFBundleVersion"] == control["Version"]
 for name in ["NFBDebugLog.m", "NFBWindowState.m"]:
     assert "Sources/" + name in (root/"Makefile").read_text()
@@ -71,3 +71,13 @@ assert "#define NFBDebugLog NFBAdapterDebugLog" in adapter
 assert "#define NFBErrorLog NFBAdapterErrorLog" in adapter
 assert "Sources/NFBTrollOpen.m" in workflow and "Tests/TrollOpenTests.m" in workflow
 print("PASS: automatic macOS adapter isolation; both old and current test commands supported")
+
+for name in ["NFBOpenConsole.m", "NFBOpenConsole.h", "NFBOpenConsolePolicy.h"]:
+    assert (root / "Sources" / name).is_file()
+assert "Sources/NFBOpenConsole.m" in (root/"Makefile").read_text()
+manager = (root/"Sources/NFBManager.m").read_text(encoding="utf-8")
+assert "[self.topActionTap requireGestureRecognizerToFail:self.topActionHold]" in manager
+assert "gesture.state != UIGestureRecognizerStateBegan" in manager
+assert "NFBOpenNativeConsole()" in manager
+assert "NFBEdgeShouldHide" in (root/"Sources/NFBOpenEdge.m").read_text()
+print("PASS: keyboard edge policy, native console source and exclusive long-press gesture")
