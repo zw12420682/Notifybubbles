@@ -1,9 +1,17 @@
+#include "NFBDesktopGeometry.h"
 #include "NFBHotspotPolicy.h"
 #include "NFBOpenConsolePolicy.h"
 #include "NFBTransitionPolicy.h"
 #include <assert.h>
 #include <stdio.h>
 int main(void) {
+    assert(fabs(NFBDesktopScale(390,844,195,422)-0.5)<1e-9);
+    assert(fabs(NFBDesktopScale(390,844,250,422)-0.5)<1e-9);
+    assert(fabs(NFBDesktopScale(390,844,195,600)-0.5)<1e-9);
+    assert(NFBDesktopScale(0,844,195,422)==0);
+    assert(NFBDesktopScale(1e-300,1e-300,1e300,1e300)==0);
+    assert(NFBDesktopScale(390,844,NAN,422)==0);
+    assert(NFBDesktopScale(390,844,195,INFINITY)==0);
     assert(!NFBTransitionStable(10.05, 10));
     assert(NFBTransitionStable(10.13, 10));
     for (int enabled = 0; enabled < 2; enabled++)

@@ -58,7 +58,7 @@ for relative in ['Sources/NFBOpenEdge.m', 'Sources/NFBWindowControls.m', 'Source
         assert forbidden not in source, f'Unsafe gesture action inspection reintroduced: {relative}: {forbidden}'
 print('PASS: close adapter and edge diagnostics do not read private gesture action pointers')
 
-assert control["Version"] == "0.48.36"
+assert control["Version"] == "0.48.37"
 assert plistlib.loads((root/"Preferences/Resources/Info.plist").read_bytes())["CFBundleVersion"] == control["Version"]
 for name in ["NFBDebugLog.m", "NFBWindowState.m"]:
     assert "Sources/" + name in (root/"Makefile").read_text()
@@ -100,3 +100,16 @@ assert "Sources/NFBHotspot.m" in (root/"Makefile").read_text()
 assert "NFBConfigureHotspotAutoClose" in manager
 assert "verifyDesktopRequest" not in manager
 print("PASS: hotspot controls and unsafe SpringBoard scene requests blocked")
+
+for name in ["NFBDesktopHost.m", "NFBDesktopHost.h", "NFBDesktopGeometry.h"]:
+    assert (root/"Sources"/name).is_file()
+assert "Sources/NFBDesktopHost.m" in (root/"Makefile").read_text()
+assert "NFBShowDesktopInSplit(target)" in manager
+assert "!NFBDesktopSplitActive()" in manager
+host = (root/"Sources/NFBDesktopHost.m").read_text(encoding="utf-8")
+assert "NFBOpenTrollApp" not in host and "SBDeviceApplicationSceneEntity" not in host
+print("PASS: native desktop host included; ordinary SpringBoard app-scene route remains blocked")
+
+assert (root/"Tests/DesktopHostTests.m").is_file()
+assert (root/"scripts/test_desktop_simulator.py").is_file()
+assert "scripts/test_desktop_simulator.py" in workflow

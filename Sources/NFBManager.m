@@ -1,3 +1,4 @@
+#import "NFBDesktopHost.h"
 #import "NFBHotspot.h"
 #import "NFBSystemDesktop.h"
 #import "NFBOpenConsole.h"
@@ -327,6 +328,7 @@ static double NFBNumber(NSString *key, double fallback) {
     [favoriteOrder addObjectsFromArray:selected.array];
     self.favoriteApps = favoriteOrder.array;
     if (!self.enabled) {
+        NFBCloseDesktopSplit();
         NFBUpdateDesktopFreeze(NO, 0);
         NFBSetCaptureHidden(self.window.rootViewController.view, NO);
         [self.timer invalidate]; self.timer = nil; [self clear];
@@ -422,7 +424,7 @@ static double NFBNumber(NSString *key, double fallback) {
     self.desktopActionTouchTarget = nil;
     if (!target || target != self.desktopActionTarget || target != NFBDesktopActionWindow()) { [self refresh]; return; }
     if (![self acceptGesture]) return;
-    [self showOpenNotice:@"桌面分屏暂不可用；长按可打开 Open 控制台"];
+    if (!NFBShowDesktopInSplit(target)) [self showOpenNotice:@"未找到可承载的系统桌面，请回到桌面后重试"];
     [self refresh];
 }
 - (void)desktopActionHeld:(UILongPressGestureRecognizer *)gesture {
@@ -431,6 +433,7 @@ static double NFBNumber(NSString *key, double fallback) {
     self.desktopActionTouchTarget = nil;
     if (!target || target != self.desktopActionTarget || target != NFBDesktopActionWindow()) { [self refresh]; return; }
     if (![self acceptGesture]) return;
+    NFBCloseDesktopSplit();
     if (!NFBOpenNativeConsole()) [self showOpenNotice:@"Open 控制台入口不可用，请确认使用适配的定制版 1.3.7"];
     [self refresh];
 }
@@ -443,10 +446,10 @@ static double NFBNumber(NSString *key, double fallback) {
         button.badge.hidden = YES;
         button.imageView.contentMode = UIViewContentModeCenter;
         button.imageView.image = [UIImage systemImageNamed:@"house.fill"];
-        button.imageView.tintColor = UIColor.systemGrayColor;
+        button.imageView.tintColor = UIColor.systemGreenColor;
         button.imageView.backgroundColor = UIColor.secondarySystemBackgroundColor;
         button.accessibilityLabel = @"显示桌面 / Open 控制台";
-        button.accessibilityHint = @"桌面分屏暂不可用，长按打开 Open 控制台";
+        button.accessibilityHint = @"单击显示或关闭桌面分屏，长按打开 Open 控制台";
         self.desktopActionTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(desktopActionTapped:)];
         self.desktopActionTap.delegate = self;
         self.desktopActionHold = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(desktopActionHeld:)];
@@ -461,7 +464,7 @@ static double NFBNumber(NSString *key, double fallback) {
     }
     NFBBubble *button = self.desktopActionButton;
     button.accessibilityLabel = @"显示桌面 / Open 控制台";
-    button.accessibilityHint = @"桌面分屏暂不可用，长按打开 Open 控制台";
+    button.accessibilityHint = @"单击显示或关闭桌面分屏，长按打开 Open 控制台";
     CGFloat targetAlpha = visible ? 1 : 0;
     button.userInteractionEnabled = visible;
     if (visible && button.alpha < 0.01) button.frame = frame;
@@ -765,11 +768,12 @@ static double NFBNumber(NSString *key, double fallback) {
     button.imageView.image = [image isKindOfClass:UIImage.class] ? image : [UIImage systemImageNamed:@"bell.fill"];
 }
 - (void)updatePrivacy {
+    NFBUpdateDesktopSplit(self.enabled && ![self isLocked]);
     BOOL desktopVisible = NFBCurrentWindowState().home;
     // Attachment lookup includes all expanded portrait windows, even behind a landscape window.
     NSString *splitApp = NFBSplitAttachmentApp();
     BOOL splitVisible = splitApp.length > 0;
-    NFBUpdateDesktopFreeze(self.enabled && self.freezeDesktop &&
+    NFBUpdateDesktopFreeze(self.enabled && self.freezeDesktop && !NFBDesktopSplitActive() &&
         desktopVisible && ![self isLocked] && splitVisible && !NFBIsSystemDesktop(splitApp),
         1.0 - self.desktopBlurTransparency / 100.0);
     NFBSetCaptureHidden(self.window.rootViewController.view, self.enabled && self.hideInScreenshots);
