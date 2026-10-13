@@ -9,7 +9,7 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME = NotifyBubbles
 NotifyBubbles_FILES = Sources/Tweak.m Sources/NFBStore.m Sources/NFBManager.m Sources/NFBSwitcher.m Sources/NFBTrollOpen.m Sources/NFBWindowControls.m Sources/NFBNotificationPolicy.m Sources/NFBAppExit.m Sources/NFBKeyboard.m Sources/NFBPrivacy.m Sources/NFBOpenEdge.m Sources/NFBDebugLog.m Sources/NFBWindowState.m Sources/NFBOpenConsole.m Sources/NFBHotspot.m Sources/NFBDesktopHost.m
 NotifyBubbles_CFLAGS = -fobjc-arc -Wall -Wextra
-NotifyBubbles_FRAMEWORKS = UIKit Foundation QuartzCore UserNotifications
+NotifyBubbles_FRAMEWORKS = UIKit Foundation QuartzCore CoreGraphics UserNotifications
 NotifyBubbles_LIBRARIES = substrate
 
 
