@@ -1,3 +1,4 @@
+#include "NFBHotspotPolicy.h"
 #include "NFBOpenConsolePolicy.h"
 #include "NFBTransitionPolicy.h"
 #include <assert.h>
@@ -25,6 +26,23 @@ int main(void) {
     uint8_t code[20]; memcpy(code,console->code,20);
     assert(NFBConsoleCodeMatches(console,code));
     code[19] ^= 1; assert(!NFBConsoleCodeMatches(console,code));
+    NFBHotspotPolicy hotspot={0};
+    assert(!NFBHotspotShouldClose(&hotspot,true,1,0,100,60));
+    assert(!NFBHotspotShouldClose(&hotspot,true,1,0,159,60));
+    assert(NFBHotspotShouldClose(&hotspot,true,1,0,160,60));
+    hotspot.submitted=true; assert(!NFBHotspotShouldClose(&hotspot,true,1,0,200,60));
+    assert(!NFBHotspotShouldClose(&hotspot,true,1,1,201,60));
+    assert(!NFBHotspotShouldClose(&hotspot,true,1,0,202,60));
+    assert(!NFBHotspotShouldClose(&hotspot,true,1,0,261,60));
+    assert(NFBHotspotShouldClose(&hotspot,true,1,0,262,60));
+    assert(!NFBHotspotShouldClose(&hotspot,true,1,-1,263,60)); /* unknown count resets */
+    assert(!NFBHotspotShouldClose(&hotspot,true,1,0,300,60));
+    assert(!NFBHotspotShouldClose(&hotspot,true,-1,0,301,60)); /* unknown state resets */
+    assert(!NFBHotspotShouldClose(&hotspot,true,0,0,302,60));
+    assert(!NFBHotspotShouldClose(&hotspot,false,1,0,303,60));
+    assert(!NFBHotspotShouldClose(&hotspot,true,1,0,400,60));
+    assert(!NFBHotspotShouldClose(&hotspot,true,1,0,10,60)); /* clock change restarts */
+    assert(!NFBHotspotShouldClose(&hotspot,true,1,0,NAN,60));
     uint64_t epoch = 1, applied = 0;
     assert(NFBTransitionNeedsAction(epoch, applied));
     applied = epoch; /* successful scene action */

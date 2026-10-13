@@ -226,6 +226,7 @@ static BOOL NFBTrollSignature(id target, SEL selector, BOOL hasFlag) {
 }
 
 BOOL NFBOpenTrollApp(NSString *bundleID) {
+    if (NFBIsSystemDesktop(bundleID)) return NO;
     if (!NSThread.isMainThread || ![bundleID isKindOfClass:NSString.class] || !bundleID.length) return NO;
     // Verified against the supplied RootHide 1.3.7 binary's Objective-C metadata.
     // Its normal wrapper forwards to toj_showWithBundleID:skipOnlineLimitClose:
@@ -281,5 +282,6 @@ NSString *NFBTrollVisibleApp(void) {
 }
 
 BOOL NFBOpenSystemDesktop(void) {
-    return NFBOpenTrollApp(NFBSystemDesktopBundleID);
+    // SpringBoard has no ordinary app-process scene identity; never submit it.
+    return NO;
 }

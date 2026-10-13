@@ -1,3 +1,4 @@
+#import "NFBHotspot.h"
 #import "NFBSystemDesktop.h"
 #import "NFBOpenConsole.h"
 #import "NFBWindowState.h"
@@ -309,6 +310,7 @@ static double NFBNumber(NSString *key, double fallback) {
     self.hideInScreenshots = NFBPreference(@"HideInScreenshots", NO);
     self.desktopBlurTransparency = NFBNumber(@"DesktopBlurTransparency", 35);
     self.favoriteScrollRows = NFBNumber(@"FavoriteScrollRows", 0);
+    NFBConfigureHotspotAutoClose(self.enabled && NFBPreference(@"HotspotAutoClose",NO),NFBNumber(@"HotspotIdleMinutes",5));
     NFBUpdateOpenEdge(self.enabled);
     self.showLock = NFBPreference(@"ShowOnLock", YES);
     self.showHome = NFBPreference(@"ShowOnHome", YES);
@@ -414,25 +416,13 @@ static double NFBNumber(NSString *key, double fallback) {
     else NFBOpenEdgeAfterClose();
     [self refresh];
 }
-- (void)verifyDesktopRequest:(NSTimeInterval)gestureTime epoch:(NSUInteger)epoch attempt:(NSUInteger)attempt {
-    __weak NFBManager *weakSelf = self;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.15 * NSEC_PER_SEC)),dispatch_get_main_queue(), ^{
-        NFBManager *owner = weakSelf;
-        if (!owner || !owner.enabled || [owner isLocked] || owner.lastGestureAt != gestureTime || owner.exitEpoch != epoch) return;
-        NFBInvalidateWindowState();
-        if (NFBIsSystemDesktop(NFBSplitAttachmentApp())) { [owner refresh]; return; }
-        if (attempt < 5) [owner verifyDesktopRequest:gestureTime epoch:epoch attempt:attempt+1];
-        else [owner showOpenNotice:@"桌面分屏尚未显示，请检查 Open 的桌面分屏设置"];
-    });
-}
 - (void)desktopActionTapped:(UITapGestureRecognizer *)gesture {
     if (gesture.state != UIGestureRecognizerStateEnded || !self.enabled || [self isLocked]) return;
     UIView *target = self.desktopActionTouchTarget;
     self.desktopActionTouchTarget = nil;
     if (!target || target != self.desktopActionTarget || target != NFBDesktopActionWindow()) { [self refresh]; return; }
     if (![self acceptGesture]) return;
-    if (!NFBOpenSystemDesktop()) [self showOpenNotice:@"Open 桌面分屏入口不可用，请确认已安装适配的定制版 1.3.7"];
-    else [self verifyDesktopRequest:self.lastGestureAt epoch:self.exitEpoch attempt:0];
+    [self showOpenNotice:@"桌面分屏暂不可用；长按可打开 Open 控制台"];
     [self refresh];
 }
 - (void)desktopActionHeld:(UILongPressGestureRecognizer *)gesture {
@@ -453,10 +443,10 @@ static double NFBNumber(NSString *key, double fallback) {
         button.badge.hidden = YES;
         button.imageView.contentMode = UIViewContentModeCenter;
         button.imageView.image = [UIImage systemImageNamed:@"house.fill"];
-        button.imageView.tintColor = UIColor.systemGreenColor;
+        button.imageView.tintColor = UIColor.systemGrayColor;
         button.imageView.backgroundColor = UIColor.secondarySystemBackgroundColor;
         button.accessibilityLabel = @"显示桌面 / Open 控制台";
-        button.accessibilityHint = @"单击在分屏打开系统桌面，长按打开 Open 控制台";
+        button.accessibilityHint = @"桌面分屏暂不可用，长按打开 Open 控制台";
         self.desktopActionTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(desktopActionTapped:)];
         self.desktopActionTap.delegate = self;
         self.desktopActionHold = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(desktopActionHeld:)];
@@ -471,7 +461,7 @@ static double NFBNumber(NSString *key, double fallback) {
     }
     NFBBubble *button = self.desktopActionButton;
     button.accessibilityLabel = @"显示桌面 / Open 控制台";
-    button.accessibilityHint = @"单击在分屏打开系统桌面，长按打开 Open 控制台";
+    button.accessibilityHint = @"桌面分屏暂不可用，长按打开 Open 控制台";
     CGFloat targetAlpha = visible ? 1 : 0;
     button.userInteractionEnabled = visible;
     if (visible && button.alpha < 0.01) button.frame = frame;

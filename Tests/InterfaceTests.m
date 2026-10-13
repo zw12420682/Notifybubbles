@@ -1,3 +1,4 @@
+#import "NFBHotspotAdapters.h"
 #import "NFBSystemDesktop.h"
 #import "NFBExitInvocation.h"
 #include <stdlib.h>
@@ -27,11 +28,42 @@
 - (BOOL)badArgument:(__unused double)process { self.calls++; return YES; }
 - (void)throwingExit:(__unused id)process { [NSException raise:@"Fixture" format:@"expected"]; }
 @end
+@interface HotspotFixture : NSObject {
+@public int _numberOfNetworkTetheredDevices;
+}
+@property(nonatomic) int state;
+@property(nonatomic) int calls;
+- (void)getState:(int *)state andReason:(int *)reason;
+- (void)setState:(int)state;
+@end
+@implementation HotspotFixture
+- (void)getState:(int *)state andReason:(int *)reason { *state=_state; *reason=0; }
+- (void)setState:(int)state { _state=state; _calls++; }
+@end
+@interface BadHotspotFixture : NSObject
+@property(nonatomic) int calls;
+- (BOOL)numberOfNetworkTetheredDevices;
+- (void)setState:(id)value;
+@end
+@implementation BadHotspotFixture
+- (BOOL)numberOfNetworkTetheredDevices { _calls++; return NO; }
+- (void)setState:(__unused id)value { _calls++; }
+@end
 static void Check(BOOL ok) { if (!ok) abort(); }
 int main(void) {
  @autoreleasepool {
     Check(NFBIsSystemDesktop(@"com.apple.springboard"));
     Check(!NFBIsSystemDesktop(@"com.example.app") && !NFBIsSystemDesktop(nil));
+    HotspotFixture *hotspot=[HotspotFixture new]; long long clients=-1;
+    hotspot->_numberOfNetworkTetheredDevices=2;
+    Check(NFBHotspotClientCount(hotspot,&clients) && clients==2);
+    hotspot->_numberOfNetworkTetheredDevices=-1; Check(!NFBHotspotClientCount(hotspot,&clients));
+    hotspot.state=1023; hotspot.calls=0; Check(NFBMISState(hotspot)==1);
+    Check(NFBMISSetOff(hotspot) && hotspot.state==1022 && hotspot.calls==1);
+    Check(NFBMISState(hotspot)==0); hotspot.state=42; Check(NFBMISState(hotspot)==-1);
+    BadHotspotFixture *bad=[BadHotspotFixture new];
+    Check(!NFBHotspotClientCount(bad,&clients) && bad.calls==0);
+    Check(!NFBMISSetOff(bad) && bad.calls==0);
     Fixture *fixture = [Fixture new]; id process = [NSObject new];
     Check([NFBCheckedObject(fixture,@"objectValue") isEqual:@"value"]);
     Check([NFBCheckedObject(Fixture.class,@"classValue") isEqual:@"class"]);

@@ -23,5 +23,5 @@ BOOL NFBFullscreenCurrentFloatingWindow(void);
 // across builds, so both are probed (class method first, then instance).
 BOOL NFBMinimizeCurrentFloatingWindow(void);
 
-// Request Open's live SpringBoard scene in a native floating window.
+// Disabled: SpringBoard cannot be submitted as an ordinary application scene.
 BOOL NFBOpenSystemDesktop(void);

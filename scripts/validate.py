@@ -42,7 +42,7 @@ assert 'Sources/NFBAppExit.m' in (root / 'Makefile').read_text(), 'Update the ro
 assert 'NotifyBubblesBack_FILES' not in (root / 'Makefile').read_text()
 assert 'Sources/NFBBackRequest.m' not in (root / 'Makefile').read_text()
 prefs = plistlib.loads((root / 'Preferences/Resources/Root.plist').read_bytes())
-assert {x['key'] for x in prefs['items'] if 'key' in x} == {'Enabled','ShowOnLock','ShowOnHome','ShowInApps','IconSize','IconOpacity','ClosePreviousSplit','FreezeDesktop','HideInScreenshots','DesktopBlurTransparency','DebugLogging'}
+assert {x['key'] for x in prefs['items'] if 'key' in x} == {'Enabled','ShowOnLock','ShowOnHome','ShowInApps','IconSize','IconOpacity','ClosePreviousSplit','FreezeDesktop','HideInScreenshots','DesktopBlurTransparency','DebugLogging','HotspotAutoClose','HotspotIdleMinutes'}
 filter_ = plistlib.loads((root / 'NotifyBubbles.plist').read_bytes())
 assert filter_['Filter']['Bundles'] == ['com.apple.springboard']
 print('PASS: required files, property lists, RootHide configuration, preference keys and injection filter')
@@ -58,7 +58,7 @@ for relative in ['Sources/NFBOpenEdge.m', 'Sources/NFBWindowControls.m', 'Source
         assert forbidden not in source, f'Unsafe gesture action inspection reintroduced: {relative}: {forbidden}'
 print('PASS: close adapter and edge diagnostics do not read private gesture action pointers')
 
-assert control["Version"] == "0.48.35"
+assert control["Version"] == "0.48.36"
 assert plistlib.loads((root/"Preferences/Resources/Info.plist").read_bytes())["CFBundleVersion"] == control["Version"]
 for name in ["NFBDebugLog.m", "NFBWindowState.m"]:
     assert "Sources/" + name in (root/"Makefile").read_text()
@@ -80,16 +80,23 @@ assert "[self.desktopActionTap requireGestureRecognizerToFail:self.desktopAction
 assert "gesture.state != UIGestureRecognizerStateBegan" in manager
 assert "NFBOpenNativeConsole()" in manager
 assert "NFBEdgeShouldHide" in (root/"Sources/NFBOpenEdge.m").read_text()
-assert "NFBOpenSystemDesktop()" in manager
+assert "NFBOpenSystemDesktop()" not in manager
 assert "NFBPerformTopLongPress" not in manager
 assert "NFBObserveRotationLayout" not in manager
 controls = (root/"Sources/NFBWindowControls.m").read_text(encoding="utf-8")
 assert "NFBPerformTopLongPress" not in controls and "requestSceneOrientationOnce:" not in controls
 assert "NFBTopAction.h" not in (root/"Sources/NFBWindowControls.m").read_text()
 assert "actionLandscape" not in manager
-assert "NFBSystemDesktopBundleID" in (root/"Sources/NFBTrollOpen.m").read_text()
+assert "if (NFBIsSystemDesktop(bundleID)) return NO;" in (root/"Sources/NFBTrollOpen.m").read_text()
 assert "if (NFBIsSystemDesktop(bundleID)) return NO;" in (root/"Sources/NFBAppExit.m").read_text()
 print("PASS: portrait-only desktop button, exclusive console hold, rotation removal and SpringBoard exit protection")
 
 assert (root/"Sources/NFBSystemDesktop.h").is_file()
 assert "[self layoutFavorites:favoritesFrame" in manager
+
+for name in ["NFBHotspot.m","NFBHotspot.h","NFBHotspotPolicy.h","NFBHotspotAdapters.h"]:
+    assert (root/"Sources"/name).is_file()
+assert "Sources/NFBHotspot.m" in (root/"Makefile").read_text()
+assert "NFBConfigureHotspotAutoClose" in manager
+assert "verifyDesktopRequest" not in manager
+print("PASS: hotspot controls and unsafe SpringBoard scene requests blocked")
