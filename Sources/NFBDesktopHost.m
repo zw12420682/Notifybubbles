@@ -125,6 +125,27 @@ static UIView *NFBDesktopContentInTree(UIView *view, UIView *anchor) {
     }
     return nil;
 }
+// Last-resort lookup, used only after the controller and icon-content routes have
+// failed: scan a window for a root folder view and keep its outermost eligible
+// ancestor. Covers the case where the desktop is still on screen but no longer
+// reachable through the view controller that used to own it.
+static UIView *NFBDesktopFromTree(UIView *view, UIView *anchor) {
+    Class root = NSClassFromString(@"SBRootFolderView");
+    if (root && [view isKindOfClass:root]) {
+        UIView *candidate = nil;
+        for (UIView *ancestor = view; ancestor && ![ancestor isKindOfClass:UIWindow.class]; ancestor = ancestor.superview) {
+            if (!NFBDesktopEligible(ancestor, anchor)) break;
+            candidate = ancestor;
+        }
+        if (candidate) return candidate;
+        return NFBDesktopEligible(view, anchor) ? view : nil;
+    }
+    for (UIView *child in view.subviews) {
+        UIView *found = NFBDesktopFromTree(child, anchor);
+        if (found) return found;
+    }
+    return nil;
+}
 static UIView *NFBDesktopSource(UIView *anchor) {
     // Prefer the complete home controller (dock and folder presentation included).
     for (UIWindow *window in NFBDesktopWindows()) {
@@ -156,6 +177,13 @@ static UIView *NFBDesktopSource(UIView *anchor) {
                 candidate = ancestor;
             }
             if (candidate) return candidate;
+        }
+    }
+    for (UIWindow *window in NFBDesktopWindows()) {
+        UIView *view = NFBDesktopFromTree(window, anchor);
+        if (view) {
+            NFBErrorLog(@"desktop source resolved by hierarchy scan in %@", NSStringFromClass(window.class));
+            return view;
         }
     }
     NFBErrorLog(@"desktop source missing: icons=%@ manager=%@", NSStringFromClass([icons class]), NSStringFromClass([manager class]));

@@ -24,6 +24,26 @@ void NFBUpdateDesktopFreeze(__unused BOOL enabled, __unused CGFloat opacity) {}
 static void Check(BOOL valid, NSString *name) {
     if (!valid) [NSException raise:@"DesktopTestFailure" format:@"%@",name];
 }
+// A failed open is silent otherwise: carry the production reason plus the state
+// that was rejected, so CI reports why instead of only which assertion tripped.
+static NSString *NFBWindowSummary(void) {
+    NSMutableArray *parts = [NSMutableArray array];
+    for (UIWindow *window in UIApplication.sharedApplication.windows)
+        [parts addObject:[NSString stringWithFormat:@"%@(hidden=%d,level=%.0f,root=%@)",
+            NSStringFromClass(window.class), window.hidden, window.windowLevel,
+            window.rootViewController ? NSStringFromClass(window.rootViewController.class) : @"nil"]];
+    return [parts componentsJoinedByString:@", "];
+}
+static void CheckOpen(BOOL opened, NSString *name, UIView *desktop, UIView *root) {
+    if (opened) return;
+    NSString *detail = [NSString stringWithFormat:
+        @"reason=%@ desktop.superview=%@ inRoot=%d bounds=%@ hidden=%d alpha=%.2f rootSubviews=%lu windows=[%@]",
+        NFBDesktopSplitError(),
+        desktop.superview ? NSStringFromClass(desktop.superview.class) : @"nil",
+        desktop.superview == root, NSStringFromCGRect(desktop.bounds), desktop.hidden, desktop.alpha,
+        (unsigned long)root.subviews.count, NFBWindowSummary()];
+    [NSException raise:@"DesktopTestFailure" format:@"%@ | %@", name, detail];
+}
 @interface TestDelegate : UIResponder <UIApplicationDelegate>
 @property(nonatomic,strong) UIWindow *window;
 @end
@@ -57,7 +77,7 @@ static void Check(BOOL valid, NSString *name) {
         CGRect bounds=desktop.bounds; CGPoint center=desktop.center;
         desktop.userInteractionEnabled=NO;
         UIView *touch=[[UIView alloc] initWithFrame:CGRectMake(100,100,60,60)]; [desktop addSubview:touch];
-        Check(NFBShowDesktopInSplit(anchor),@"open");
+        CheckOpen(NFBShowDesktopInSplit(anchor),@"open",desktop,root.view);
         Check(NFBDesktopSplitActive() && desktop.superview!=root.view,@"real view transferred");
         UIView *panel=desktop.superview.superview;
         CGRect paneRect=[panel convertRect:panel.bounds toView:desktop.window];
@@ -80,19 +100,19 @@ static void Check(BOOL valid, NSString *name) {
         Check(CGAffineTransformIsIdentity(desktop.transform) && !desktop.userInteractionEnabled &&
             !desktop.translatesAutoresizingMaskIntoConstraints,@"original flags");
         for (NSLayoutConstraint *constraint in constraints) Check(constraint.active,@"constraints restored");
-        Check(NFBShowDesktopInSplit(anchor),@"reopen");
+        CheckOpen(NFBShowDesktopInSplit(anchor),@"reopen",desktop,root.view);
         [SBLockScreenManager sharedInstance].locked=YES; NFBUpdateDesktopSplit(YES);
         Check(!NFBDesktopSplitActive() && desktop.superview==root.view,@"lock restores desktop");
         [SBLockScreenManager sharedInstance].locked=NO;
-        Check(NFBShowDesktopInSplit(anchor),@"open before app launch");
+        CheckOpen(NFBShowDesktopInSplit(anchor),@"open before app launch",desktop,root.view);
         state.home=NO; state.frontApp=@"com.example.new-app"; NFBUpdateDesktopSplit(YES);
         Check(NFBDesktopSplitActive(),@"desktop pane is independent of reported background scene");
         NFBCloseDesktopSplit();
         Check(desktop.superview==root.view,@"close before app launch restores native view"); state.home=YES; state.frontApp=nil;
-        Check(NFBShowDesktopInSplit(anchor),@"open before disabling");
+        CheckOpen(NFBShowDesktopInSplit(anchor),@"open before disabling",desktop,root.view);
         NFBUpdateDesktopSplit(NO); Check(!NFBDesktopSplitActive(),@"disabled closes");
         state.home=NO; state.frontApp=@"com.example.background"; desktop.hidden=YES; desktop.alpha=0;
-        Check(NFBShowDesktopInSplit(anchor),@"fullscreen app can open hidden desktop");
+        CheckOpen(NFBShowDesktopInSplit(anchor),@"fullscreen app can open hidden desktop",desktop,root.view);
         Check(!desktop.hidden && desktop.alpha==1,@"hidden native desktop displayed in pane");
         for (UIView *v in root.view.subviews) Check(![v isKindOfClass:UIVisualEffectView.class],@"fullscreen app background not blurred");
         NFBUpdateDesktopSplit(YES); Check(NFBDesktopSplitActive(),@"fullscreen background does not dismiss pane");
@@ -106,7 +126,7 @@ static void Check(BOOL valid, NSString *name) {
         Check(desktop.superview==root.view && CGAffineTransformIsIdentity(desktop.transform) &&
             CGRectEqualToRect(desktop.bounds,bounds),@"failed preflight does not mutate desktop");
         [root.view addSubview:anchor];
-        Check(NFBShowDesktopInSplit(anchor),@"open before system view move");
+        CheckOpen(NFBShowDesktopInSplit(anchor),@"open before system view move",desktop,root.view);
         [root.view addSubview:desktop]; NFBUpdateDesktopSplit(YES);
         Check(!NFBDesktopSplitActive() && NFBConsumeDesktopSplitFailure().length>0,@"unexpected system move reports failure");
         [self runAnimatedTests:desktop anchor:anchor root:root.view];
@@ -124,7 +144,7 @@ static void Check(BOOL valid, NSString *name) {
     // Return to UIApplication's main event loop between each phase. A nested
     // runUntilDate inside one main-dispatch block starves main-queue completions.
     [UIView setAnimationsEnabled:YES];
-    @try { Check(NFBShowDesktopInSplit(anchor),@"animated desktop opening"); }
+    @try { CheckOpen(NFBShowDesktopInSplit(anchor),@"animated desktop opening",desktop,root); }
     @catch (NSException *e) { [self finishResult:[NSString stringWithFormat:@"FAIL: %@",e]]; return; }
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.4*NSEC_PER_SEC)),dispatch_get_main_queue(), ^{
         @try {
@@ -134,10 +154,11 @@ static void Check(BOOL valid, NSString *name) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.7*NSEC_PER_SEC)),dispatch_get_main_queue(), ^{
             @try {
                 for (UIView *v in root.subviews) Check(![v isKindOfClass:UIVisualEffectView.class],@"animated close eventually removes backdrop");
-                Check(NFBShowDesktopInSplit(anchor),@"open before rapid fullscreen reopen");
+                Check(desktop.superview==root,@"desktop home before reopening after animated close");
+                CheckOpen(NFBShowDesktopInSplit(anchor),@"open before rapid fullscreen reopen",desktop,root);
                 NFBCloseDesktopSplit();
                 state.home=NO; state.frontApp=@"com.example.background";
-                Check(NFBShowDesktopInSplit(anchor),@"rapid fullscreen reopen");
+                CheckOpen(NFBShowDesktopInSplit(anchor),@"rapid fullscreen reopen",desktop,root);
                 for (UIView *v in root.subviews) Check(![v isKindOfClass:UIVisualEffectView.class],@"rapid reopen does not inherit retiring backdrop");
                 NFBCloseDesktopSplit();
             } @catch (NSException *e) { [self finishResult:[NSString stringWithFormat:@"FAIL: %@",e]]; return; }
