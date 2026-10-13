@@ -112,4 +112,4 @@ print("PASS: native desktop host included; ordinary SpringBoard app-scene route 
 
 assert (root/"Tests/DesktopHostTests.m").is_file()
 assert (root/"scripts/test_desktop_simulator.py").is_file()
-assert "scripts/test_desktop_simulator.py" in workflow
+assert "scripts/test_desktop_simulator.py" in workflow, "Outdated .github/workflows/build.yml: upload the 0.48.37 workflow to this exact path; it must run scripts/test_desktop_simulator.py."
