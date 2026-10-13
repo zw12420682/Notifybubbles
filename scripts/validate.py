@@ -1,6 +1,9 @@
 """Dependency-free repository validation; does not substitute for iOS compilation."""
 from pathlib import Path
 import plistlib
+import os
+import subprocess
+import sys
 
 root = Path(__file__).resolve().parents[1]
 required = [
@@ -112,4 +115,13 @@ print("PASS: native desktop host included; ordinary SpringBoard app-scene route 
 
 assert (root/"Tests/DesktopHostTests.m").is_file()
 assert (root/"scripts/test_desktop_simulator.py").is_file()
-assert "scripts/test_desktop_simulator.py" in workflow, "Outdated .github/workflows/build.yml: upload the 0.48.37 workflow to this exact path; it must run scripts/test_desktop_simulator.py."
+# Older uploaded workflows still run this validator. Keep desktop UIKit tests
+# mandatory in GitHub even when their explicit workflow step was not uploaded.
+if "scripts/test_desktop_simulator.py" not in workflow:
+    if os.environ.get("GITHUB_ACTIONS", "").lower() == "true":
+        print("COMPAT: older workflow detected; running required desktop UIKit tests here", flush=True)
+        subprocess.run([sys.executable, str(root/"scripts/test_desktop_simulator.py")], cwd=root, check=True)
+    else:
+        print("COMPAT: older workflow; GitHub validation will run desktop UIKit tests automatically")
+else:
+    print("PASS: desktop UIKit test is configured in the workflow")
