@@ -281,6 +281,11 @@ static BOOL NFBDesktopLocked(void) {
             snapshot.alpha = 0; snapshot.transform = CGAffineTransformMakeScale(0.94,0.94);
             frost.effect = nil; frost.alpha = 0;
         } completion:finish];
+        // Completion can be delayed or interrupted; bound the lifetime of the
+        // retiring overlay independently. This block only owns this transition.
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.45*NSEC_PER_SEC)),dispatch_get_main_queue(), ^{
+            finish(NO);
+        });
     } else finish(YES);
     self.backgroundFrost = nil;
     self.window = nil; self.desktop = nil; self.originalParent = nil; self.constraints = nil;

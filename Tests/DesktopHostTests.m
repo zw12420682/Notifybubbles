@@ -109,25 +109,47 @@ static void Check(BOOL valid, NSString *name) {
         Check(NFBShowDesktopInSplit(anchor),@"open before system view move");
         [root.view addSubview:desktop]; NFBUpdateDesktopSplit(YES);
         Check(!NFBDesktopSplitActive() && NFBConsumeDesktopSplitFailure().length>0,@"unexpected system move reports failure");
-        [UIView setAnimationsEnabled:YES];
-        Check(NFBShowDesktopInSplit(anchor),@"animated desktop opening");
-        [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.35]];
-        NFBCloseDesktopSplit();
-        Check(desktop.superview==root.view,@"animated close restores native view immediately");
-        [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.35]];
-        for (UIView *v in root.view.subviews) Check(![v isKindOfClass:UIVisualEffectView.class],@"animated close eventually removes backdrop");
-        Check(NFBShowDesktopInSplit(anchor),@"open before rapid fullscreen reopen");
-        NFBCloseDesktopSplit();
-        state.home=NO; state.frontApp=@"com.example.background";
-        Check(NFBShowDesktopInSplit(anchor),@"rapid fullscreen reopen");
-        for (UIView *v in root.view.subviews) Check(![v isKindOfClass:UIVisualEffectView.class],@"rapid reopen does not inherit retiring backdrop");
-        NFBCloseDesktopSplit();
-        [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.35]];
+        [self runAnimatedTests:desktop anchor:anchor root:root.view];
+        return;
     } @catch (NSException *exception) { result=[NSString stringWithFormat:@"FAIL: %@",exception]; }
+    [self finishResult:result];
+}
+- (void)finishResult:(NSString *)result {
     NFBCloseDesktopSplit();
     NSString *path=[NSHomeDirectory() stringByAppendingPathComponent:@"Documents/desktop-test-result.txt"];
     [result writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
     NSLog(@"%@",result);
 }
+- (void)runAnimatedTests:(UIView *)desktop anchor:(UIView *)anchor root:(UIView *)root {
+    // Return to UIApplication's main event loop between each phase. A nested
+    // runUntilDate inside one main-dispatch block starves main-queue completions.
+    [UIView setAnimationsEnabled:YES];
+    @try { Check(NFBShowDesktopInSplit(anchor),@"animated desktop opening"); }
+    @catch (NSException *e) { [self finishResult:[NSString stringWithFormat:@"FAIL: %@",e]]; return; }
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.4*NSEC_PER_SEC)),dispatch_get_main_queue(), ^{
+        @try {
+            NFBCloseDesktopSplit();
+            Check(desktop.superview==root,@"animated close restores native view immediately");
+        } @catch (NSException *e) { [self finishResult:[NSString stringWithFormat:@"FAIL: %@",e]]; return; }
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.7*NSEC_PER_SEC)),dispatch_get_main_queue(), ^{
+            @try {
+                for (UIView *v in root.subviews) Check(![v isKindOfClass:UIVisualEffectView.class],@"animated close eventually removes backdrop");
+                Check(NFBShowDesktopInSplit(anchor),@"open before rapid fullscreen reopen");
+                NFBCloseDesktopSplit();
+                state.home=NO; state.frontApp=@"com.example.background";
+                Check(NFBShowDesktopInSplit(anchor),@"rapid fullscreen reopen");
+                for (UIView *v in root.subviews) Check(![v isKindOfClass:UIVisualEffectView.class],@"rapid reopen does not inherit retiring backdrop");
+                NFBCloseDesktopSplit();
+            } @catch (NSException *e) { [self finishResult:[NSString stringWithFormat:@"FAIL: %@",e]]; return; }
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.7*NSEC_PER_SEC)),dispatch_get_main_queue(), ^{
+                @try {
+                    for (UIView *v in root.subviews) Check(![v isKindOfClass:UIVisualEffectView.class],@"late old callback cannot leave a backdrop");
+                    [self finishResult:@"PASS"];
+                } @catch (NSException *e) { [self finishResult:[NSString stringWithFormat:@"FAIL: %@",e]]; }
+            });
+        });
+    });
+}
+
 @end
 int main(int argc,char **argv) { @autoreleasepool { return UIApplicationMain(argc,argv,nil,NSStringFromClass(TestDelegate.class)); } }
