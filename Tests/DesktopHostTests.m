@@ -73,6 +73,7 @@ static void Check(BOOL valid, NSString *name) {
         Check([desktop.window hitTest:point withEvent:nil]==touch,@"scaled hit testing reaches native child");
         Check([desktop.window hitTest:CGPointMake(1,1) withEvent:nil]==nil,@"outside panel passes through");
         NFBCloseDesktopSplit(); NFBCloseDesktopSplit();
+        for (UIView *v in root.view.subviews) Check(![v isKindOfClass:UIVisualEffectView.class],@"disabled animations clean backdrop synchronously");
         Check(!NFBDesktopSplitActive() && desktop.superview==root.view,@"idempotent restore");
         Check([root.view.subviews indexOfObjectIdenticalTo:desktop]==index,@"original order");
         Check(CGRectEqualToRect(desktop.bounds,bounds) && CGPointEqualToPoint(desktop.center,center),@"original geometry");
@@ -108,6 +109,20 @@ static void Check(BOOL valid, NSString *name) {
         Check(NFBShowDesktopInSplit(anchor),@"open before system view move");
         [root.view addSubview:desktop]; NFBUpdateDesktopSplit(YES);
         Check(!NFBDesktopSplitActive() && NFBConsumeDesktopSplitFailure().length>0,@"unexpected system move reports failure");
+        [UIView setAnimationsEnabled:YES];
+        Check(NFBShowDesktopInSplit(anchor),@"animated desktop opening");
+        [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.35]];
+        NFBCloseDesktopSplit();
+        Check(desktop.superview==root.view,@"animated close restores native view immediately");
+        [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.35]];
+        for (UIView *v in root.view.subviews) Check(![v isKindOfClass:UIVisualEffectView.class],@"animated close eventually removes backdrop");
+        Check(NFBShowDesktopInSplit(anchor),@"open before rapid fullscreen reopen");
+        NFBCloseDesktopSplit();
+        state.home=NO; state.frontApp=@"com.example.background";
+        Check(NFBShowDesktopInSplit(anchor),@"rapid fullscreen reopen");
+        for (UIView *v in root.view.subviews) Check(![v isKindOfClass:UIVisualEffectView.class],@"rapid reopen does not inherit retiring backdrop");
+        NFBCloseDesktopSplit();
+        [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.35]];
     } @catch (NSException *exception) { result=[NSString stringWithFormat:@"FAIL: %@",exception]; }
     NFBCloseDesktopSplit();
     NSString *path=[NSHomeDirectory() stringByAppendingPathComponent:@"Documents/desktop-test-result.txt"];

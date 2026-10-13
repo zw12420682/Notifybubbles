@@ -50,6 +50,19 @@
 - (void)restore;
 @end
 static NFBDesktopSession *session;
+// Keep one retiring transition so rapid reopening cannot inherit its backdrop.
+static UIWindow *retiringWindow;
+static UIVisualEffectView *retiringFrost;
+static BOOL NFBDesktopAnimationsEnabled(void) {
+    return UIView.areAnimationsEnabled && !UIAccessibilityIsReduceMotionEnabled();
+}
+static void NFBFinishRetiringDesktop(void) {
+    [retiringFrost.layer removeAllAnimations];
+    [retiringFrost removeFromSuperview];
+    retiringWindow.hidden = YES;
+    retiringWindow.rootViewController = nil;
+    retiringFrost = nil; retiringWindow = nil;
+}
 static NSString *lastFailure;
 static BOOL failurePending;
 NSString *NFBDesktopSplitError(void) { return lastFailure ?: @"桌面分屏打开失败"; }
@@ -235,7 +248,7 @@ static BOOL NFBDesktopLocked(void) {
     if (self.restoring) return;
     self.restoring = YES;
     [self.timer invalidate]; self.timer = nil;
-    UIView *snapshot = UIAccessibilityIsReduceMotionEnabled() ? nil : [self.panel snapshotViewAfterScreenUpdates:NO];
+    UIView *snapshot = NFBDesktopAnimationsEnabled() ? [self.panel snapshotViewAfterScreenUpdates:NO] : nil;
     snapshot.frame = self.panel.frame; snapshot.userInteractionEnabled = NO;
     if (snapshot) [self.window.rootViewController.view addSubview:snapshot];
     UIView *view = self.desktop;
@@ -256,11 +269,14 @@ static BOOL NFBDesktopLocked(void) {
     [self.panel removeFromSuperview];
     UIWindow *window = self.window;
     UIVisualEffectView *frost = self.backgroundFrost;
+    NFBFinishRetiringDesktop();
+    retiringWindow = window; retiringFrost = frost;
     void (^finish)(BOOL) = ^(__unused BOOL done) {
         [frost removeFromSuperview];
         window.hidden = YES; window.rootViewController = nil;
+        if (retiringWindow == window) { retiringWindow = nil; retiringFrost = nil; }
     };
-    if (!UIAccessibilityIsReduceMotionEnabled()) {
+    if (NFBDesktopAnimationsEnabled()) {
         [UIView animateWithDuration:0.22 animations:^{
             snapshot.alpha = 0; snapshot.transform = CGAffineTransformMakeScale(0.94,0.94);
             frost.effect = nil; frost.alpha = 0;
@@ -311,6 +327,7 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
     if (!anchor.window) return NFBDesktopFail(@"没有可用的分屏窗口");
     if (NFBDesktopLocked()) return NFBDesktopFail(@"锁屏时不能打开桌面分屏");
     if (session) { NFBCloseDesktopSplit(); return YES; }
+    NFBFinishRetiringDesktop();
     NFBDesktopSession *next = [NFBDesktopSession new];
     @try {
         NFBUpdateDesktopFreeze(NO, 0);
@@ -377,7 +394,7 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
         window.hidden = NO;
         next.timer = [NSTimer timerWithTimeInterval:0.1 target:next selector:@selector(check) userInfo:nil repeats:YES];
         [NSRunLoop.mainRunLoop addTimer:next.timer forMode:NSRunLoopCommonModes];
-        if (!UIAccessibilityIsReduceMotionEnabled()) {
+        if (NFBDesktopAnimationsEnabled()) {
             panel.alpha = 0; panel.transform = CGAffineTransformMakeScale(0.94,0.94);
             [UIView animateWithDuration:0.26 delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{
                 panel.alpha = 1; panel.transform = CGAffineTransformIdentity;
