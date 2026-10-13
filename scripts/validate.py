@@ -4,7 +4,7 @@ import plistlib
 
 root = Path(__file__).resolve().parents[1]
 required = [
-    "Sources/NFBTopAction.h",
+    "Sources/NFBWindowKind.h",
     "Sources/NFBRightEdgeAction.h",
     "layout/DEBIAN/postinst",
     'Sources/NFBSplitClosePolicy.h', 'Sources/NFBWindowControls.h', 'Sources/NFBWindowControls.m', 'Sources/NFBStorageLayout.h', 'Sources/NFBEdgeInspection.h', 'Makefile', 'control', 'Sources/NFBAppExit.h', 'Sources/NFBAppExit.m',
@@ -52,13 +52,13 @@ assert 'NotifyBubblesKeyboard_FILES' not in (root / 'Makefile').read_text()
 assert (root / "Sources/NFBPrivacy.m").is_file()
 assert "Sources/NFBPrivacy.m" in (root / "Makefile").read_text()
 
-for relative in ['Sources/NFBOpenEdge.m', 'Sources/NFBWindowControls.m', 'Sources/NFBEdgeInspection.h', 'Sources/NFBRightEdgeAction.h', 'Sources/NFBTopAction.h']:
+for relative in ['Sources/NFBOpenEdge.m', 'Sources/NFBWindowControls.m', 'Sources/NFBEdgeInspection.h', 'Sources/NFBRightEdgeAction.h', 'Sources/NFBWindowKind.h']:
     source = (root / relative).read_text(encoding='utf-8')
     for forbidden in ['class_getInstanceVariable', 'object_getIvar', 'ivar_getOffset', 'valueForKey:@"_targets"', 'NSStringFromSelector']:
         assert forbidden not in source, f'Unsafe gesture action inspection reintroduced: {relative}: {forbidden}'
 print('PASS: close adapter and edge diagnostics do not read private gesture action pointers')
 
-assert control["Version"] == "0.48.34"
+assert control["Version"] == "0.48.35"
 assert plistlib.loads((root/"Preferences/Resources/Info.plist").read_bytes())["CFBundleVersion"] == control["Version"]
 for name in ["NFBDebugLog.m", "NFBWindowState.m"]:
     assert "Sources/" + name in (root/"Makefile").read_text()
@@ -76,8 +76,20 @@ for name in ["NFBOpenConsole.m", "NFBOpenConsole.h", "NFBOpenConsolePolicy.h"]:
     assert (root / "Sources" / name).is_file()
 assert "Sources/NFBOpenConsole.m" in (root/"Makefile").read_text()
 manager = (root/"Sources/NFBManager.m").read_text(encoding="utf-8")
-assert "[self.topActionTap requireGestureRecognizerToFail:self.topActionHold]" in manager
+assert "[self.desktopActionTap requireGestureRecognizerToFail:self.desktopActionHold]" in manager
 assert "gesture.state != UIGestureRecognizerStateBegan" in manager
 assert "NFBOpenNativeConsole()" in manager
 assert "NFBEdgeShouldHide" in (root/"Sources/NFBOpenEdge.m").read_text()
-print("PASS: keyboard edge policy, native console source and exclusive long-press gesture")
+assert "NFBOpenSystemDesktop()" in manager
+assert "NFBPerformTopLongPress" not in manager
+assert "NFBObserveRotationLayout" not in manager
+controls = (root/"Sources/NFBWindowControls.m").read_text(encoding="utf-8")
+assert "NFBPerformTopLongPress" not in controls and "requestSceneOrientationOnce:" not in controls
+assert "NFBTopAction.h" not in (root/"Sources/NFBWindowControls.m").read_text()
+assert "actionLandscape" not in manager
+assert "NFBSystemDesktopBundleID" in (root/"Sources/NFBTrollOpen.m").read_text()
+assert "if (NFBIsSystemDesktop(bundleID)) return NO;" in (root/"Sources/NFBAppExit.m").read_text()
+print("PASS: portrait-only desktop button, exclusive console hold, rotation removal and SpringBoard exit protection")
+
+assert (root/"Sources/NFBSystemDesktop.h").is_file()
+assert "[self layoutFavorites:favoritesFrame" in manager

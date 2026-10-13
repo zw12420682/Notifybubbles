@@ -1,3 +1,4 @@
+#import "NFBSystemDesktop.h"
 #import "NFBOpenConsole.h"
 #import "NFBWindowState.h"
 #import "NFBTransitionPolicy.h"
@@ -146,16 +147,15 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, strong) NFBRail *rail;
 @property(nonatomic) BOOL backgroundCollapsed;
 
-@property(nonatomic, strong) NFBBubble *topActionButton;
-@property(nonatomic, strong) UITapGestureRecognizer *topActionTap;
-@property(nonatomic, strong) UILongPressGestureRecognizer *topActionHold;
-@property(nonatomic, weak) UIView *topActionTarget;
-@property(nonatomic, weak) UIView *topActionTouchTarget;
+@property(nonatomic, strong) NFBBubble *desktopActionButton;
+@property(nonatomic, strong) UITapGestureRecognizer *desktopActionTap;
+@property(nonatomic, strong) UILongPressGestureRecognizer *desktopActionHold;
+@property(nonatomic, weak) UIView *desktopActionTarget;
+@property(nonatomic, weak) UIView *desktopActionTouchTarget;
 @property(nonatomic, weak) UIView *observedActionTarget;
 @property(nonatomic) CGRect observedActionFrame;
-@property(nonatomic) BOOL observedActionLandscape;
-- (void)topActionTapped:(UITapGestureRecognizer *)gesture;
-- (void)layoutTopAction:(CGRect)frame target:(UIView *)target duration:(NSTimeInterval)duration;
+- (void)desktopActionTapped:(UITapGestureRecognizer *)gesture;
+- (void)layoutDesktopAction:(CGRect)frame target:(UIView *)target duration:(NSTimeInterval)duration;
 
 @property(nonatomic, strong) NFBRail *unreadRail;
 @property(nonatomic, strong) NFBRail *favoritesRail;
@@ -370,6 +370,7 @@ static double NFBNumber(NSString *key, double fallback) {
     [apps addObjectsFromArray:self.store.appIDs];
     [apps removeObject:NFBClearAllID];
     [apps removeObject:NFBStorageID];
+    [apps removeObject:NFBSystemDesktopBundleID];
     return apps.array;
 }
 - (void)clear {
@@ -413,54 +414,65 @@ static double NFBNumber(NSString *key, double fallback) {
     else NFBOpenEdgeAfterClose();
     [self refresh];
 }
-- (void)topActionTapped:(UITapGestureRecognizer *)gesture {
+- (void)verifyDesktopRequest:(NSTimeInterval)gestureTime epoch:(NSUInteger)epoch attempt:(NSUInteger)attempt {
+    __weak NFBManager *weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.15 * NSEC_PER_SEC)),dispatch_get_main_queue(), ^{
+        NFBManager *owner = weakSelf;
+        if (!owner || !owner.enabled || [owner isLocked] || owner.lastGestureAt != gestureTime || owner.exitEpoch != epoch) return;
+        NFBInvalidateWindowState();
+        if (NFBIsSystemDesktop(NFBSplitAttachmentApp())) { [owner refresh]; return; }
+        if (attempt < 5) [owner verifyDesktopRequest:gestureTime epoch:epoch attempt:attempt+1];
+        else [owner showOpenNotice:@"桌面分屏尚未显示，请检查 Open 的桌面分屏设置"];
+    });
+}
+- (void)desktopActionTapped:(UITapGestureRecognizer *)gesture {
     if (gesture.state != UIGestureRecognizerStateEnded || !self.enabled || [self isLocked]) return;
-    UIView *target = self.topActionTouchTarget;
-    self.topActionTouchTarget = nil;
-    if (!target || target != self.topActionTarget || target != NFBTopActionWindow()) { [self refresh]; return; }
+    UIView *target = self.desktopActionTouchTarget;
+    self.desktopActionTouchTarget = nil;
+    if (!target || target != self.desktopActionTarget || target != NFBDesktopActionWindow()) { [self refresh]; return; }
     if (![self acceptGesture]) return;
-    if (!NFBPerformTopLongPress(target)) [self showOpenNotice:@"TrollOpen 顶部长按接口不可用"];
+    if (!NFBOpenSystemDesktop()) [self showOpenNotice:@"Open 桌面分屏入口不可用，请确认已安装适配的定制版 1.3.7"];
+    else [self verifyDesktopRequest:self.lastGestureAt epoch:self.exitEpoch attempt:0];
     [self refresh];
 }
-- (void)topActionHeld:(UILongPressGestureRecognizer *)gesture {
+- (void)desktopActionHeld:(UILongPressGestureRecognizer *)gesture {
     if (gesture.state != UIGestureRecognizerStateBegan || !self.enabled || [self isLocked]) return;
-    UIView *target = self.topActionTouchTarget;
-    self.topActionTouchTarget = nil;
-    if (!target || target != self.topActionTarget || target != NFBTopActionWindow() || !NFBWindowIsLandscape(target)) { [self refresh]; return; }
+    UIView *target = self.desktopActionTouchTarget;
+    self.desktopActionTouchTarget = nil;
+    if (!target || target != self.desktopActionTarget || target != NFBDesktopActionWindow()) { [self refresh]; return; }
     if (![self acceptGesture]) return;
     if (!NFBOpenNativeConsole()) [self showOpenNotice:@"Open 控制台入口不可用，请确认使用适配的定制版 1.3.7"];
     [self refresh];
 }
-- (void)layoutTopAction:(CGRect)frame target:(UIView *)target duration:(NSTimeInterval)duration {
+- (void)layoutDesktopAction:(CGRect)frame target:(UIView *)target duration:(NSTimeInterval)duration {
     BOOL visible = target && !CGRectIsNull(frame) && !CGRectIsEmpty(frame) && self.enabled;
-    self.topActionTarget = visible ? target : nil;
-    if (!self.topActionButton && !visible) return;
-    if (!self.topActionButton) {
+    self.desktopActionTarget = visible ? target : nil;
+    if (!self.desktopActionButton && !visible) return;
+    if (!self.desktopActionButton) {
         NFBBubble *button = [[NFBBubble alloc] initWithFrame:frame];
         button.badge.hidden = YES;
         button.imageView.contentMode = UIViewContentModeCenter;
-        button.imageView.image = [UIImage systemImageNamed:@"rectangle.2.swap"] ?: [UIImage systemImageNamed:@"arrow.up.left.and.arrow.down.right"];
+        button.imageView.image = [UIImage systemImageNamed:@"house.fill"];
         button.imageView.tintColor = UIColor.systemGreenColor;
         button.imageView.backgroundColor = UIColor.secondarySystemBackgroundColor;
-        button.accessibilityLabel = @"TrollOpen 顶部长按功能";
-        button.accessibilityHint = @"点击执行此窗口顶部绿色区域的长按动作";
-        self.topActionTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(topActionTapped:)];
-        self.topActionTap.delegate = self;
-        self.topActionHold = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(topActionHeld:)];
-        self.topActionHold.minimumPressDuration = 0.45;
-        self.topActionHold.delegate = self;
-        [self.topActionTap requireGestureRecognizerToFail:self.topActionHold];
-        [button addGestureRecognizer:self.topActionHold];
-        [button addGestureRecognizer:self.topActionTap];
+        button.accessibilityLabel = @"显示桌面 / Open 控制台";
+        button.accessibilityHint = @"单击在分屏打开系统桌面，长按打开 Open 控制台";
+        self.desktopActionTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(desktopActionTapped:)];
+        self.desktopActionTap.delegate = self;
+        self.desktopActionHold = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(desktopActionHeld:)];
+        self.desktopActionHold.minimumPressDuration = 0.45;
+        self.desktopActionHold.delegate = self;
+        [self.desktopActionTap requireGestureRecognizerToFail:self.desktopActionHold];
+        [button addGestureRecognizer:self.desktopActionHold];
+        [button addGestureRecognizer:self.desktopActionTap];
         button.alpha = 0;
-        self.topActionButton = button;
+        self.desktopActionButton = button;
         [self.window.rootViewController.view addSubview:button];
     }
-    NFBBubble *button = self.topActionButton;
-    BOOL landscape = visible && NFBWindowIsLandscape(target);
-    button.accessibilityLabel = landscape ? @"横屏旋转 / Open 控制台" : @"TrollOpen 顶部长按功能";
-    button.accessibilityHint = landscape ? @"单击旋转，长按打开 Open 控制台" : @"点击执行此窗口顶部绿色区域的长按动作";
-    CGFloat targetAlpha = visible ? (landscape ? 0.5 : 1.0) : 0;
+    NFBBubble *button = self.desktopActionButton;
+    button.accessibilityLabel = @"显示桌面 / Open 控制台";
+    button.accessibilityHint = @"单击在分屏打开系统桌面，长按打开 Open 控制台";
+    CGFloat targetAlpha = visible ? 1 : 0;
     button.userInteractionEnabled = visible;
     if (visible && button.alpha < 0.01) button.frame = frame;
     [self.window.rootViewController.view bringSubviewToFront:button];
@@ -574,7 +586,6 @@ static double NFBNumber(NSString *key, double fallback) {
     [NSRunLoop.mainRunLoop addTimer:self.floatingWatch forMode:NSRunLoopCommonModes];
 }
 - (void)floatingWatchFired {
-    NFBObserveRotationLayout();
     [self updatePrivacy];
     NFBUpdateOpenEdge(self.enabled);
     NSString *now = NFBSplitAttachmentApp();
@@ -585,15 +596,13 @@ static double NFBNumber(NSString *key, double fallback) {
     CGRect frame = NFBSplitFrameInView(self.window.rootViewController.view);
     BOOL sameFrame = CGRectEqualToRect(frame, self.observedSplitFrame) ||
         (CGRectIsNull(frame) && CGRectIsNull(self.observedSplitFrame));
-    UIView *actionTarget = NFBTopActionWindow();
+    UIView *actionTarget = NFBDesktopActionWindow();
     CGRect actionFrame = NFBWindowFrameInView(actionTarget, self.window.rootViewController.view);
-    BOOL landscape = NFBWindowIsLandscape(actionTarget);
     BOOL sameActionFrame = CGRectEqualToRect(actionFrame, self.observedActionFrame) ||
         (CGRectIsNull(actionFrame) && CGRectIsNull(self.observedActionFrame));
     if ((now == self.watchedFloating || [now isEqualToString:self.watchedFloating]) && sameFrame &&
-        actionTarget == self.observedActionTarget && sameActionFrame && landscape == self.observedActionLandscape) return;
+        actionTarget == self.observedActionTarget && sameActionFrame) return;
     self.observedActionTarget = actionTarget; self.observedActionFrame = actionFrame;
-    self.observedActionLandscape = landscape;
     self.observedSplitFrame = frame;
     self.watchedFloating = now;
     [self refresh];
@@ -768,9 +777,10 @@ static double NFBNumber(NSString *key, double fallback) {
 - (void)updatePrivacy {
     BOOL desktopVisible = NFBCurrentWindowState().home;
     // Attachment lookup includes all expanded portrait windows, even behind a landscape window.
-    BOOL splitVisible = NFBSplitAttachmentApp().length > 0;
+    NSString *splitApp = NFBSplitAttachmentApp();
+    BOOL splitVisible = splitApp.length > 0;
     NFBUpdateDesktopFreeze(self.enabled && self.freezeDesktop &&
-        desktopVisible && ![self isLocked] && splitVisible,
+        desktopVisible && ![self isLocked] && splitVisible && !NFBIsSystemDesktop(splitApp),
         1.0 - self.desktopBlurTransparency / 100.0);
     NFBSetCaptureHidden(self.window.rootViewController.view, self.enabled && self.hideInScreenshots);
 }
@@ -799,6 +809,7 @@ static double NFBNumber(NSString *key, double fallback) {
     }
     NSMutableArray<NSString *> *apps = [NSMutableArray array];
     for (NSString *app in self.store.appIDs) {
+        if (NFBIsSystemDesktop(app)) continue;
         BOOL fromSwitcher = [self.lastSwitcher containsObject:app];
         BOOL notificationsAllowed = fromSwitcher || NFBSystemNotificationsAllowed(app, ^{ [self refresh]; });
         if (fromSwitcher || notificationsAllowed) [apps addObject:app];
@@ -806,7 +817,6 @@ static double NFBNumber(NSString *key, double fallback) {
     NSString *floatingApp = NFBTrollVisibleApp();
     if ([self.retracting containsObject:floatingApp ?: @""]) floatingApp = nil;
     NFBObserveSplitSwitch(floatingApp, self.closePreviousSplit);
-    NFBObserveRotationLayout();
     NFBObserveSplitPlacement(floatingApp);
     // An attachment fallback is layout-only: do not treat it as an app switch.
     floatingApp = NFBSplitAttachmentApp();
@@ -814,7 +824,7 @@ static double NFBNumber(NSString *key, double fallback) {
     // Keep the fast watcher in step with reality every time we recompute layout.
     // Continue observing orientation even when a lone landscape window has no
     // portrait attachment target and its rail has returned to the screen edge.
-    [self syncFloatingWatch:floatingApp ?: NFBTrollVisibleApp() ?: (NFBTopActionWindow() ? @"__top_action__" : nil)];
+    [self syncFloatingWatch:floatingApp ?: NFBTrollVisibleApp()];
     // A keyboard outranks everything else: typing is the one moment the bubbles
     // must be out of the way, so it pulls them all back in no matter what. The
     // ones it pulled in are remembered and popped back out the moment typing
@@ -844,6 +854,7 @@ static double NFBNumber(NSString *key, double fallback) {
     BOOL home = NFBCurrentWindowState().home;
     BOOL edgeMode = !floatingApp.length;
     NSString *active = NFBTrollVisibleApp() ?: floatingApp ?: (home ? nil : NFBCurrentWindowState().frontApp);
+    if (NFBIsSystemDesktop(active)) active = nil;
     // Recency decides membership, never a forced jump of an existing icon.
     if (active.length && ![self.closingApps containsObject:active] && ![self.dismissedSwitcher containsObject:active] && ![apps containsObject:active])
         [apps addObject:active];
@@ -919,7 +930,7 @@ static double NFBNumber(NSString *key, double fallback) {
     UIEdgeInsets safe = root.safeAreaInsets;
     CGFloat top = MAX(safe.top, 48) + 30;
     CGRect splitFrame = floatingApp.length ? NFBSplitFrameInView(root) : CGRectNull;
-    BOOL attached = !NFBCurrentSplitLandscape() && floatingApp.length && !CGRectIsNull(splitFrame) && !CGRectIsEmpty(splitFrame);
+    BOOL attached = floatingApp.length && !CGRectIsNull(splitFrame) && !CGRectIsEmpty(splitFrame);
     // Position gates both our presentation and Open's edge suppression.
     BOOL validSplit = !CGRectIsNull(splitFrame) && !CGRectIsEmpty(splitFrame);
     const CGFloat cornerTolerance = 4.0;
@@ -988,10 +999,9 @@ static double NFBNumber(NSString *key, double fallback) {
     }
     CGFloat clearCenterY = railFrame.origin.y - 8 - side / 2;
     CGRect favoritesFrame = CGRectZero;
-    UIView *actionTarget = NFBTopActionWindow();
-    BOOL actionLandscape = NFBWindowIsLandscape(actionTarget);
+    UIView *actionTarget = NFBDesktopActionWindow();
     CGRect actionWindowFrame = NFBWindowFrameInView(actionTarget, root);
-    CGRect topActionFrame = CGRectNull;
+    CGRect desktopActionFrame = CGRectNull;
     if (containerMode) {
         CGFloat ceiling = MAX(safe.top, 12);
         CGFloat floor = CGRectGetHeight(bounds) - MAX(safe.bottom, 12);
@@ -1000,8 +1010,8 @@ static double NFBNumber(NSString *key, double fallback) {
         CGFloat desiredTop = attached ? NFBSplitRailTop(CGRectGetMinY(splitFrame), CGRectGetHeight(splitFrame)) : railFrame.origin.y;
         CGFloat y = MAX(ceiling, MIN(desiredTop, floor - side - 9));
         // The action occupies its own row above both rails, never inside scrolling content.
-        if (actionTarget && !actionLandscape && !CGRectIsNull(actionWindowFrame) && floor - y >= 2 * side + 18) {
-            topActionFrame = CGRectMake(railFrame.origin.x, y, side, side);
+        if (actionTarget && !CGRectIsNull(actionWindowFrame) && floor - y >= 2 * side + 18) {
+            desktopActionFrame = CGRectMake(railFrame.origin.x, y, side, side);
             y += side + 9;
         }
         CGFloat room = MAX(0, floor - y - side - 9);
@@ -1040,18 +1050,8 @@ static double NFBNumber(NSString *key, double fallback) {
         unreadFrame = CGRectMake(CGRectGetWidth(bounds) - side, bottom - total,
             side + NFBRetraction(diameter), unreadHeight);
     }
-    if (actionTarget && actionLandscape && !CGRectIsNull(actionWindowFrame)) {
-        // Keep one button inside the landscape window's upper-right corner.
-        CGFloat actionSide = MIN((self.iconSize + 14) * 0.75, MIN(actionWindowFrame.size.width, actionWindowFrame.size.height) - 12);
-        CGFloat bottomLimit = keyboardUp ? NFBKeyboardTopInView(root) - 12 : CGRectGetHeight(bounds) - MAX(safe.bottom, 6);
-        CGFloat x = MAX(6, MIN(CGRectGetMaxX(actionWindowFrame) - actionSide - 6, CGRectGetWidth(bounds) - actionSide - 6));
-        CGFloat y = MAX(safe.top + 6, CGRectGetMinY(actionWindowFrame) + 6);
-        if (y + actionSide > bottomLimit) y = bottomLimit - actionSide;
-        if (actionSide >= 24 && y >= MAX(safe.top, CGRectGetMinY(actionWindowFrame)) &&
-            x >= CGRectGetMinX(actionWindowFrame)) topActionFrame = CGRectMake(x, y, actionSide, actionSide);
-    }
     [self layoutFavorites:favoritesFrame diameter:diameter active:active duration:layoutDuration];
-    [self layoutTopAction:topActionFrame target:actionTarget duration:layoutDuration];
+    [self layoutDesktopAction:desktopActionFrame target:actionTarget duration:layoutDuration];
     self.unreadRail.hidden = !edgeMode || !unreadApps.count;
     [UIView animateWithDuration:layoutDuration delay:0
         options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseInOut
@@ -1558,10 +1558,9 @@ static double NFBNumber(NSString *key, double fallback) {
     return CGRectGetMaxX(image) > CGRectGetWidth(self.window.rootViewController.view.bounds) + 0.5;
 }
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldReceiveTouch:(UITouch *)touch {
-    if (gesture == self.topActionTap || gesture == self.topActionHold) {
-        self.topActionTouchTarget = self.topActionTarget;
-        return self.enabled && ![self isLocked] && self.topActionTouchTarget != nil &&
-            (gesture != self.topActionHold || NFBWindowIsLandscape(self.topActionTouchTarget));
+    if (gesture == self.desktopActionTap || gesture == self.desktopActionHold) {
+        self.desktopActionTouchTarget = self.desktopActionTarget;
+        return self.enabled && ![self isLocked] && self.desktopActionTouchTarget != nil;
     }
     if (gesture == self.edgeTap) {
         // Bubble taps handle their own reveal. Do not race them with a parent tap.

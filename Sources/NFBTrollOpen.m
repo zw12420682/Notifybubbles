@@ -1,3 +1,4 @@
+#import "NFBSystemDesktop.h"
 #import <TargetConditionals.h>
 // macOS contract tests always use the Foundation-only adapter, even when an
 // older workflow omits the test macro. iOS keeps the shared UIKit snapshot.
@@ -277,4 +278,8 @@ NSString *NFBTrollVisibleApp(void) {
     } @catch (__unused NSException *e) { return nil; }
     id app = NFBTrollObject(window, @"bundleID");
     return [app isKindOfClass:NSString.class] ? app : nil;
+}
+
+BOOL NFBOpenSystemDesktop(void) {
+    return NFBOpenTrollApp(NFBSystemDesktopBundleID);
 }

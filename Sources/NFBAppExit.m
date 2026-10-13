@@ -1,3 +1,4 @@
+#import "NFBSystemDesktop.h"
 #import "NFBExitInvocation.h"
 #import "NFBAppExit.h"
 #import "NFBDebugLog.h"
@@ -103,6 +104,7 @@ static pid_t NFBPID(id application) {
     } @catch (__unused NSException *error) { return 0; }
 }
 NSInteger NFBRunningProcessID(NSString *bundleID) {
+    if (NFBIsSystemDesktop(bundleID)) return 0;
     if (!NSThread.isMainThread) return 0;
     return NFBPID(NFBApplicationForBundle(bundleID));
 }
@@ -115,6 +117,7 @@ static BOOL NFBTerminateBySignal(id application) {
 }
 
 BOOL NFBTerminateApp(NSString *bundleID) {
+    if (NFBIsSystemDesktop(bundleID)) return NO;
     if (!NSThread.isMainThread) return NO;
     if (![bundleID isKindOfClass:NSString.class] || !bundleID.length) return NO;
     @try {

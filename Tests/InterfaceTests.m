@@ -1,3 +1,4 @@
+#import "NFBSystemDesktop.h"
 #import "NFBExitInvocation.h"
 #include <stdlib.h>
 @interface Fixture : NSObject
@@ -29,6 +30,8 @@
 static void Check(BOOL ok) { if (!ok) abort(); }
 int main(void) {
  @autoreleasepool {
+    Check(NFBIsSystemDesktop(@"com.apple.springboard"));
+    Check(!NFBIsSystemDesktop(@"com.example.app") && !NFBIsSystemDesktop(nil));
     Fixture *fixture = [Fixture new]; id process = [NSObject new];
     Check([NFBCheckedObject(fixture,@"objectValue") isEqual:@"value"]);
     Check([NFBCheckedObject(Fixture.class,@"classValue") isEqual:@"class"]);

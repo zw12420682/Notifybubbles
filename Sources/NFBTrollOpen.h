@@ -22,3 +22,6 @@ BOOL NFBFullscreenCurrentFloatingWindow(void);
 // selector's owner drifted between the bridge class and the window instance
 // across builds, so both are probed (class method first, then instance).
 BOOL NFBMinimizeCurrentFloatingWindow(void);
+
+// Request Open's live SpringBoard scene in a native floating window.
+BOOL NFBOpenSystemDesktop(void);
