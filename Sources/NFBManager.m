@@ -424,7 +424,7 @@ static double NFBNumber(NSString *key, double fallback) {
     self.desktopActionTouchTarget = nil;
     if (!target || target != self.desktopActionTarget || target != NFBDesktopActionWindow()) { [self refresh]; return; }
     if (![self acceptGesture]) return;
-    if (!NFBShowDesktopInSplit(target)) [self showOpenNotice:@"未找到可承载的系统桌面，请回到桌面后重试"];
+    if (!NFBShowDesktopInSplit(target)) [self showOpenNotice:NFBDesktopSplitError()];
     [self refresh];
 }
 - (void)desktopActionHeld:(UILongPressGestureRecognizer *)gesture {
@@ -611,6 +611,8 @@ static double NFBNumber(NSString *key, double fallback) {
 }
 - (void)tick {
     if (!self.enabled) return;
+    NSString *desktopFailure = NFBConsumeDesktopSplitFailure();
+    if (desktopFailure.length) [self showOpenNotice:desktopFailure];
     if (self.pendingRecord) {
         NSString *front = NFBString(NFBGet(NFBGet(UIApplication.sharedApplication, @"_accessibilityFrontMostApplication"), @"bundleIdentifier"));
         if (![self isLocked] && [front isEqual:self.pendingRecord.appID]) {

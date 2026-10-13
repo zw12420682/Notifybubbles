@@ -5,3 +5,6 @@ BOOL NFBShowDesktopInSplit(UIView *anchor);
 BOOL NFBDesktopSplitActive(void);
 void NFBCloseDesktopSplit(void);
 void NFBUpdateDesktopSplit(BOOL allowed);
+
+NSString *NFBDesktopSplitError(void);
+NSString *NFBConsumeDesktopSplitFailure(void);

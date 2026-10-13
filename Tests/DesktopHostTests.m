@@ -36,6 +36,7 @@ static void Check(BOOL valid, NSString *name) {
     return YES;
 }
 - (void)runTests {
+    [UIView setAnimationsEnabled:NO];
     NSString *result=@"PASS";
     @try {
         state=[NFBWindowState new]; state.home=YES;
@@ -58,6 +59,13 @@ static void Check(BOOL valid, NSString *name) {
         UIView *touch=[[UIView alloc] initWithFrame:CGRectMake(100,100,60,60)]; [desktop addSubview:touch];
         Check(NFBShowDesktopInSplit(anchor),@"open");
         Check(NFBDesktopSplitActive() && desktop.superview!=root.view,@"real view transferred");
+        UIView *panel=desktop.superview.superview;
+        CGRect paneRect=[panel convertRect:panel.bounds toView:desktop.window];
+        paneRect=[self.window convertRect:paneRect fromWindow:desktop.window];
+        Check(!CGRectEqualToRect(paneRect,anchor.frame),@"independent pane does not replace original app");
+        BOOL hasFrost=NO;
+        for (UIView *v in root.view.subviews) if ([v isKindOfClass:UIVisualEffectView.class]) hasFrost=YES;
+        Check(hasFrost,@"desktop background is frosted");
         Check(desktop.userInteractionEnabled && desktop.translatesAutoresizingMaskIntoConstraints,@"native touches enabled");
         Check(self.window.isKeyWindow,@"original focus preserved");
         for (NSLayoutConstraint *constraint in constraints) Check(!constraint.active,@"external constraints detached");
@@ -76,14 +84,30 @@ static void Check(BOOL valid, NSString *name) {
         Check(!NFBDesktopSplitActive() && desktop.superview==root.view,@"lock restores desktop");
         [SBLockScreenManager sharedInstance].locked=NO;
         Check(NFBShowDesktopInSplit(anchor),@"open before app launch");
-        state.home=NO; NFBUpdateDesktopSplit(YES);
-        Check(!NFBDesktopSplitActive(),@"app launch restores desktop"); state.home=YES;
+        state.home=NO; state.frontApp=@"com.example.new-app"; NFBUpdateDesktopSplit(YES);
+        Check(NFBDesktopSplitActive(),@"desktop pane is independent of reported background scene");
+        NFBCloseDesktopSplit();
+        Check(desktop.superview==root.view,@"close before app launch restores native view"); state.home=YES; state.frontApp=nil;
         Check(NFBShowDesktopInSplit(anchor),@"open before disabling");
         NFBUpdateDesktopSplit(NO); Check(!NFBDesktopSplitActive(),@"disabled closes");
-        CGRect good=anchor.frame; anchor.frame=CGRectMake(30,200,380,180);
-        Check(!NFBShowDesktopInSplit(anchor),@"invalid geometry rejected");
+        state.home=NO; state.frontApp=@"com.example.background"; desktop.hidden=YES; desktop.alpha=0;
+        Check(NFBShowDesktopInSplit(anchor),@"fullscreen app can open hidden desktop");
+        Check(!desktop.hidden && desktop.alpha==1,@"hidden native desktop displayed in pane");
+        for (UIView *v in root.view.subviews) Check(![v isKindOfClass:UIVisualEffectView.class],@"fullscreen app background not blurred");
+        NFBUpdateDesktopSplit(YES); Check(NFBDesktopSplitActive(),@"fullscreen background does not dismiss pane");
+        anchor.hidden=YES; NFBUpdateDesktopSplit(YES);
+        Check(NFBDesktopSplitActive(),@"independent pane survives original app pane hiding");
+        anchor.hidden=NO; NFBCloseDesktopSplit();
+        Check(desktop.hidden && desktop.alpha==0,@"original hidden state restored");
+        desktop.hidden=NO; desktop.alpha=1; state.home=YES; state.frontApp=nil;
+        [anchor removeFromSuperview];
+        Check(!NFBShowDesktopInSplit(anchor),@"missing original window rejected");
         Check(desktop.superview==root.view && CGAffineTransformIsIdentity(desktop.transform) &&
-            CGRectEqualToRect(desktop.bounds,bounds),@"failed preflight does not mutate desktop"); anchor.frame=good;
+            CGRectEqualToRect(desktop.bounds,bounds),@"failed preflight does not mutate desktop");
+        [root.view addSubview:anchor];
+        Check(NFBShowDesktopInSplit(anchor),@"open before system view move");
+        [root.view addSubview:desktop]; NFBUpdateDesktopSplit(YES);
+        Check(!NFBDesktopSplitActive() && NFBConsumeDesktopSplitFailure().length>0,@"unexpected system move reports failure");
     } @catch (NSException *exception) { result=[NSString stringWithFormat:@"FAIL: %@",exception]; }
     NFBCloseDesktopSplit();
     NSString *path=[NSHomeDirectory() stringByAppendingPathComponent:@"Documents/desktop-test-result.txt"];

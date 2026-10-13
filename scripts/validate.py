@@ -61,7 +61,7 @@ for relative in ['Sources/NFBOpenEdge.m', 'Sources/NFBWindowControls.m', 'Source
         assert forbidden not in source, f'Unsafe gesture action inspection reintroduced: {relative}: {forbidden}'
 print('PASS: close adapter and edge diagnostics do not read private gesture action pointers')
 
-assert control["Version"] == "0.48.37"
+assert control["Version"] == "0.48.38"
 assert plistlib.loads((root/"Preferences/Resources/Info.plist").read_bytes())["CFBundleVersion"] == control["Version"]
 for name in ["NFBDebugLog.m", "NFBWindowState.m"]:
     assert "Sources/" + name in (root/"Makefile").read_text()
@@ -125,3 +125,8 @@ if "scripts/test_desktop_simulator.py" not in workflow:
         print("COMPAT: older workflow; GitHub validation will run desktop UIKit tests automatically")
 else:
     print("PASS: desktop UIKit test is configured in the workflow")
+
+assert "!NFBCurrentWindowState().home" not in host
+assert "backgroundFrost" in host and "panelFrame" in host
+assert "NFBDesktopSplitError()" in manager
+print("PASS: independent desktop pane, fullscreen eligibility and desktop backdrop")

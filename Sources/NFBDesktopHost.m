@@ -2,9 +2,14 @@
 #import "NFBDesktopGeometry.h"
 #import "NFBInterfaces.h"
 #import "NFBWindowState.h"
+#import "NFBSystemDesktop.h"
 #import "NFBDebugLog.h"
 #import "NFBPrivacy.h"
 #import <QuartzCore/QuartzCore.h>
+#ifndef NFB_DESKTOP_SIM_TEST
+#import <substrate.h>
+#endif
+#include <math.h>
 
 @interface NFBDesktopWindow : UIWindow
 @end
@@ -31,7 +36,13 @@
 @property(nonatomic) CGFloat originalAlpha;
 @property(nonatomic, copy) NSArray<NSLayoutConstraint *> *constraints;
 @property(nonatomic, strong) NSTimer *timer;
-@property(nonatomic, strong) id lockObserver;
+@property(nonatomic, strong) UIVisualEffectView *backgroundFrost;
+@property(nonatomic, copy) NSString *backgroundApp;
+@property(nonatomic) BOOL startedHome;
+@property(nonatomic) CGPoint dragStart;
+@property(nonatomic) CGRect panelFrame;
+@property(nonatomic) BOOL placed;
+- (void)drag:(UIPanGestureRecognizer *)gesture;
 @property(nonatomic) BOOL restoring, mutated;
 - (BOOL)place;
 - (void)closePressed;
@@ -39,6 +50,19 @@
 - (void)restore;
 @end
 static NFBDesktopSession *session;
+static NSString *lastFailure;
+static BOOL failurePending;
+NSString *NFBDesktopSplitError(void) { return lastFailure ?: @"桌面分屏打开失败"; }
+NSString *NFBConsumeDesktopSplitFailure(void) {
+    if (!failurePending) return nil;
+    failurePending = NO;
+    return NFBDesktopSplitError();
+}
+static BOOL NFBDesktopFail(NSString *reason) {
+    lastFailure = reason;
+    NFBErrorLog(@"desktop split: %@", reason);
+    return NO;
+}
 
 static NSArray<UIWindow *> *NFBDesktopWindows(void) {
     NSMutableOrderedSet *windows = [NSMutableOrderedSet orderedSet];
@@ -63,11 +87,11 @@ static BOOL NFBDesktopContainsRootFolder(UIView *view) {
     return NO;
 }
 static BOOL NFBDesktopEligible(UIView *view, UIView *anchor) {
-    return [view isKindOfClass:UIView.class] && view.superview && view.window &&
+    return [view isKindOfClass:UIView.class] && view.superview && ![view isKindOfClass:UIWindow.class] &&
         view != anchor && ![anchor isDescendantOfView:view] && ![view isDescendantOfView:anchor] &&
         NFBDesktopContainsRootFolder(view) && !NFBDesktopContainsFloating(view) &&
         CGRectGetWidth(view.bounds) > 0 && CGRectGetHeight(view.bounds) > 0 &&
-        CGAffineTransformIsIdentity(view.transform) && !view.hidden && view.alpha > 0.01;
+        isfinite(CGRectGetWidth(view.bounds)) && isfinite(CGRectGetHeight(view.bounds));
 }
 static UIView *NFBDesktopFromController(UIViewController *controller, UIView *anchor) {
     if (!controller.isViewLoaded) return nil;
@@ -91,7 +115,7 @@ static UIView *NFBDesktopContentInTree(UIView *view, UIView *anchor) {
 static UIView *NFBDesktopSource(UIView *anchor) {
     // Prefer the complete home controller (dock and folder presentation included).
     for (UIWindow *window in NFBDesktopWindows()) {
-        if (window.hidden || window.alpha < 0.01) continue;
+
         UIView *view = NFBDesktopFromController(window.rootViewController, anchor);
         if (view) return view;
     }
@@ -101,10 +125,27 @@ static UIView *NFBDesktopSource(UIView *anchor) {
         if (NFBDesktopEligible(view, anchor)) return view;
     }
     for (UIWindow *window in NFBDesktopWindows()) {
-        if (window.hidden || window.alpha < 0.01) continue;
+
         UIView *view = NFBDesktopContentInTree(window, anchor);
         if (view) return view;
     }
+    // Fullscreen apps can hide or detach the desktop's original window. Resolve
+    // the already loaded root through the native singleton as well as windows.
+    id manager = NFBCheckedObject(icons, @"iconManager");
+    for (id owner in @[icons ?: NSNull.null, manager ?: NSNull.null]) {
+        for (NSString *name in @[@"rootFolderController", @"_rootFolderController"]) {
+            id controller = NFBCheckedObject(owner, name);
+            if (![controller isKindOfClass:UIViewController.class] || ![(UIViewController *)controller isViewLoaded]) continue;
+            UIView *view = [(UIViewController *)controller view];
+            UIView *candidate = nil;
+            for (UIView *ancestor = view; ancestor && ![ancestor isKindOfClass:UIWindow.class]; ancestor = ancestor.superview) {
+                if (!NFBDesktopEligible(ancestor, anchor)) break;
+                candidate = ancestor;
+            }
+            if (candidate) return candidate;
+        }
+    }
+    NFBErrorLog(@"desktop source missing: icons=%@ manager=%@", NSStringFromClass([icons class]), NSStringFromClass([manager class]));
     return nil;
 }
 static UIView *NFBConstraintView(id item) {
@@ -131,46 +172,72 @@ static BOOL NFBDesktopLocked(void) {
 }
 @implementation NFBDesktopSession
 - (BOOL)place {
-    UIView *anchor = self.anchor;
-    if (!anchor.window || anchor.hidden || anchor.alpha < 0.01 || CGRectIsEmpty(anchor.bounds)) return NO;
-    for (UIView *parent = anchor.superview; parent; parent = parent.superview)
-        if (parent.hidden || parent.alpha < 0.01) return NO;
     UIWindow *window = self.window;
-    CGRect frame = [anchor convertRect:anchor.bounds toView:window];
     CGRect screen = window.bounds;
-    if (!CGRectContainsRect(screen, frame) || frame.size.width < 120 || frame.size.height < 180 ||
-        frame.size.width >= frame.size.height || CGRectGetWidth(screen) >= CGRectGetHeight(screen)) return NO;
-    self.panel.frame = frame;
-    self.canvas.frame = CGRectMake(0, 36, frame.size.width, frame.size.height - 36);
+    if (CGRectGetWidth(screen) >= CGRectGetHeight(screen)) return NFBDesktopFail(@"桌面分屏目前仅支持竖屏");
+    UIEdgeInsets safe = window.safeAreaInsets;
+    CGRect usable = UIEdgeInsetsInsetRect(screen, UIEdgeInsetsMake(MAX(12,safe.top),12,MAX(12,safe.bottom),12));
+    if (!self.placed) {
+        UIView *anchor = self.anchor;
+        if (!anchor.window) return NFBDesktopFail(@"原分屏窗口已关闭");
+        CGRect anchorFrame = [anchor convertRect:anchor.bounds toView:anchor.window];
+        anchorFrame = [window convertRect:anchorFrame fromWindow:anchor.window];
+        CGFloat width = MIN(260, CGRectGetWidth(usable)*0.46);
+        CGFloat height = MIN(CGRectGetHeight(usable)*0.78,
+            width*CGRectGetHeight(self.originalBounds)/CGRectGetWidth(self.originalBounds)+36);
+        if (width < 120 || height < 180) return NFBDesktopFail(@"屏幕可用空间不足");
+        CGFloat x = CGRectGetMidX(anchorFrame) >= CGRectGetMidX(screen) ? CGRectGetMinX(usable) : CGRectGetMaxX(usable)-width;
+        self.panelFrame = CGRectMake(x, CGRectGetMidY(usable)-height/2, width, height);
+        self.placed = YES;
+    }
+    CGRect frame = self.panelFrame;
+    frame.origin.x = MAX(CGRectGetMinX(usable), MIN(frame.origin.x, CGRectGetMaxX(usable)-frame.size.width));
+    frame.origin.y = MAX(CGRectGetMinY(usable), MIN(frame.origin.y, CGRectGetMaxY(usable)-frame.size.height));
+    self.panelFrame = frame;
+    CGRect panelBounds = CGRectMake(0,0,frame.size.width,frame.size.height);
+    CGPoint panelCenter = CGPointMake(CGRectGetMidX(frame),CGRectGetMidY(frame));
+    if (!CGRectEqualToRect(self.panel.bounds,panelBounds)) self.panel.bounds = panelBounds;
+    if (!CGPointEqualToPoint(self.panel.center,panelCenter)) self.panel.center = panelCenter;
+    self.canvas.frame = CGRectMake(0,36,frame.size.width,frame.size.height-36);
     double scale = NFBDesktopScale(CGRectGetWidth(self.originalBounds), CGRectGetHeight(self.originalBounds),
-        CGRectGetWidth(self.canvas.bounds), CGRectGetHeight(self.canvas.bounds));
-    if (!(scale > 0)) return NO;
+        CGRectGetWidth(self.canvas.bounds),CGRectGetHeight(self.canvas.bounds));
+    if (!(scale > 0)) return NFBDesktopFail(@"桌面尺寸无效");
     if (self.desktop.superview == self.canvas) {
-        CGPoint center = CGPointMake(CGRectGetMidX(self.canvas.bounds), CGRectGetMidY(self.canvas.bounds));
-        CGAffineTransform transform = CGAffineTransformMakeScale(scale, scale);
-        if (!CGRectEqualToRect(self.desktop.bounds, self.originalBounds)) self.desktop.bounds = self.originalBounds;
-        if (!CGPointEqualToPoint(self.desktop.center, center)) self.desktop.center = center;
-        if (!CGAffineTransformEqualToTransform(self.desktop.transform, transform)) self.desktop.transform = transform;
+        CGPoint center = CGPointMake(CGRectGetMidX(self.canvas.bounds),CGRectGetMidY(self.canvas.bounds));
+        CGAffineTransform transform = CGAffineTransformMakeScale(scale,scale);
+        if (!CGRectEqualToRect(self.desktop.bounds,self.originalBounds)) self.desktop.bounds = self.originalBounds;
+        if (!CGPointEqualToPoint(self.desktop.center,center)) self.desktop.center = center;
+        if (!CGAffineTransformEqualToTransform(self.desktop.transform,transform)) self.desktop.transform = transform;
         self.desktop.hidden = NO; self.desktop.alpha = 1; self.desktop.userInteractionEnabled = YES;
     }
-    // This window never becomes key, so keyboard and normal app focus stay native.
-    window.windowLevel = anchor.window.windowLevel + 1;
     return YES;
+}
+- (void)drag:(UIPanGestureRecognizer *)gesture {
+    if (gesture.state == UIGestureRecognizerStateBegan) self.dragStart = self.panelFrame.origin;
+    CGPoint translation = [gesture translationInView:self.window];
+    CGRect frame = self.panelFrame;
+    frame.origin = CGPointMake(self.dragStart.x+translation.x,self.dragStart.y+translation.y);
+    self.panelFrame = frame;
+    [self place];
 }
 - (void)closePressed { NFBCloseDesktopSplit(); }
 - (void)check {
     if (session != self || self.restoring) return;
-    NFBWindowState *state = NFBCurrentWindowState();
-    if (!state.home || NFBDesktopLocked() || self.desktop.superview != self.canvas ||
-        (state.floatingWindow && state.floatingWindow != self.anchor) || state.mini || !self.originalParent.window || ![self place]) NFBCloseDesktopSplit();
+    if (NFBDesktopLocked()) {
+        NFBCloseDesktopSplit(); return;
+    }
+    if (self.desktop.superview != self.canvas || ![self place]) {
+        if (self.desktop.superview != self.canvas) NFBDesktopFail(@"系统重新调整了桌面视图，已恢复桌面");
+        failurePending = YES; NFBCloseDesktopSplit();
+    }
 }
 - (void)restore {
     if (self.restoring) return;
     self.restoring = YES;
     [self.timer invalidate]; self.timer = nil;
-    if (self.lockObserver) [NSNotificationCenter.defaultCenter removeObserver:self.lockObserver];
-    self.lockObserver = nil;
-    self.window.hidden = YES;
+    UIView *snapshot = UIAccessibilityIsReduceMotionEnabled() ? nil : [self.panel snapshotViewAfterScreenUpdates:NO];
+    snapshot.frame = self.panel.frame; snapshot.userInteractionEnabled = NO;
+    if (snapshot) [self.window.rootViewController.view addSubview:snapshot];
     UIView *view = self.desktop;
     if (self.mutated && view && self.originalParent) {
         [view removeFromSuperview];
@@ -186,7 +253,20 @@ static BOOL NFBDesktopLocked(void) {
         [self.originalParent setNeedsLayout];
         [self.originalParent layoutIfNeeded];
     }
-    self.window.rootViewController = nil;
+    [self.panel removeFromSuperview];
+    UIWindow *window = self.window;
+    UIVisualEffectView *frost = self.backgroundFrost;
+    void (^finish)(BOOL) = ^(__unused BOOL done) {
+        [frost removeFromSuperview];
+        window.hidden = YES; window.rootViewController = nil;
+    };
+    if (!UIAccessibilityIsReduceMotionEnabled()) {
+        [UIView animateWithDuration:0.22 animations:^{
+            snapshot.alpha = 0; snapshot.transform = CGAffineTransformMakeScale(0.94,0.94);
+            frost.effect = nil; frost.alpha = 0;
+        } completion:finish];
+    } else finish(YES);
+    self.backgroundFrost = nil;
     self.window = nil; self.desktop = nil; self.originalParent = nil; self.constraints = nil;
     NFBInvalidateWindowState();
 }
@@ -204,14 +284,40 @@ void NFBUpdateDesktopSplit(BOOL allowed) {
     if (!allowed) NFBCloseDesktopSplit();
     else [session check];
 }
+#ifndef NFB_DESKTOP_SIM_TEST
+static void (*originalLaunchIcon)(id, SEL, id, id);
+static void NFBDesktopLaunchIcon(id object, SEL selector, id icon, id actions) {
+    // Restore the native view before SpringBoard begins its app-launch transition.
+    NFBCloseDesktopSplit();
+    originalLaunchIcon(object,selector,icon,actions);
+}
+static void NFBInstallDesktopLaunchHook(void) {
+    static BOOL installed;
+    if (installed) return;
+    Class cls = NSClassFromString(@"SBIconController");
+    SEL selector = NSSelectorFromString(@"_launchFromIconView:withActions:");
+    Method method = class_getInstanceMethod(cls,selector);
+    if (!method) return;
+    NSMethodSignature *signature = [NSMethodSignature signatureWithObjCTypes:method_getTypeEncoding(method)];
+    if (signature.numberOfArguments != 4 || strcmp(signature.methodReturnType,"v") ||
+        [signature getArgumentTypeAtIndex:2][0] != '@' || [signature getArgumentTypeAtIndex:3][0] != '@') return;
+    MSHookMessageEx(cls,selector,(IMP)NFBDesktopLaunchIcon,(IMP *)&originalLaunchIcon);
+    installed = YES;
+}
+#endif
 BOOL NFBShowDesktopInSplit(UIView *anchor) {
-    if (!NSThread.isMainThread || !anchor.window || !NFBCurrentWindowState().home || NFBDesktopLocked()) return NO;
+    if (!NSThread.isMainThread) return NO;
+    lastFailure = nil; failurePending = NO;
+    if (!anchor.window) return NFBDesktopFail(@"没有可用的分屏窗口");
+    if (NFBDesktopLocked()) return NFBDesktopFail(@"锁屏时不能打开桌面分屏");
     if (session) { NFBCloseDesktopSplit(); return YES; }
     NFBDesktopSession *next = [NFBDesktopSession new];
     @try {
         NFBUpdateDesktopFreeze(NO, 0);
         UIView *desktop = NFBDesktopSource(anchor);
-        if (!desktop) { NFBErrorLog(@"desktop host: complete native home view unavailable"); return NO; }
+        if (!desktop) return NFBDesktopFail(@"没有找到已加载的系统桌面视图");
+        NFBWindowState *state = NFBCurrentWindowState();
+        next.startedHome = state.home; next.backgroundApp = state.frontApp;
         next.desktop = desktop; next.originalParent = desktop.superview; next.anchor = anchor;
         next.originalIndex = [desktop.superview.subviews indexOfObjectIdenticalTo:desktop];
         next.originalBounds = desktop.bounds; next.originalCenter = desktop.center;
@@ -224,6 +330,7 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
         else window = [[NFBDesktopWindow alloc] initWithFrame:anchor.window.screen.bounds];
         next.window = window;
         window.frame = anchor.window.screen.bounds;
+        window.windowLevel = MAX(anchor.window.windowLevel+2, UIWindowLevelStatusBar+1);
         UIViewController *controller = [UIViewController new];
         controller.view.backgroundColor = UIColor.clearColor;
         window.rootViewController = controller;
@@ -233,9 +340,13 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
         next.panel = panel; [controller.view addSubview:panel];
         UIView *canvas = [UIView new]; canvas.backgroundColor = UIColor.systemBackgroundColor;
         canvas.clipsToBounds = YES; next.canvas = canvas; [panel addSubview:canvas];
-        UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(12, 0, 150, 36)];
+        UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0,0,0,36)];
+        header.autoresizingMask = UIViewAutoresizingFlexibleWidth;
+        [header addGestureRecognizer:[[UIPanGestureRecognizer alloc] initWithTarget:next action:@selector(drag:)]];
+        [panel addSubview:header];
+        UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(12, 0, 120, 36)];
         label.text = @"系统桌面"; label.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
-        [panel addSubview:label];
+        [header addSubview:label];
         UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
         close.frame = CGRectMake(0, 0, 36, 36); close.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
         [close setImage:[UIImage systemImageNamed:@"xmark"] forState:UIControlStateNormal];
@@ -245,21 +356,38 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
         // Verify geometry before touching the desktop hierarchy.
         if (![next place]) { next.desktop = nil; return NO; }
         close.frame = CGRectMake(CGRectGetWidth(panel.bounds) - 36, 0, 36, 36);
+        header.frame = CGRectMake(0,0,CGRectGetWidth(panel.bounds),36);
+        if (next.startedHome) {
+            UIVisualEffectView *frost = [[UIVisualEffectView alloc] initWithEffect:nil];
+            frost.frame = [desktop convertRect:desktop.bounds toView:next.originalParent];
+            frost.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+            frost.contentView.backgroundColor = [UIColor.systemBackgroundColor colorWithAlphaComponent:0.25];
+            [next.originalParent insertSubview:frost atIndex:next.originalIndex];
+            next.backgroundFrost = frost;
+        }
         next.mutated = YES;
         [NSLayoutConstraint deactivateConstraints:next.constraints];
         desktop.translatesAutoresizingMaskIntoConstraints = YES; desktop.autoresizingMask = UIViewAutoresizingNone;
         [canvas addSubview:desktop];
         if (![next place]) { [next restore]; return NO; }
+#ifndef NFB_DESKTOP_SIM_TEST
+        NFBInstallDesktopLaunchHook();
+#endif
         session = next;
         window.hidden = NO;
         next.timer = [NSTimer timerWithTimeInterval:0.1 target:next selector:@selector(check) userInfo:nil repeats:YES];
         [NSRunLoop.mainRunLoop addTimer:next.timer forMode:NSRunLoopCommonModes];
-        next.lockObserver = [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationWillResignActiveNotification
-            object:nil queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *note) { NFBCloseDesktopSplit(); }];
+        if (!UIAccessibilityIsReduceMotionEnabled()) {
+            panel.alpha = 0; panel.transform = CGAffineTransformMakeScale(0.94,0.94);
+            [UIView animateWithDuration:0.26 delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{
+                panel.alpha = 1; panel.transform = CGAffineTransformIdentity;
+                next.backgroundFrost.effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial];
+            } completion:nil];
+        } else next.backgroundFrost.effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial];
         NFBDebugLog(@"desktop host: native view %@ moved into split panel", NSStringFromClass(desktop.class));
         return YES;
     } @catch (NSException *exception) {
-        NFBErrorLog(@"desktop host failed: %@", exception);
+        NFBDesktopFail([NSString stringWithFormat:@"桌面承载异常：%@", exception.name]);
         if (session == next) session = nil;
         [next restore];
         return NO;
