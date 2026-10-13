@@ -41,6 +41,9 @@
 @property(nonatomic, strong) NSMutableArray<UIView *> *appearanceViews;
 @property(nonatomic, strong) NSMutableArray<NSNumber *> *appearanceHidden;
 @property(nonatomic, strong) NSMutableArray<NSNumber *> *appearanceAlpha;
+@property(nonatomic, strong) NSMutableArray<NSNumber *> *appearanceInteraction;
+@property(nonatomic, strong) NSMutableArray<UIScrollView *> *appearanceScrollViews;
+@property(nonatomic, strong) NSMutableArray<NSNumber *> *appearanceScrollEnabled;
 @property(nonatomic) NSUInteger wallpaperCount;
 @property(nonatomic, copy) NSString *backgroundApp;
 @property(nonatomic) BOOL startedHome;
@@ -221,24 +224,22 @@ static BOOL NFBDesktopLocked(void) {
 }
 // The transplanted desktop keeps its icons, folders and widgets: moving the view
 // into the pane is what leaves the original home screen showing only its
-// wallpaper. What does need help is that SpringBoard hides the home screen's
-// content - and its wallpaper - while a fullscreen app is in front, which left
-// the pane completely blank. Only the content containers and the wallpaper are
-// revealed here, and every change is undone when the pane closes. Individual page
-// icon lists are deliberately left alone: only the current page should show.
-static BOOL NFBIsDesktopRevealClass(NSString *name) {
-    return [name containsString:@"Wallpaper"] || [name containsString:@"SBRootFolder"] ||
-        [name containsString:@"IconContent"];
-}
-static void NFBCollectRevealViews(UIView *view, NSMutableArray<UIView *> *reveal, NSMutableArray<UIView *> *wallpaper) {
-    for (UIView *child in view.subviews) {
-        NSString *name = NSStringFromClass(child.class);
-        BOOL isWallpaper = [name containsString:@"Wallpaper"];
-        if (isWallpaper) [wallpaper addObject:child];
-        if ((isWallpaper || NFBIsDesktopRevealClass(name)) && (child.hidden || child.alpha < 1))
-            [reveal addObject:child];
-        NFBCollectRevealViews(child, reveal, wallpaper);
-    }
+// wallpaper. Three things need help, and every change made here is undone when the
+// pane closes:
+//   1. SpringBoard hides the home screen's content - and its wallpaper - while a
+//      fullscreen app is in front, which left the pane completely blank. Only
+//      containers on the way to the icons, plus the wallpaper itself, are
+//      revealed: any other hidden view could be an overlay that swallows touches.
+//   2. Home screen interaction is switched off while an app is in front, so the
+//      whole chain down to the icons is re-enabled.
+//   3. Page swiping lives on a paging scroll view, which is re-enabled as well.
+// Individual page icon lists are deliberately left alone: only the current page is
+// meant to be visible.
+static BOOL NFBContainsIconContent(UIView *view) {
+    NSString *name = NSStringFromClass(view.class);
+    if ([name containsString:@"IconList"] || [name containsString:@"IconContent"]) return YES;
+    for (UIView *child in view.subviews) if (NFBContainsIconContent(child)) return YES;
+    return NO;
 }
 static void NFBCountHiddenViews(UIView *view, NSUInteger *count) {
     for (UIView *child in view.subviews) {
@@ -269,32 +270,59 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
     [self.appearanceViews addObject:view];
     [self.appearanceHidden addObject:@(view.hidden)];
     [self.appearanceAlpha addObject:@(view.alpha)];
+    [self.appearanceInteraction addObject:@(view.userInteractionEnabled)];
+}
+- (void)rememberScrollView:(UIScrollView *)view {
+    [self.appearanceScrollViews addObject:view];
+    [self.appearanceScrollEnabled addObject:@(view.scrollEnabled)];
+}
+- (void)adjustDesktopView:(UIView *)view {
+    for (UIView *child in view.subviews) {
+        NSString *name = NSStringFromClass(child.class);
+        BOOL isWallpaper = [name containsString:@"Wallpaper"];
+        if (isWallpaper) self.wallpaperCount += 1;
+        BOOL reveal = (child.hidden || child.alpha < 1) && (isWallpaper || NFBContainsIconContent(child));
+        BOOL blockTouches = isWallpaper && child.userInteractionEnabled;
+        BOOL unblockTouches = !isWallpaper && !child.userInteractionEnabled;
+        if (reveal || blockTouches || unblockTouches) {
+            [self rememberAppearance:child];
+            if (reveal) { child.hidden = NO; child.alpha = 1; }
+            if (blockTouches) child.userInteractionEnabled = NO;
+            else if (unblockTouches) child.userInteractionEnabled = YES;
+        }
+        if ([child isKindOfClass:UIScrollView.class] && !((UIScrollView *)child).scrollEnabled) {
+            [self rememberScrollView:(UIScrollView *)child];
+            ((UIScrollView *)child).scrollEnabled = YES;
+        }
+        [self adjustDesktopView:child];
+    }
 }
 - (void)adoptDesktopAppearance {
-    NSMutableArray<UIView *> *reveal = [NSMutableArray array];
-    NSMutableArray<UIView *> *wallpaper = [NSMutableArray array];
-    NFBCollectRevealViews(self.desktop, reveal, wallpaper);
+    self.wallpaperCount = 0;
     self.appearanceViews = [NSMutableArray array];
     self.appearanceHidden = [NSMutableArray array];
     self.appearanceAlpha = [NSMutableArray array];
-    for (UIView *view in reveal) {
-        [self rememberAppearance:view];
-        view.hidden = NO;
-        view.alpha = 1;
-    }
-    self.wallpaperCount = wallpaper.count;
+    self.appearanceInteraction = [NSMutableArray array];
+    self.appearanceScrollViews = [NSMutableArray array];
+    self.appearanceScrollEnabled = [NSMutableArray array];
+    [self adjustDesktopView:self.desktop];
     NSUInteger hidden = 0;
     NFBCountHiddenViews(self.desktop, &hidden);
-    NFBDebugLog(@"desktop pane: revealed %lu view(s), wallpaper=%lu, still hidden=%lu",
-        (unsigned long)reveal.count, (unsigned long)wallpaper.count, (unsigned long)hidden);
+    NFBDebugLog(@"desktop pane: adjusted=%lu wallpaper=%lu scroll=%lu still hidden=%lu",
+        (unsigned long)self.appearanceViews.count, (unsigned long)self.wallpaperCount,
+        (unsigned long)self.appearanceScrollViews.count, (unsigned long)hidden);
 }
 - (void)restoreDesktopAppearance {
     for (NSUInteger index = 0; index < self.appearanceViews.count; index++) {
         UIView *view = self.appearanceViews[index];
         view.hidden = self.appearanceHidden[index].boolValue;
         view.alpha = self.appearanceAlpha[index].doubleValue;
+        view.userInteractionEnabled = self.appearanceInteraction[index].boolValue;
     }
+    for (NSUInteger index = 0; index < self.appearanceScrollViews.count; index++)
+        self.appearanceScrollViews[index].scrollEnabled = self.appearanceScrollEnabled[index].boolValue;
     self.appearanceViews = nil; self.appearanceHidden = nil; self.appearanceAlpha = nil;
+    self.appearanceInteraction = nil; self.appearanceScrollViews = nil; self.appearanceScrollEnabled = nil;
 }
 - (void)installPaneBackdrop {
     // The desktop subtree carries no wallpaper of its own, so borrow one: a
@@ -318,6 +346,8 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
         backdrop = material;
     }
     self.paneBackdrop = backdrop;
+    // A backdrop is decoration: it must never take touches away from the desktop.
+    backdrop.userInteractionEnabled = NO;
     [self.canvas insertSubview:backdrop atIndex:0];
     NFBDebugLog(@"desktop pane: backdrop installed (%@)", NSStringFromClass(backdrop.class));
 }
