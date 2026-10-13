@@ -82,7 +82,7 @@ static void CheckOpen(BOOL opened, NSString *name, UIView *desktop, UIView *root
         UIView *panel=desktop.superview.superview;
         CGRect paneRect=[panel convertRect:panel.bounds toView:desktop.window];
         paneRect=[self.window convertRect:paneRect fromWindow:desktop.window];
-        Check(!CGRectEqualToRect(paneRect,anchor.frame),@"independent pane does not replace original app");
+        Check(CGRectEqualToRect(paneRect,anchor.frame),@"split desktop pane matches the split app pane");
         BOOL hasFrost=NO;
         for (UIView *v in root.view.subviews) if ([v isKindOfClass:UIVisualEffectView.class]) hasFrost=YES;
         Check(hasFrost,@"desktop background is frosted");

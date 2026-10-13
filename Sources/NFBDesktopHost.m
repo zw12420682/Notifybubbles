@@ -37,6 +37,11 @@
 @property(nonatomic, copy) NSArray<NSLayoutConstraint *> *constraints;
 @property(nonatomic, strong) NSTimer *timer;
 @property(nonatomic, strong) UIVisualEffectView *backgroundFrost;
+@property(nonatomic, strong) UIView *paneBackdrop;
+@property(nonatomic, strong) NSMutableArray<UIView *> *appearanceViews;
+@property(nonatomic, strong) NSMutableArray<NSNumber *> *appearanceHidden;
+@property(nonatomic, strong) NSMutableArray<NSNumber *> *appearanceAlpha;
+@property(nonatomic) NSUInteger wallpaperCount;
 @property(nonatomic, copy) NSString *backgroundApp;
 @property(nonatomic) BOOL startedHome;
 @property(nonatomic) CGPoint dragStart;
@@ -48,6 +53,9 @@
 - (void)closePressed;
 - (void)check;
 - (void)restore;
+- (void)adoptDesktopAppearance;
+- (void)installPaneBackdrop;
+- (void)restoreDesktopAppearance;
 @end
 static NFBDesktopSession *session;
 // Keep one retiring transition so rapid reopening cannot inherit its backdrop.
@@ -211,35 +219,136 @@ static BOOL NFBDesktopLocked(void) {
     id lock = NFBCheckedObject(NSClassFromString(@"SBLockScreenManager"), @"sharedInstance");
     return NFBCheckedBool(lock, @"isUILocked", YES);
 }
+// The transplanted desktop keeps its icons, folders and widgets: moving the view
+// into the pane is what leaves the original home screen showing only its
+// wallpaper. What does need help is that SpringBoard hides the home screen's
+// content - and its wallpaper - while a fullscreen app is in front, which left
+// the pane completely blank. Only the content containers and the wallpaper are
+// revealed here, and every change is undone when the pane closes. Individual page
+// icon lists are deliberately left alone: only the current page should show.
+static BOOL NFBIsDesktopRevealClass(NSString *name) {
+    return [name containsString:@"Wallpaper"] || [name containsString:@"SBRootFolder"] ||
+        [name containsString:@"IconContent"];
+}
+static void NFBCollectRevealViews(UIView *view, NSMutableArray<UIView *> *reveal, NSMutableArray<UIView *> *wallpaper) {
+    for (UIView *child in view.subviews) {
+        NSString *name = NSStringFromClass(child.class);
+        BOOL isWallpaper = [name containsString:@"Wallpaper"];
+        if (isWallpaper) [wallpaper addObject:child];
+        if ((isWallpaper || NFBIsDesktopRevealClass(name)) && (child.hidden || child.alpha < 1))
+            [reveal addObject:child];
+        NFBCollectRevealViews(child, reveal, wallpaper);
+    }
+}
+static void NFBCountHiddenViews(UIView *view, NSUInteger *count) {
+    for (UIView *child in view.subviews) {
+        if (child.hidden || child.alpha < 0.01) (*count)++;
+        NFBCountHiddenViews(child, count);
+    }
+}
+static UIView *NFBWallpaperInTree(UIView *view) {
+    if ([NSStringFromClass(view.class) containsString:@"Wallpaper"] &&
+        !view.hidden && view.alpha > 0.01 && CGRectGetWidth(view.bounds) > 1 && CGRectGetHeight(view.bounds) > 1)
+        return view;
+    for (UIView *child in view.subviews) {
+        UIView *found = NFBWallpaperInTree(child);
+        if (found) return found;
+    }
+    return nil;
+}
+static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
+    for (UIWindow *window in NFBDesktopWindows()) {
+        if (window == excluding || window.hidden) continue;
+        UIView *found = NFBWallpaperInTree(window);
+        if (found) return found;
+    }
+    return nil;
+}
 @implementation NFBDesktopSession
+- (void)rememberAppearance:(UIView *)view {
+    [self.appearanceViews addObject:view];
+    [self.appearanceHidden addObject:@(view.hidden)];
+    [self.appearanceAlpha addObject:@(view.alpha)];
+}
+- (void)adoptDesktopAppearance {
+    NSMutableArray<UIView *> *reveal = [NSMutableArray array];
+    NSMutableArray<UIView *> *wallpaper = [NSMutableArray array];
+    NFBCollectRevealViews(self.desktop, reveal, wallpaper);
+    self.appearanceViews = [NSMutableArray array];
+    self.appearanceHidden = [NSMutableArray array];
+    self.appearanceAlpha = [NSMutableArray array];
+    for (UIView *view in reveal) {
+        [self rememberAppearance:view];
+        view.hidden = NO;
+        view.alpha = 1;
+    }
+    self.wallpaperCount = wallpaper.count;
+    NSUInteger hidden = 0;
+    NFBCountHiddenViews(self.desktop, &hidden);
+    NFBDebugLog(@"desktop pane: revealed %lu view(s), wallpaper=%lu, still hidden=%lu",
+        (unsigned long)reveal.count, (unsigned long)wallpaper.count, (unsigned long)hidden);
+}
+- (void)restoreDesktopAppearance {
+    for (NSUInteger index = 0; index < self.appearanceViews.count; index++) {
+        UIView *view = self.appearanceViews[index];
+        view.hidden = self.appearanceHidden[index].boolValue;
+        view.alpha = self.appearanceAlpha[index].doubleValue;
+    }
+    self.appearanceViews = nil; self.appearanceHidden = nil; self.appearanceAlpha = nil;
+}
+- (void)installPaneBackdrop {
+    // The desktop subtree carries no wallpaper of its own, so borrow one: a
+    // snapshot of the live system wallpaper when it is on screen, otherwise a
+    // material, so the pane never shows a bare light background.
+    UIView *backdrop = nil;
+    UIView *wallpaper = NFBSystemWallpaperView(self.window);
+    if (wallpaper) {
+        UIView *snapshot = [wallpaper snapshotViewAfterScreenUpdates:NO];
+        if (snapshot) {
+            snapshot.frame = self.canvas.bounds;
+            snapshot.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+            snapshot.userInteractionEnabled = NO;
+            backdrop = snapshot;
+        }
+    }
+    if (!backdrop) {
+        UIVisualEffectView *material = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial]];
+        material.frame = self.canvas.bounds;
+        material.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        backdrop = material;
+    }
+    self.paneBackdrop = backdrop;
+    [self.canvas insertSubview:backdrop atIndex:0];
+    NFBDebugLog(@"desktop pane: backdrop installed (%@)", NSStringFromClass(backdrop.class));
+}
 - (BOOL)place {
     UIWindow *window = self.window;
     CGRect screen = window.bounds;
     if (CGRectGetWidth(screen) >= CGRectGetHeight(screen)) return NFBDesktopFail(@"桌面分屏目前仅支持竖屏");
-    UIEdgeInsets safe = window.safeAreaInsets;
-    CGRect usable = UIEdgeInsetsInsetRect(screen, UIEdgeInsetsMake(MAX(12,safe.top),12,MAX(12,safe.bottom),12));
     if (!self.placed) {
         UIView *anchor = self.anchor;
         if (!anchor.window) return NFBDesktopFail(@"原分屏窗口已关闭");
-        CGRect anchorFrame = [anchor convertRect:anchor.bounds toView:anchor.window];
-        anchorFrame = [window convertRect:anchorFrame fromWindow:anchor.window];
-        CGFloat width = MIN(260, CGRectGetWidth(usable)*0.46);
-        CGFloat height = MIN(CGRectGetHeight(usable)*0.78,
-            width*CGRectGetHeight(self.originalBounds)/CGRectGetWidth(self.originalBounds)+36);
-        if (width < 120 || height < 180) return NFBDesktopFail(@"屏幕可用空间不足");
-        CGFloat x = CGRectGetMidX(anchorFrame) >= CGRectGetMidX(screen) ? CGRectGetMinX(usable) : CGRectGetMaxX(usable)-width;
-        self.panelFrame = CGRectMake(x, CGRectGetMidY(usable)-height/2, width, height);
+        // The pane reproduces the split app pane exactly: same size, same position.
+        // The anchor is itself a window, so convert straight into the pane window; a
+        // window-to-itself conversion would silently drop the origin.
+        CGRect anchorFrame = [anchor convertRect:anchor.bounds toView:window];
+        if (!isfinite(anchorFrame.origin.x) || !isfinite(anchorFrame.origin.y) ||
+            !isfinite(CGRectGetWidth(anchorFrame)) || !isfinite(CGRectGetHeight(anchorFrame)) ||
+            CGRectGetWidth(anchorFrame) < 120 || CGRectGetHeight(anchorFrame) < 180)
+            return NFBDesktopFail(@"原分屏窗口尺寸无效");
+        self.panelFrame = anchorFrame;
         self.placed = YES;
     }
     CGRect frame = self.panelFrame;
-    frame.origin.x = MAX(CGRectGetMinX(usable), MIN(frame.origin.x, CGRectGetMaxX(usable)-frame.size.width));
-    frame.origin.y = MAX(CGRectGetMinY(usable), MIN(frame.origin.y, CGRectGetMaxY(usable)-frame.size.height));
+    frame.origin.x = MAX(CGRectGetMinX(screen), MIN(frame.origin.x, CGRectGetMaxX(screen)-frame.size.width));
+    frame.origin.y = MAX(CGRectGetMinY(screen), MIN(frame.origin.y, CGRectGetMaxY(screen)-frame.size.height));
     self.panelFrame = frame;
     CGRect panelBounds = CGRectMake(0,0,frame.size.width,frame.size.height);
     CGPoint panelCenter = CGPointMake(CGRectGetMidX(frame),CGRectGetMidY(frame));
     if (!CGRectEqualToRect(self.panel.bounds,panelBounds)) self.panel.bounds = panelBounds;
     if (!CGPointEqualToPoint(self.panel.center,panelCenter)) self.panel.center = panelCenter;
-    self.canvas.frame = CGRectMake(0,36,frame.size.width,frame.size.height-36);
+    // The wallpaper fills the whole pane; the header floats above it.
+    self.canvas.frame = self.panel.bounds;
     double scale = NFBDesktopScale(CGRectGetWidth(self.originalBounds), CGRectGetHeight(self.originalBounds),
         CGRectGetWidth(self.canvas.bounds),CGRectGetHeight(self.canvas.bounds));
     if (!(scale > 0)) return NFBDesktopFail(@"桌面尺寸无效");
@@ -279,6 +388,7 @@ static BOOL NFBDesktopLocked(void) {
     UIView *snapshot = NFBDesktopAnimationsEnabled() ? [self.panel snapshotViewAfterScreenUpdates:NO] : nil;
     snapshot.frame = self.panel.frame; snapshot.userInteractionEnabled = NO;
     if (snapshot) [self.window addSubview:snapshot];
+    [self restoreDesktopAppearance];
     UIView *view = self.desktop;
     if (self.mutated && view && self.originalParent) {
         [view removeFromSuperview];
@@ -390,7 +500,9 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
         panel.backgroundColor = UIColor.secondarySystemBackgroundColor;
         panel.layer.cornerRadius = 14; panel.clipsToBounds = YES;
         next.panel = panel; [window addSubview:panel];
-        UIView *canvas = [UIView new]; canvas.backgroundColor = UIColor.systemBackgroundColor;
+        // Clear so the wallpaper - from the desktop subtree or borrowed below -
+        // shows through instead of a flat system background.
+        UIView *canvas = [UIView new]; canvas.backgroundColor = UIColor.clearColor;
         canvas.clipsToBounds = YES; next.canvas = canvas; [panel addSubview:canvas];
         UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0,0,0,36)];
         header.autoresizingMask = UIViewAutoresizingFlexibleWidth;
@@ -422,6 +534,10 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
         desktop.translatesAutoresizingMaskIntoConstraints = YES; desktop.autoresizingMask = UIViewAutoresizingNone;
         [canvas addSubview:desktop];
         if (![next place]) { [next restore]; return NO; }
+        // The pane keeps the desktop's icons, folders and widgets; only the
+        // wallpaper is forced on screen, and supplied when the subtree has none.
+        [next adoptDesktopAppearance];
+        if (next.wallpaperCount == 0) [next installPaneBackdrop];
 #ifndef NFB_DESKTOP_SIM_TEST
         NFBInstallDesktopLaunchHook();
 #endif
