@@ -278,7 +278,7 @@ static BOOL NFBDesktopLocked(void) {
     [self.timer invalidate]; self.timer = nil;
     UIView *snapshot = NFBDesktopAnimationsEnabled() ? [self.panel snapshotViewAfterScreenUpdates:NO] : nil;
     snapshot.frame = self.panel.frame; snapshot.userInteractionEnabled = NO;
-    if (snapshot) [self.window.rootViewController.view addSubview:snapshot];
+    if (snapshot) [self.window addSubview:snapshot];
     UIView *view = self.desktop;
     if (self.mutated && view && self.originalParent) {
         [view removeFromSuperview];
@@ -381,13 +381,15 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
         next.window = window;
         window.frame = anchor.window.screen.bounds;
         window.windowLevel = MAX(anchor.window.windowLevel+2, UIWindowLevelStatusBar+1);
-        UIViewController *controller = [UIViewController new];
-        controller.view.backgroundColor = UIColor.clearColor;
-        window.rootViewController = controller;
+        // Deliberately no root view controller: the panel is a direct subview of the
+        // window. The transplanted desktop view belongs to the home screen controller,
+        // and inserting it under a second, unrelated controller makes UIKit refuse the
+        // insert with UIViewControllerHierarchyInconsistency.
+        window.backgroundColor = UIColor.clearColor;
         UIView *panel = [[UIView alloc] initWithFrame:CGRectZero];
         panel.backgroundColor = UIColor.secondarySystemBackgroundColor;
         panel.layer.cornerRadius = 14; panel.clipsToBounds = YES;
-        next.panel = panel; [controller.view addSubview:panel];
+        next.panel = panel; [window addSubview:panel];
         UIView *canvas = [UIView new]; canvas.backgroundColor = UIColor.systemBackgroundColor;
         canvas.clipsToBounds = YES; next.canvas = canvas; [panel addSubview:canvas];
         UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0,0,0,36)];
@@ -437,7 +439,10 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
         NFBDebugLog(@"desktop host: native view %@ moved into split panel", NSStringFromClass(desktop.class));
         return YES;
     } @catch (NSException *exception) {
-        NFBDesktopFail([NSString stringWithFormat:@"桌面承载异常：%@", exception.name]);
+        NSArray<NSString *> *frames = exception.callStackSymbols ?: @[];
+        NSUInteger keep = MIN(frames.count, (NSUInteger)8);
+        NFBDesktopFail([NSString stringWithFormat:@"桌面承载异常：%@ %@ %@", exception.name,
+            exception.reason ?: @"", [[frames subarrayWithRange:NSMakeRange(0, keep)] componentsJoinedByString:@" <- "]]);
         if (session == next) session = nil;
         [next restore];
         return NO;
