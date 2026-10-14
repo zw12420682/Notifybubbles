@@ -16,6 +16,15 @@
 @property(nonatomic,copy) NSString *applicationBundleIdentifier;
 @end
 @implementation DesktopAppIconFixture @end
+@interface DesktopPagerFixture : UIScrollView
+@property(nonatomic) NSUInteger moves;
+@end
+@implementation DesktopPagerFixture
+- (void)setContentOffset:(CGPoint)offset animated:(BOOL)animated {
+    if (!CGPointEqualToPoint(offset,self.contentOffset)) self.moves++;
+    [super setContentOffset:offset animated:animated];
+}
+@end
 extern BOOL NFBLaunchAppFromDesktopIcon(id);
 static BOOL openAccepted=YES;
 static NSString *submittedBundle;
@@ -261,10 +270,31 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.7*NSEC_PER_SEC)),dispatch_get_main_queue(), ^{
                 @try {
                     for (UIView *v in root.subviews) Check(![v isKindOfClass:UIVisualEffectView.class],@"late old callback cannot leave a backdrop");
-                    [self finishResult:@"PASS"];
+                    [self runWidgetRefreshTests:desktop anchor:anchor root:root];
                 } @catch (NSException *e) { [self finishResult:[NSString stringWithFormat:@"FAIL: %@",e]]; }
             });
         });
+    });
+}
+- (void)runWidgetRefreshTests:(UIView *)desktop anchor:(UIView *)anchor root:(UIView *)root {
+    [UIView setAnimationsEnabled:NO];
+    state.home=NO; state.frontApp=@"com.example.background";
+    DesktopPagerFixture *pager=[[DesktopPagerFixture alloc] initWithFrame:desktop.bounds];
+    pager.pagingEnabled=YES;
+    pager.contentSize=CGSizeMake(pager.bounds.size.width*2,pager.bounds.size.height);
+    CGPoint original=CGPointMake(pager.bounds.size.width,0);
+    [pager setContentOffset:original animated:NO]; pager.moves=0;
+    [desktop addSubview:pager];
+    @try { CheckOpen(NFBShowDesktopInSplit(anchor),@"widget page refresh open",desktop,root); }
+    @catch (NSException *e) { [self finishResult:[NSString stringWithFormat:@"FAIL: %@",e]]; return; }
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.3*NSEC_PER_SEC)),dispatch_get_main_queue(), ^{
+        @try {
+            Check(pager.moves>=2 && CGPointEqualToPoint(pager.contentOffset,original),@"automatic page roundtrip restores exact original page");
+            NFBCloseDesktopSplit();
+            Check(CGPointEqualToPoint(pager.contentOffset,original),@"closing preserves refreshed page position");
+            [pager removeFromSuperview];
+            [self finishResult:@"PASS"];
+        } @catch (NSException *e) { [self finishResult:[NSString stringWithFormat:@"FAIL: %@",e]]; }
     });
 }
 

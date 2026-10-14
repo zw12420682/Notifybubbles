@@ -1659,6 +1659,7 @@ static double NFBNumber(NSString *key, double fallback) {
     if (button.opening || (self.buttons[button.appID] != button && self.favoriteButtons[button.appID] != button)) return;
     if (self.pendingRecord && [self.pendingRecord.appID isEqual:button.appID]) return;
     if (![self acceptGesture]) return;
+    NFBCloseDesktopSplit();
     self.generations[button.appID] = @([self.generations[button.appID] unsignedIntegerValue] + 1);
     [self.closingApps removeObject:button.appID];
     button.opening = YES;

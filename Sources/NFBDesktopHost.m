@@ -52,6 +52,10 @@
 @property(nonatomic) BOOL suppliedAppearance;
 @property(nonatomic,copy) NSString *pendingApp;
 @property(nonatomic) CFTimeInterval pendingDeadline;
+@property(nonatomic,strong) UIScrollView *refreshScroll;
+@property(nonatomic) CGPoint refreshOffset;
+@property(nonatomic,strong) UIView *refreshCover;
+- (void)refreshWidgetPage;
 - (void)activateDesktop;
 - (void)adoptDesktopInteraction;
 - (void)restoreDesktopInteraction;
@@ -76,6 +80,21 @@ static UIViewController *NFBDesktopOwner(UIViewController *controller, UIView *v
     for (UIViewController *child in controller.childViewControllers) {
         UIViewController *found=NFBDesktopOwner(child,view);
         if (found) return found;
+    }
+    return nil;
+}
+static UIScrollView *NFBDesktopPager(UIView *view) {
+    if (view.hidden || view.alpha<0.01) return nil;
+    if ([view isKindOfClass:UIScrollView.class]) {
+        UIScrollView *scroll=(UIScrollView *)view;
+        NSString *name=NSStringFromClass(scroll.class);
+        if ((scroll.pagingEnabled || [name containsString:@"IconScroll"]) &&
+            scroll.bounds.size.width>0 && scroll.contentSize.width>=scroll.bounds.size.width*2)
+            return scroll;
+    }
+    for (UIView *child in view.subviews) {
+        UIScrollView *pager=NFBDesktopPager(child);
+        if (pager) return pager;
     }
     return nil;
 }
@@ -157,6 +176,7 @@ UIView *NFBDesktopSplitHitTest(UIWindow *window, CGPoint point, UIEvent *event, 
     if (!*handled) return nil;
     CGPoint local = [active.panel convertPoint:point fromView:window];
     if (![active.panel pointInside:local withEvent:event]) return nil;
+    if (active.refreshScroll) return active.panel;
     if (event) [active activateDesktop];
     UIView *hit = [active.panel hitTest:local withEvent:event];
     UIView *originalHit=hit;
@@ -390,6 +410,41 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
     return nil;
 }
 @implementation NFBDesktopSession
+- (void)refreshWidgetPage {
+    if (session!=self || self.restoring || self.startedHome || self.pendingApp.length) return;
+    UIScrollView *pager=NFBDesktopPager(self.desktop);
+    if (!pager || pager.dragging || pager.decelerating) {
+        NFBErrorLog(@"desktop widget page refresh: no idle horizontal pager"); return;
+    }
+    CGPoint original=pager.contentOffset;
+    CGFloat width=pager.bounds.size.width;
+    CGFloat minimum=-pager.adjustedContentInset.left;
+    CGFloat maximum=pager.contentSize.width-width+pager.adjustedContentInset.right;
+    CGFloat target=original.x+width<=maximum+0.5 ? MIN(maximum,original.x+width) : MAX(minimum,original.x-width);
+    if (fabs(target-original.x)<width*0.5) return;
+    self.refreshScroll=pager; self.refreshOffset=original;
+    UIView *cover=[self.canvas snapshotViewAfterScreenUpdates:NO];
+    cover.frame=self.canvas.bounds; cover.userInteractionEnabled=NO;
+    self.refreshCover=cover; if (cover) [self.canvas addSubview:cover];
+    // Reproduce the device-proven page exit/reentry, with the original page
+    // covered and its exact offset restored before exposing the refreshed pane.
+    [UIView performWithoutAnimation:^{
+        [pager setContentOffset:CGPointMake(target,original.y) animated:NO];
+        [pager layoutIfNeeded];
+    }];
+    __weak NFBDesktopSession *weakSession=self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.1*NSEC_PER_SEC)),dispatch_get_main_queue(), ^{
+        NFBDesktopSession *active=weakSession;
+        if (!active || session!=active || active.restoring) return;
+        [UIView performWithoutAnimation:^{
+            [pager setContentOffset:original animated:NO];
+            [pager layoutIfNeeded];
+        }];
+        [active.refreshCover removeFromSuperview]; active.refreshCover=nil;
+        active.refreshScroll=nil;
+        NFBDebugLog(@"desktop widget page refresh: restored %@ offset=%@",NSStringFromClass(pager.class),NSStringFromCGPoint(original));
+    });
+}
 - (void)activateDesktop {
     if (self.restoring) return;
     [self adoptDesktopInteraction];
@@ -582,6 +637,8 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
     if (self.restoring) return;
     self.restoring = YES;
     [self.timer invalidate]; self.timer = nil;
+    if (self.refreshScroll) [self.refreshScroll setContentOffset:self.refreshOffset animated:NO];
+    self.refreshScroll=nil; [self.refreshCover removeFromSuperview]; self.refreshCover=nil;
     [self restoreDesktopInteraction];
     if (self.suppliedAppearance) {
         [self.desktopController beginAppearanceTransition:NO animated:NO];
@@ -751,6 +808,7 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
                 NFBDesktopSession *active=refreshSession;
                 if (active && session==active && !active.restoring) {
                     [active.desktop setNeedsLayout]; [active.desktop layoutIfNeeded];
+                    [active refreshWidgetPage];
                     NFBDebugLog(@"desktop widget appearance refreshed for fullscreen background");
                 }
             });
