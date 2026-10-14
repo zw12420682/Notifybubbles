@@ -100,6 +100,11 @@ static void CheckOpen(BOOL opened, NSString *name, UIView *desktop, UIView *root
         Check(desktop.userInteractionEnabled && desktop.translatesAutoresizingMaskIntoConstraints,@"native touches enabled");
         Check(disabledContainer.userInteractionEnabled && scroll.userInteractionEnabled && scroll.scrollEnabled && tap.enabled,
             @"nested disabled native touch paths restored in pane");
+        disabledContainer.userInteractionEnabled=NO; scroll.scrollEnabled=NO; tap.enabled=NO;
+        NFBUpdateDesktopSplit(YES);
+        Check(disabledContainer.userInteractionEnabled && scroll.scrollEnabled && tap.enabled,
+            @"later native interaction disabling is repaired");
+        NFBUpdateDesktopSplit(YES);
         Check(self.window.isKeyWindow,@"original focus preserved");
         for (NSLayoutConstraint *constraint in constraints) Check(!constraint.active,@"external constraints detached");
         CGPoint point=[touch convertPoint:CGPointMake(30,30) toView:desktop.window];

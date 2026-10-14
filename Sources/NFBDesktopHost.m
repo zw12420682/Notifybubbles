@@ -338,9 +338,9 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
     NFBDebugLog(@"desktop pane: backdrop installed (%@)", NSStringFromClass(backdrop.class));
 }
 - (void)adoptDesktopInteraction {
-    self.interactionViews = [NSMutableArray array]; self.interactionValues = [NSMutableArray array];
-    self.scrollViews = [NSMutableArray array]; self.scrollValues = [NSMutableArray array];
-    self.touchGestures = [NSMutableArray array]; self.gestureValues = [NSMutableArray array];
+    if (!self.interactionViews) { self.interactionViews = [NSMutableArray array]; self.interactionValues = [NSMutableArray array]; }
+    if (!self.scrollViews) { self.scrollViews = [NSMutableArray array]; self.scrollValues = [NSMutableArray array]; }
+    if (!self.touchGestures) { self.touchGestures = [NSMutableArray array]; self.gestureValues = [NSMutableArray array]; }
     NSMutableArray<UIView *> *stack = [NSMutableArray arrayWithObject:self.desktop];
     while (stack.count) {
         UIView *view = stack.lastObject; [stack removeLastObject];
@@ -350,25 +350,31 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
             [NSStringFromClass(view.class) containsString:@"IconView"] || view.gestureRecognizers.count > 0;
         if (!target) continue;
         for (UIView *ancestor=view; ancestor && ancestor != self.canvas; ancestor=ancestor.superview) {
-            if (!ancestor.userInteractionEnabled && ![self.interactionViews containsObject:ancestor]) {
-                [self.interactionViews addObject:ancestor]; [self.interactionValues addObject:@NO];
+            if (!ancestor.userInteractionEnabled) {
+                if (![self.interactionViews containsObject:ancestor]) {
+                    [self.interactionViews addObject:ancestor]; [self.interactionValues addObject:@NO];
+                }
                 ancestor.userInteractionEnabled=YES;
             }
         }
         if ([view isKindOfClass:UIScrollView.class]) {
             UIScrollView *scroll=(UIScrollView *)view;
-            [self.scrollViews addObject:scroll]; [self.scrollValues addObject:@(scroll.scrollEnabled)];
+            if (![self.scrollViews containsObject:scroll]) {
+                [self.scrollViews addObject:scroll]; [self.scrollValues addObject:@(scroll.scrollEnabled)];
+            }
             scroll.scrollEnabled=YES;
         }
         for (UIGestureRecognizer *gesture in view.gestureRecognizers) {
             if (!gesture.enabled && ([gesture isKindOfClass:UITapGestureRecognizer.class] ||
                 ([view isKindOfClass:UIScrollView.class] && gesture == [(UIScrollView *)view panGestureRecognizer]))) {
-                [self.touchGestures addObject:gesture]; [self.gestureValues addObject:@NO]; gesture.enabled=YES;
+                if (![self.touchGestures containsObject:gesture]) {
+                    [self.touchGestures addObject:gesture]; [self.gestureValues addObject:@NO];
+                }
+                gesture.enabled=YES;
             }
         }
     }
-    NFBDebugLog(@"desktop touch path: enabled %lu containers, %lu scroll views, %lu gestures",
-        (unsigned long)self.interactionViews.count,(unsigned long)self.scrollViews.count,(unsigned long)self.touchGestures.count);
+
 }
 - (void)restoreDesktopInteraction {
     for (NSUInteger i=0;i<self.touchGestures.count;i++) self.touchGestures[i].enabled=self.gestureValues[i].boolValue;
@@ -436,7 +442,10 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
     if (self.desktop.superview != self.canvas || ![self place]) {
         if (self.desktop.superview != self.canvas) NFBDesktopFail(@"系统重新调整了桌面视图，已恢复桌面");
         failurePending = YES; NFBCloseDesktopSplit();
+        return;
     }
+    // Repair native interaction changes without overwriting the original state.
+    [self adoptDesktopInteraction];
 }
 - (void)restore {
     if (self.restoring) return;
@@ -601,7 +610,9 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
         __weak NFBDesktopSession *weakSession=next;
         window.activateDesktop=^{
             NFBDesktopSession *active=weakSession;
-            if (!active || active.restoring || active.window.isKeyWindow) return;
+            if (!active || active.restoring) return;
+            [active adoptDesktopInteraction];
+            if (active.window.isKeyWindow) return;
             for (UIWindow *candidate in NFBDesktopWindows()) if (candidate.isKeyWindow) { active.previousKeyWindow=candidate; break; }
             [active.window makeKeyWindow];
         };
