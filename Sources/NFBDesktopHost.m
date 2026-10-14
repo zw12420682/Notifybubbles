@@ -46,6 +46,7 @@
 @property(nonatomic) BOOL originalWindowOpaque;
 @property(nonatomic,strong) NSMutableArray<UIView *> *windowSiblings;
 @property(nonatomic,strong) NSMutableArray<NSNumber *> *windowSiblingHidden;
+@property(nonatomic) NSUInteger blockedHitReports;
 - (void)activateDesktop;
 - (void)adoptDesktopInteraction;
 - (void)restoreDesktopInteraction;
@@ -68,6 +69,26 @@ static NFBDesktopSession *session;
 static BOOL NFBDesktopAnimationsEnabled(void) {
     return UIView.areAnimationsEnabled && !UIAccessibilityIsReduceMotionEnabled();
 }
+static void NFBLogDesktopTouchTree(UIView *view, NSUInteger depth) {
+    if (depth > 6) return;
+    NFBDebugLog(@"desktop touch tree: depth=%lu class=%@ hidden=%d alpha=%.2f interaction=%d bounds=%@ frame=%@ gestures=%lu",
+        (unsigned long)depth, NSStringFromClass(view.class), view.hidden, view.alpha,
+        view.userInteractionEnabled, NSStringFromCGRect(view.bounds), NSStringFromCGRect(view.frame),
+        (unsigned long)view.gestureRecognizers.count);
+    for (UIView *child in view.subviews) NFBLogDesktopTouchTree(child, depth+1);
+}
+// iOS 16.0.3 device logs show the private root wrapper returning itself for
+// every icon/page touch. Only repair that observed blocker, within this session.
+// Keep child hit testing native so hidden pages and overlapping views stay excluded.
+static UIView *NFBDesktopRepairWrapperHit(UIView *hit, UIWindow *window, CGPoint point, UIEvent *event) {
+    if (![NSStringFromClass(hit.class) isEqualToString:@"_SBRootFolderLayoutWrapperView"])
+        return hit;
+    for (UIView *child in hit.subviews.reverseObjectEnumerator) {
+        UIView *candidate=[child hitTest:[child convertPoint:point fromView:window] withEvent:event];
+        if (candidate) return candidate;
+    }
+    return hit;
+}
 // Use the native home window: its controller and scene remain the desktop owners.
 // This helper is also exercised by the simulator window fixture.
 UIView *NFBDesktopSplitHitTest(UIWindow *window, CGPoint point, UIEvent *event, BOOL *handled) {
@@ -78,6 +99,12 @@ UIView *NFBDesktopSplitHitTest(UIWindow *window, CGPoint point, UIEvent *event, 
     if (![active.panel pointInside:local withEvent:event]) return nil;
     if (event) [active activateDesktop];
     UIView *hit = [active.panel hitTest:local withEvent:event];
+    UIView *originalHit=hit;
+    hit=NFBDesktopRepairWrapperHit(hit,window,point,event);
+    if (hit!=originalHit)
+        NFBDebugLog(@"desktop wrapper route: %@ -> %@", NSStringFromClass(originalHit.class), NSStringFromClass(hit.class));
+    else if ([NSStringFromClass(hit.class) isEqualToString:@"_SBRootFolderLayoutWrapperView"] && active.blockedHitReports++ < 2)
+        NFBLogDesktopTouchTree(hit,0);
     NFBDebugLog(@"desktop native hit: %@", hit ? NSStringFromClass(hit.class) : @"nil");
     return hit;
 }

@@ -7,6 +7,14 @@
 @implementation SBRootFolderView @end
 @interface SBHomeScreenViewController : UIViewController @end
 @implementation SBHomeScreenViewController @end
+// Reproduce the device log: the private wrapper stops hit testing at itself.
+@interface _SBRootFolderLayoutWrapperView : UIView @end
+@implementation _SBRootFolderLayoutWrapperView
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    if (self.hidden || self.alpha<0.01 || !self.userInteractionEnabled || ![self pointInside:point withEvent:event]) return nil;
+    return self;
+}
+@end
 @interface SBLockScreenManager : NSObject
 @property(nonatomic) BOOL locked;
 + (instancetype)sharedInstance;
@@ -97,8 +105,10 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
         CGFloat nativeLevel=nativeWindow.windowLevel;
         CGRect bounds=desktop.bounds; CGPoint center=desktop.center;
         desktop.userInteractionEnabled=NO;
+        UIView *wrapper=[[_SBRootFolderLayoutWrapperView alloc] initWithFrame:desktop.bounds];
+        [desktop addSubview:wrapper];
         UIView *disabledContainer=[[UIView alloc] initWithFrame:desktop.bounds];
-        disabledContainer.userInteractionEnabled=NO; [desktop addSubview:disabledContainer];
+        disabledContainer.userInteractionEnabled=NO; [wrapper addSubview:disabledContainer];
         UIScrollView *scroll=[[UIScrollView alloc] initWithFrame:disabledContainer.bounds];
         scroll.scrollEnabled=NO; scroll.userInteractionEnabled=NO; [disabledContainer addSubview:scroll];
         UIControl *touch=[[UIControl alloc] initWithFrame:CGRectMake(100,100,60,60)]; [scroll addSubview:touch];
@@ -126,12 +136,19 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
         for (NSLayoutConstraint *constraint in constraints) Check(!constraint.active,@"external constraints detached");
         CGPoint point=[touch convertPoint:CGPointMake(30,30) toView:desktop.window];
         Check([desktop.window hitTest:point withEvent:nil]==touch,@"scaled hit testing reaches native child");
+        UIView *hiddenPage=[[UIView alloc] initWithFrame:wrapper.bounds];
+        hiddenPage.hidden=YES; [wrapper addSubview:hiddenPage];
+        Check([desktop.window hitTest:point withEvent:nil]==touch,@"wrapper repair excludes hidden pages");
+        [hiddenPage removeFromSuperview];
         Check([desktop.window hitTest:CGPointMake(1,1) withEvent:nil]==nil,@"outside panel passes through");
         Check(desktop.window.isKeyWindow,@"touch activation gives native desktop focus");
         NFBCloseDesktopSplit(); NFBCloseDesktopSplit();
         Check(self.appWindow.isKeyWindow,@"desktop close restores previous app key window");
         Check(nativeWindow.rootViewController==nativeRoot && !nativeWindow.hidden && nativeWindow.windowLevel==nativeLevel,
             @"close preserves native root controller visibility and window level");
+        wrapper.userInteractionEnabled=YES;
+        Check([wrapper hitTest:CGPointMake(130,130) withEvent:nil]==wrapper,
+            @"wrapper private behavior remains unchanged outside split session");
         for (UIView *v in root.view.subviews) Check(![v isKindOfClass:UIVisualEffectView.class],@"disabled animations clean backdrop synchronously");
         Check(!NFBDesktopSplitActive() && desktop.superview==root.view,@"idempotent restore");
         Check(!disabledContainer.userInteractionEnabled && !scroll.userInteractionEnabled && !scroll.scrollEnabled && !tap.enabled,
