@@ -47,15 +47,23 @@ static void CheckOpen(BOOL opened, NSString *name, UIView *desktop, UIView *root
         (unsigned long)root.subviews.count, NFBWindowSummary()];
     [NSException raise:@"DesktopTestFailure" format:@"%@ | %@", name, detail];
 }
-@interface UIWindow (DesktopActivationFixture)
-@property(nonatomic,copy) void (^activateDesktop)(void);
+extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
+@interface DesktopNativeWindowFixture : UIWindow
+@end
+@implementation DesktopNativeWindowFixture
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    BOOL handled=NO;
+    UIView *hit=NFBDesktopSplitHitTest(self,point,event,&handled);
+    return handled ? hit : [super hitTest:point withEvent:event];
+}
 @end
 @interface TestDelegate : UIResponder <UIApplicationDelegate>
 @property(nonatomic,strong) UIWindow *window;
+@property(nonatomic,strong) UIWindow *appWindow;
 @end
 @implementation TestDelegate
 - (BOOL)application:(__unused UIApplication *)application didFinishLaunchingWithOptions:(__unused NSDictionary *)options {
-    self.window=[[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
+    self.window=[[DesktopNativeWindowFixture alloc] initWithFrame:UIScreen.mainScreen.bounds];
     UIViewController *root=[UIViewController new]; self.window.rootViewController=root;
     [self.window makeKeyAndVisible];
     dispatch_async(dispatch_get_main_queue(), ^{ [self runTests]; });
@@ -78,8 +86,15 @@ static void CheckOpen(BOOL opened, NSString *name, UIView *desktop, UIView *root
             [desktop.heightAnchor constraintEqualToAnchor:root.view.heightAnchor]];
         [NSLayoutConstraint activateConstraints:constraints]; [root.view layoutIfNeeded];
         UIView *anchor=[[UIView alloc] initWithFrame:CGRectMake(30,200,180,380)];
-        [root.view addSubview:anchor]; state.floatingWindow=anchor;
+        self.appWindow=[[UIWindow alloc] initWithFrame:self.window.frame];
+        self.appWindow.rootViewController=[UIViewController new];
+        self.appWindow.windowLevel=UIWindowLevelNormal+10;
+        [self.appWindow.rootViewController.view addSubview:anchor];
+        [self.appWindow makeKeyAndVisible]; state.floatingWindow=anchor;
         NSUInteger index=[root.view.subviews indexOfObjectIdenticalTo:desktop];
+        UIWindow *nativeWindow=desktop.window;
+        UIViewController *nativeRoot=nativeWindow.rootViewController;
+        CGFloat nativeLevel=nativeWindow.windowLevel;
         CGRect bounds=desktop.bounds; CGPoint center=desktop.center;
         desktop.userInteractionEnabled=NO;
         UIView *disabledContainer=[[UIView alloc] initWithFrame:desktop.bounds];
@@ -90,6 +105,8 @@ static void CheckOpen(BOOL opened, NSString *name, UIView *desktop, UIView *root
         UITapGestureRecognizer *tap=[[UITapGestureRecognizer alloc] init]; tap.enabled=NO; [touch addGestureRecognizer:tap];
         CheckOpen(NFBShowDesktopInSplit(anchor),@"open",desktop,root.view);
         Check(NFBDesktopSplitActive() && desktop.superview!=root.view,@"real view transferred");
+        Check(desktop.window==nativeWindow && nativeWindow.rootViewController==nativeRoot,
+            @"desktop remains in its native window and controller scene");
         UIView *panel=desktop.superview.superview;
         CGRect paneRect=[panel convertRect:panel.bounds toView:desktop.window];
         paneRect=[self.window convertRect:paneRect fromWindow:desktop.window];
@@ -105,16 +122,16 @@ static void CheckOpen(BOOL opened, NSString *name, UIView *desktop, UIView *root
         Check(disabledContainer.userInteractionEnabled && scroll.scrollEnabled && tap.enabled,
             @"later native interaction disabling is repaired");
         NFBUpdateDesktopSplit(YES);
-        Check(self.window.isKeyWindow,@"original focus preserved");
+        Check(self.window.isKeyWindow,@"native desktop receives focus at open");
         for (NSLayoutConstraint *constraint in constraints) Check(!constraint.active,@"external constraints detached");
         CGPoint point=[touch convertPoint:CGPointMake(30,30) toView:desktop.window];
         Check([desktop.window hitTest:point withEvent:nil]==touch,@"scaled hit testing reaches native child");
         Check([desktop.window hitTest:CGPointMake(1,1) withEvent:nil]==nil,@"outside panel passes through");
-        void (^activate)(void)=desktop.window.activateDesktop;
-        Check(activate!=nil,@"desktop focus activation installed"); activate();
         Check(desktop.window.isKeyWindow,@"touch activation gives native desktop focus");
         NFBCloseDesktopSplit(); NFBCloseDesktopSplit();
-        Check(self.window.isKeyWindow,@"desktop close restores previous key window");
+        Check(self.appWindow.isKeyWindow,@"desktop close restores previous app key window");
+        Check(nativeWindow.rootViewController==nativeRoot && !nativeWindow.hidden && nativeWindow.windowLevel==nativeLevel,
+            @"close preserves native root controller visibility and window level");
         for (UIView *v in root.view.subviews) Check(![v isKindOfClass:UIVisualEffectView.class],@"disabled animations clean backdrop synchronously");
         Check(!NFBDesktopSplitActive() && desktop.superview==root.view,@"idempotent restore");
         Check(!disabledContainer.userInteractionEnabled && !scroll.userInteractionEnabled && !scroll.scrollEnabled && !tap.enabled,
@@ -149,7 +166,7 @@ static void CheckOpen(BOOL opened, NSString *name, UIView *desktop, UIView *root
         Check(!NFBShowDesktopInSplit(anchor),@"missing original window rejected");
         Check(desktop.superview==root.view && CGAffineTransformIsIdentity(desktop.transform) &&
             CGRectEqualToRect(desktop.bounds,bounds),@"failed preflight does not mutate desktop");
-        [root.view addSubview:anchor];
+        [self.appWindow.rootViewController.view addSubview:anchor];
         CheckOpen(NFBShowDesktopInSplit(anchor),@"open before system view move",desktop,root.view);
         [root.view addSubview:desktop]; NFBUpdateDesktopSplit(YES);
         Check(!NFBDesktopSplitActive() && NFBConsumeDesktopSplitFailure().length>0,@"unexpected system move reports failure");
