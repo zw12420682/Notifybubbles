@@ -140,6 +140,13 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
         hiddenPage.hidden=YES; [wrapper addSubview:hiddenPage];
         Check([desktop.window hitTest:point withEvent:nil]==touch,@"wrapper repair excludes hidden pages");
         [hiddenPage removeFromSuperview];
+        UIView *emptyWrapper=[[_SBRootFolderLayoutWrapperView alloc] initWithFrame:desktop.bounds];
+        [desktop addSubview:emptyWrapper];
+        // Content is a sibling behind the empty layout overlay, as on the device.
+        [desktop insertSubview:disabledContainer belowSubview:emptyWrapper];
+        Check([desktop.window hitTest:point withEvent:nil]==touch,@"empty layout overlay routes to native content behind it");
+        [emptyWrapper removeFromSuperview];
+        [wrapper addSubview:disabledContainer];
         Check([desktop.window hitTest:CGPointMake(1,1) withEvent:nil]==nil,@"outside panel passes through");
         Check(desktop.window.isKeyWindow,@"touch activation gives native desktop focus");
         NFBCloseDesktopSplit(); NFBCloseDesktopSplit();

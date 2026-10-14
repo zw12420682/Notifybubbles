@@ -87,6 +87,25 @@ static UIView *NFBDesktopRepairWrapperHit(UIView *hit, UIWindow *window, CGPoint
         UIView *candidate=[child hitTest:[child convertPoint:point fromView:window] withEvent:event];
         if (candidate) return candidate;
     }
+    // Device tree shows this wrapper has no children or gestures. It may be a
+    // frontmost layout sibling rather than the owner of the interactive content.
+    // Search only siblings behind that branch, keeping their native hit tests.
+    if (hit.subviews.count==0 && hit.gestureRecognizers.count==0) {
+        UIView *branch=hit;
+        while (branch && branch!=session.desktop) {
+            UIView *parent=branch.superview;
+            if (!parent || ![branch isDescendantOfView:session.desktop]) break;
+            NSUInteger index=[parent.subviews indexOfObjectIdenticalTo:branch];
+            if (index==NSNotFound) break;
+            while (index>0) {
+                UIView *sibling=parent.subviews[--index];
+                UIView *candidate=[sibling hitTest:[sibling convertPoint:point fromView:window] withEvent:event];
+                if (candidate && ![NSStringFromClass(candidate.class) isEqualToString:@"_SBRootFolderLayoutWrapperView"])
+                    return candidate;
+            }
+            branch=parent;
+        }
+    }
     return hit;
 }
 // Use the native home window: its controller and scene remain the desktop owners.
@@ -104,7 +123,7 @@ UIView *NFBDesktopSplitHitTest(UIWindow *window, CGPoint point, UIEvent *event, 
     if (hit!=originalHit)
         NFBDebugLog(@"desktop wrapper route: %@ -> %@", NSStringFromClass(originalHit.class), NSStringFromClass(hit.class));
     else if ([NSStringFromClass(hit.class) isEqualToString:@"_SBRootFolderLayoutWrapperView"] && active.blockedHitReports++ < 2)
-        NFBLogDesktopTouchTree(hit,0);
+        NFBLogDesktopTouchTree(active.desktop,0);
     NFBDebugLog(@"desktop native hit: %@", hit ? NSStringFromClass(hit.class) : @"nil");
     return hit;
 }
