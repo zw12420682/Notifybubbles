@@ -3,6 +3,7 @@
 #import "NFBHotspotAdapters.h"
 #import "NFBDebugLog.h"
 #import <substrate.h>
+#import <UIKit/UIKit.h>
 #include <dlfcn.h>
 static BOOL configured;
 static double idleSeconds=300;
@@ -11,6 +12,9 @@ static NFBHotspotPolicy policy;
 static id hotspotController;
 static void *connectivityLibrary, *modemLibrary;
 static void NFBCheckHotspot(void);
+static double submittedAt;
+static unsigned closeAttempts;
+static BOOL nativeToggleUsed;
 static id NFBHotspotManager(void) {
     if (!NSClassFromString(@"MISManager") && !modemLibrary)
         modemLibrary=dlopen("/System/Library/PreferenceBundles/WirelessModemSettings.bundle/WirelessModemSettings",RTLD_LAZY);
@@ -22,7 +26,9 @@ static id NFBHotspotController(void) {
         connectivityLibrary=dlopen("/System/Library/ControlCenter/Bundles/ConnectivityModule.bundle/ConnectivityModule",RTLD_LAZY);
     Class cls=NSClassFromString(@"CCUIConnectivityHotspotViewController");
     if (!cls) return nil;
-    @try { hotspotController=[[cls alloc] init]; } @catch (__unused NSException *error) {}
+    @try { hotspotController=[[cls alloc] init];
+        if ([hotspotController isKindOfClass:UIViewController.class]) [(UIViewController *)hotspotController loadViewIfNeeded];
+    } @catch (__unused NSException *error) {}
     return hotspotController;
 }
 static BOOL NFBHotspotVoid(id object, NSString *name) {
@@ -33,37 +39,43 @@ static BOOL NFBHotspotVoid(id object, NSString *name) {
 }
 static int NFBControllerState(id controller) {
     for (NSString *name in @[@"discoverable",@"isDiscoverable"])
-        if (NFBBooleanGetterCompatible(controller,NSSelectorFromString(name))) return NFBCheckedBool(controller,name,NO) ? 1 : 0;
+        if (NFBBooleanGetterCompatible(controller,NSSelectorFromString(name))) {
+            @try { return ((BOOL (*)(id,SEL))objc_msgSend)(controller,NSSelectorFromString(name)) ? 1 : 0; }
+            @catch (__unused NSException *error) { return -1; }
+        }
     return -1;
 }
 static id NFBTelephony(void) {
-    return NFBCheckedObject(NSClassFromString(@"SBTelephonyManager"),@"sharedTelephonyManager");
+    Class cls=NSClassFromString(@"SBTelephonyManager");
+    for (NSString *selector in @[@"sharedTelephonyManager",@"sharedInstance"]) {
+        id object=NFBCheckedObject(cls,selector);
+        if (object && [object isKindOfClass:cls]) return object;
+    }
+    return nil;
 }
 static void NFBReadHotspot(int *state, long long *clients) {
     id controller=NFBHotspotController();
     NFBHotspotVoid(controller,@"_updateState");
-    *state=NFBControllerState(controller);
-    if (*state < 0) *state=NFBMISState(NFBHotspotManager());
+    int controlState=NFBControllerState(controller), modemState=NFBMISState(NFBHotspotManager());
+    // Discoverability is the user's hotspot switch; modem service can be OFF
+    // while that switch remains enabled with no connected clients.
+    *state=NFBHotspotResolvedState(controlState,modemState);
     *clients=-1;
-    if (!NFBHotspotClientCount(NFBTelephony(),clients)) NFBHotspotClientCount(controller,clients);
+    if (!NFBHotspotClientCount(NFBTelephony(),clients) && !NFBHotspotClientCount(controller,clients))
+        NFBHotspotClientCount(NFBHotspotManager(),clients);
 }
 static BOOL NFBDisableHotspot(void) {
     // Check again immediately before changing anything; unknown is never zero.
     int state=-1; long long clients=-1; NFBReadHotspot(&state,&clients);
     if (state != 1 || clients != 0) return NO;
     id controller=NFBHotspotController();
-    // Prefer an explicit one-way discoverability setter when available.
-    for (NSString *name in @[@"setDiscoverable:",@"_setDiscoverable:"]) {
-        SEL selector=NSSelectorFromString(name); NSMethodSignature *sig=NFBSignature(controller,selector);
-        if (!sig || sig.numberOfArguments != 3 || strcmp(NFBHotspotType(sig.methodReturnType),"v")) continue;
-        const char *type=NFBHotspotType([sig getArgumentTypeAtIndex:2]);
-        if (strcmp(type,"B") && strcmp(type,"c")) continue;
-        @try { ((void (*)(id,SEL,BOOL))objc_msgSend)(controller,selector,NO); return YES; }
-        @catch (__unused NSException *error) { return NO; }
+    // Use the native Control Center action, not its discoverable property setter:
+    // updating a UI property alone does not necessarily disable the service.
+    // A tracking session may toggle at most once; retries are one-way MIS OFF.
+    if (!nativeToggleUsed && NFBControllerState(controller) == 1 && NFBHotspotVoid(controller,@"_toggleState")) {
+        nativeToggleUsed=YES;
+        return YES;
     }
-    // Control Center's native toggle is used only after a fresh, known ON read
-    // in this same main-queue turn, matching the system hotspot switch path.
-    if (NFBControllerState(controller) == 1 && NFBHotspotVoid(controller,@"_toggleState")) return YES;
     return NFBMISSetOff(NFBHotspotManager());
 }
 static void NFBCheckHotspot(void) {
@@ -77,12 +89,22 @@ static void NFBCheckHotspot(void) {
             NFBDumpMethods(NFBTelephony(),NO,@"hotspot telemetry",@[@"tether",@"hotspot",@"modem"]);
         }
     } else reportedUnavailable=NO;
-    if (NFBHotspotShouldClose(&policy,configured,state,clients,NSProcessInfo.processInfo.systemUptime,idleSeconds)) {
-        if (NFBDisableHotspot()) {
-            policy.submitted=true;
-            NFBDebugLog(@"hotspot auto-close submitted after %.0f seconds without clients",idleSeconds);
-        } else NFBHotspotReset(&policy);
+    double now=NSProcessInfo.processInfo.systemUptime;
+    if (policy.submitted && state == 0) NFBErrorLog(@"hotspot auto-close confirmed OFF");
+    BOOL eligible=configured && state == 1 && clients == 0;
+    if (!eligible) { closeAttempts=0; nativeToggleUsed=NO; submittedAt=0; }
+    if (policy.submitted && eligible && now-submittedAt >= 10 && closeAttempts < 3) {
+        policy.submitted=false;
+        NFBErrorLog(@"hotspot remains ON after close request; retrying explicit OFF");
     }
+    BOOL wasTracking=policy.tracking;
+    if (NFBHotspotShouldClose(&policy,configured,state,clients,now,idleSeconds)) {
+        closeAttempts++; submittedAt=now; policy.submitted=true;
+        BOOL sent=NFBDisableHotspot();
+        NFBErrorLog(@"hotspot auto-close attempt %u: submitted=%d; verifying actual switch",closeAttempts,sent);
+    }
+    if (!wasTracking && policy.tracking) NFBErrorLog(@"hotspot idle timer started: %.0f seconds, clients=0",idleSeconds);
+
 }
 static void NFBHotspotChanged(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
     (void)center; (void)observer; (void)name; (void)object; (void)userInfo;
@@ -122,6 +144,8 @@ void NFBConfigureHotspotAutoClose(BOOL enabled,double minutes) {
     configured=enabled;
     idleSeconds=(isfinite(minutes) ? MIN(60,MAX(1,minutes)) : 5)*60;
     NFBHotspotReset(&policy);
+    closeAttempts=0; nativeToggleUsed=NO; submittedAt=0;
+    NFBErrorLog(@"hotspot auto-close configured: enabled=%d timeout=%.0f",enabled,idleSeconds);
     [timer invalidate]; timer=nil;
     if (!enabled) return;
     NFBInstallHotspotObservers();

@@ -28,10 +28,13 @@ static void Check(BOOL valid, NSString *name) {
 // that was rejected, so CI reports why instead of only which assertion tripped.
 static NSString *NFBWindowSummary(void) {
     NSMutableArray *parts = [NSMutableArray array];
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
     for (UIWindow *window in UIApplication.sharedApplication.windows)
         [parts addObject:[NSString stringWithFormat:@"%@(hidden=%d,level=%.0f,root=%@)",
             NSStringFromClass(window.class), window.hidden, window.windowLevel,
             window.rootViewController ? NSStringFromClass(window.rootViewController.class) : @"nil"]];
+#pragma clang diagnostic pop
     return [parts componentsJoinedByString:@", "];
 }
 static void CheckOpen(BOOL opened, NSString *name, UIView *desktop, UIView *root) {
@@ -44,6 +47,9 @@ static void CheckOpen(BOOL opened, NSString *name, UIView *desktop, UIView *root
         (unsigned long)root.subviews.count, NFBWindowSummary()];
     [NSException raise:@"DesktopTestFailure" format:@"%@ | %@", name, detail];
 }
+@interface UIWindow (DesktopActivationFixture)
+@property(nonatomic,copy) void (^activateDesktop)(void);
+@end
 @interface TestDelegate : UIResponder <UIApplicationDelegate>
 @property(nonatomic,strong) UIWindow *window;
 @end
@@ -76,7 +82,12 @@ static void CheckOpen(BOOL opened, NSString *name, UIView *desktop, UIView *root
         NSUInteger index=[root.view.subviews indexOfObjectIdenticalTo:desktop];
         CGRect bounds=desktop.bounds; CGPoint center=desktop.center;
         desktop.userInteractionEnabled=NO;
-        UIView *touch=[[UIView alloc] initWithFrame:CGRectMake(100,100,60,60)]; [desktop addSubview:touch];
+        UIView *disabledContainer=[[UIView alloc] initWithFrame:desktop.bounds];
+        disabledContainer.userInteractionEnabled=NO; [desktop addSubview:disabledContainer];
+        UIScrollView *scroll=[[UIScrollView alloc] initWithFrame:disabledContainer.bounds];
+        scroll.scrollEnabled=NO; scroll.userInteractionEnabled=NO; [disabledContainer addSubview:scroll];
+        UIControl *touch=[[UIControl alloc] initWithFrame:CGRectMake(100,100,60,60)]; [scroll addSubview:touch];
+        UITapGestureRecognizer *tap=[[UITapGestureRecognizer alloc] init]; tap.enabled=NO; [touch addGestureRecognizer:tap];
         CheckOpen(NFBShowDesktopInSplit(anchor),@"open",desktop,root.view);
         Check(NFBDesktopSplitActive() && desktop.superview!=root.view,@"real view transferred");
         UIView *panel=desktop.superview.superview;
@@ -87,14 +98,22 @@ static void CheckOpen(BOOL opened, NSString *name, UIView *desktop, UIView *root
         for (UIView *v in root.view.subviews) if ([v isKindOfClass:UIVisualEffectView.class]) hasFrost=YES;
         Check(hasFrost,@"desktop background is frosted");
         Check(desktop.userInteractionEnabled && desktop.translatesAutoresizingMaskIntoConstraints,@"native touches enabled");
+        Check(disabledContainer.userInteractionEnabled && scroll.userInteractionEnabled && scroll.scrollEnabled && tap.enabled,
+            @"nested disabled native touch paths restored in pane");
         Check(self.window.isKeyWindow,@"original focus preserved");
         for (NSLayoutConstraint *constraint in constraints) Check(!constraint.active,@"external constraints detached");
         CGPoint point=[touch convertPoint:CGPointMake(30,30) toView:desktop.window];
         Check([desktop.window hitTest:point withEvent:nil]==touch,@"scaled hit testing reaches native child");
         Check([desktop.window hitTest:CGPointMake(1,1) withEvent:nil]==nil,@"outside panel passes through");
+        void (^activate)(void)=desktop.window.activateDesktop;
+        Check(activate!=nil,@"desktop focus activation installed"); activate();
+        Check(desktop.window.isKeyWindow,@"touch activation gives native desktop focus");
         NFBCloseDesktopSplit(); NFBCloseDesktopSplit();
+        Check(self.window.isKeyWindow,@"desktop close restores previous key window");
         for (UIView *v in root.view.subviews) Check(![v isKindOfClass:UIVisualEffectView.class],@"disabled animations clean backdrop synchronously");
         Check(!NFBDesktopSplitActive() && desktop.superview==root.view,@"idempotent restore");
+        Check(!disabledContainer.userInteractionEnabled && !scroll.userInteractionEnabled && !scroll.scrollEnabled && !tap.enabled,
+            @"nested touch and scroll state restored after close");
         Check([root.view.subviews indexOfObjectIdenticalTo:desktop]==index,@"original order");
         Check(CGRectEqualToRect(desktop.bounds,bounds) && CGPointEqualToPoint(desktop.center,center),@"original geometry");
         Check(CGAffineTransformIsIdentity(desktop.transform) && !desktop.userInteractionEnabled &&

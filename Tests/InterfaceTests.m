@@ -49,11 +49,31 @@
 - (BOOL)numberOfNetworkTetheredDevices { _calls++; return NO; }
 - (void)setState:(__unused id)value { _calls++; }
 @end
+@interface WideHotspotFixture : NSObject {
+@public unsigned long long _numberOfNetworkTetheredDevices;
+}
+@property(nonatomic) long long state;
+- (void)getState:(long long *)state andReason:(long long *)reason;
+@end
+@implementation WideHotspotFixture
+- (void)getState:(long long *)state andReason:(long long *)reason { *state=_state; *reason=0; }
+@end
 static void Check(BOOL ok) { if (!ok) abort(); }
 int main(void) {
  @autoreleasepool {
     Check(NFBIsSystemDesktop(@"com.apple.springboard"));
     Check(!NFBIsSystemDesktop(@"com.example.app") && !NFBIsSystemDesktop(nil));
+    Check(NFBHotspotResolvedState(0,1)==1 && NFBHotspotResolvedState(1,0)==1);
+    Check(NFBHotspotResolvedState(0,0)==0 && NFBHotspotResolvedState(-1,-1)==-1);
+    WideHotspotFixture *wide=[WideHotspotFixture new]; long long wideCount=-1;
+    wide->_numberOfNetworkTetheredDevices=0;
+    Check(NFBHotspotClientCount(wide,&wideCount) && wideCount==0);
+    wide->_numberOfNetworkTetheredDevices=3;
+    Check(NFBHotspotClientCount(wide,&wideCount) && wideCount==3);
+    wide->_numberOfNetworkTetheredDevices=ULLONG_MAX;
+    Check(!NFBHotspotClientCount(wide,&wideCount));
+    wide.state=1023; Check(NFBMISState(wide)==1);
+    Check(NFBMISSetOff(wide) && wide.state==1022 && NFBMISState(wide)==0);
     HotspotFixture *hotspot=[HotspotFixture new]; long long clients=-1;
     hotspot->_numberOfNetworkTetheredDevices=2;
     Check(NFBHotspotClientCount(hotspot,&clients) && clients==2);
