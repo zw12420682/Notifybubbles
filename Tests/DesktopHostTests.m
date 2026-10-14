@@ -5,8 +5,22 @@
 // Simulator fixtures supply the private classes; the host itself is production code.
 @interface SBRootFolderView : UIView @end
 @implementation SBRootFolderView @end
-@interface SBHomeScreenViewController : UIViewController @end
-@implementation SBHomeScreenViewController @end
+@interface SBHomeScreenViewController : UIViewController
+@property(nonatomic) NSUInteger appearances, disappearances;
+@end
+@implementation SBHomeScreenViewController
+- (void)viewDidAppear:(BOOL)animated { [super viewDidAppear:animated]; self.appearances++; }
+- (void)viewDidDisappear:(BOOL)animated { [super viewDidDisappear:animated]; self.disappearances++; }
+@end
+@interface DesktopAppIconFixture : UIView
+@property(nonatomic,copy) NSString *applicationBundleIdentifier;
+@end
+@implementation DesktopAppIconFixture @end
+extern BOOL NFBLaunchAppFromDesktopIcon(id);
+static BOOL openAccepted=YES;
+static NSString *submittedBundle;
+BOOL NFBOpenTrollApp(NSString *bundle) { submittedBundle=bundle; return openAccepted; }
+BOOL NFBSplitTrollFrontmostApp(void) { submittedBundle=@"frontmost"; return openAccepted; }
 // Reproduce the device log: the private wrapper stops hit testing at itself.
 @interface _SBRootFolderLayoutWrapperView : UIView @end
 @implementation _SBRootFolderLayoutWrapperView
@@ -174,16 +188,33 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
         Check(NFBDesktopSplitActive(),@"desktop pane is independent of reported background scene");
         NFBCloseDesktopSplit();
         Check(desktop.superview==root.view,@"close before app launch restores native view"); state.home=YES; state.frontApp=nil;
+        CheckOpen(NFBShowDesktopInSplit(anchor),@"open for split icon launch",desktop,root.view);
+        DesktopAppIconFixture *appIcon=[DesktopAppIconFixture new];
+        appIcon.applicationBundleIdentifier=@"com.example.desktop-app"; [desktop addSubview:appIcon];
+        openAccepted=NO;
+        Check(NFBLaunchAppFromDesktopIcon(appIcon) && NFBDesktopSplitActive(),@"rejected split launch retains desktop");
+        openAccepted=YES;
+        Check(NFBLaunchAppFromDesktopIcon(appIcon) && [submittedBundle isEqualToString:appIcon.applicationBundleIdentifier],@"desktop icon uses Open split adapter");
+        NFBUpdateDesktopSplit(YES);
+        Check(NFBDesktopSplitActive(),@"submitted launch alone does not close desktop");
+        state.floatingApp=appIcon.applicationBundleIdentifier; state.floatingWindow=anchor; state.mini=YES;
+        NFBUpdateDesktopSplit(YES); Check(NFBDesktopSplitActive(),@"mini window does not confirm split launch");
+        state.mini=NO; NFBUpdateDesktopSplit(YES);
+        Check(!NFBDesktopSplitActive(),@"visible target split automatically closes desktop");
+        state.floatingApp=nil; [appIcon removeFromSuperview];
         CheckOpen(NFBShowDesktopInSplit(anchor),@"open before disabling",desktop,root.view);
         NFBUpdateDesktopSplit(NO); Check(!NFBDesktopSplitActive(),@"disabled closes");
         state.home=NO; state.frontApp=@"com.example.background"; desktop.hidden=YES; desktop.alpha=0;
+        NSUInteger appearances=home.appearances, disappearances=home.disappearances;
         CheckOpen(NFBShowDesktopInSplit(anchor),@"fullscreen app can open hidden desktop",desktop,root.view);
+        Check(home.appearances==appearances+1,@"fullscreen background supplies home appearance for widget hosts");
         Check(!desktop.hidden && desktop.alpha==1,@"hidden native desktop displayed in pane");
         for (UIView *v in root.view.subviews) Check(![v isKindOfClass:UIVisualEffectView.class],@"fullscreen app background not blurred");
         NFBUpdateDesktopSplit(YES); Check(NFBDesktopSplitActive(),@"fullscreen background does not dismiss pane");
         anchor.hidden=YES; NFBUpdateDesktopSplit(YES);
         Check(NFBDesktopSplitActive(),@"independent pane survives original app pane hiding");
         anchor.hidden=NO; NFBCloseDesktopSplit();
+        Check(home.disappearances==disappearances+1,@"fullscreen appearance is balanced at close");
         Check(desktop.hidden && desktop.alpha==0,@"original hidden state restored");
         desktop.hidden=NO; desktop.alpha=1; state.home=YES; state.frontApp=nil;
         [anchor removeFromSuperview];

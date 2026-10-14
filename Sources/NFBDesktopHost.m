@@ -5,6 +5,7 @@
 #import "NFBSystemDesktop.h"
 #import "NFBDebugLog.h"
 #import "NFBPrivacy.h"
+#import "NFBTrollOpen.h"
 #import <QuartzCore/QuartzCore.h>
 #ifndef NFB_DESKTOP_SIM_TEST
 #import <substrate.h>
@@ -47,6 +48,10 @@
 @property(nonatomic,strong) NSMutableArray<UIView *> *windowSiblings;
 @property(nonatomic,strong) NSMutableArray<NSNumber *> *windowSiblingHidden;
 @property(nonatomic) NSUInteger blockedHitReports;
+@property(nonatomic,strong) UIViewController *desktopController;
+@property(nonatomic) BOOL suppliedAppearance;
+@property(nonatomic,copy) NSString *pendingApp;
+@property(nonatomic) CFTimeInterval pendingDeadline;
 - (void)activateDesktop;
 - (void)adoptDesktopInteraction;
 - (void)restoreDesktopInteraction;
@@ -66,6 +71,42 @@
 - (void)restoreDesktopAppearance;
 @end
 static NFBDesktopSession *session;
+static UIViewController *NFBDesktopOwner(UIViewController *controller, UIView *view) {
+    if (controller.isViewLoaded && controller.view==view) return controller;
+    for (UIViewController *child in controller.childViewControllers) {
+        UIViewController *found=NFBDesktopOwner(child,view);
+        if (found) return found;
+    }
+    return nil;
+}
+// An open request is not success: close only once Open reports the target pane.
+BOOL NFBLaunchAppFromDesktopIcon(id iconView) {
+    NFBDesktopSession *active=session;
+    if (!active || active.restoring) return NO;
+    if (![iconView isKindOfClass:UIView.class] || ![(UIView *)iconView isDescendantOfView:active.desktop]) return NO;
+    if (active.pendingApp.length) return YES;
+    id icon=NFBCheckedObject(iconView,@"icon");
+    id bundle=NFBCheckedObject(iconView,@"applicationBundleIdentifier");
+    if (![bundle isKindOfClass:NSString.class] || ![bundle length])
+        bundle=NFBCheckedObject(icon,@"applicationBundleID");
+    if (![bundle isKindOfClass:NSString.class] || ![bundle length])
+        bundle=NFBCheckedObject(icon,@"applicationBundleIdentifier");
+    if (![bundle isKindOfClass:NSString.class] || ![bundle length] || NFBIsSystemDesktop(bundle)) {
+        NFBErrorLog(@"desktop split launch: no application identifier for %@",NSStringFromClass([iconView class]));
+        UIAccessibilityPostNotification(UIAccessibilityAnnouncementNotification,@"无法读取应用标识，桌面分屏已保留");
+        return YES; // Never fall through to a fullscreen launch in the desktop pane.
+    }
+    active.pendingApp=bundle;
+    active.pendingDeadline=CACurrentMediaTime()+8;
+    BOOL submitted=!active.startedHome && [active.backgroundApp isEqualToString:bundle]
+        ? NFBSplitTrollFrontmostApp() : NFBOpenTrollApp(bundle);
+    if (!submitted) {
+        active.pendingApp=nil;
+        UIAccessibilityPostNotification(UIAccessibilityAnnouncementNotification,@"应用分屏打开失败，桌面分屏已保留");
+        NFBErrorLog(@"desktop split launch rejected: %@",bundle);
+    }
+    return YES;
+}
 static BOOL NFBDesktopAnimationsEnabled(void) {
     return UIView.areAnimationsEnabled && !UIAccessibilityIsReduceMotionEnabled();
 }
@@ -512,6 +553,19 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
     if (NFBDesktopLocked()) {
         NFBCloseDesktopSplit(); return;
     }
+    if (self.pendingApp.length) {
+        NFBInvalidateWindowState();
+        NFBWindowState *state=NFBCurrentWindowState();
+        if ([state.floatingApp isEqualToString:self.pendingApp] && state.floatingWindow && !state.mini) {
+            NFBDebugLog(@"desktop split launch visible: %@",self.pendingApp);
+            NFBCloseDesktopSplit(); return;
+        }
+        if (CACurrentMediaTime()>=self.pendingDeadline) {
+            NFBErrorLog(@"desktop split launch timed out: %@",self.pendingApp);
+            self.pendingApp=nil;
+            UIAccessibilityPostNotification(UIAccessibilityAnnouncementNotification,@"尚未确认应用分屏打开，桌面分屏已保留");
+        }
+    }
     if (self.desktop.superview != self.canvas || ![self place]) {
         if (self.desktop.superview != self.canvas) NFBDesktopFail(@"系统重新调整了桌面视图，已恢复桌面");
         failurePending = YES; NFBCloseDesktopSplit();
@@ -529,6 +583,11 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
     self.restoring = YES;
     [self.timer invalidate]; self.timer = nil;
     [self restoreDesktopInteraction];
+    if (self.suppliedAppearance) {
+        [self.desktopController beginAppearanceTransition:NO animated:NO];
+        [self.desktopController endAppearanceTransition];
+        self.suppliedAppearance=NO;
+    }
     [self restoreDesktopAppearance];
     UIView *view = self.desktop;
     if (self.mutated && view && self.originalParent) {
@@ -580,22 +639,22 @@ void NFBUpdateDesktopSplit(BOOL allowed) {
 #ifndef NFB_DESKTOP_SIM_TEST
 static void (*originalLaunchIcon)(id, SEL, id, id);
 static void NFBDesktopLaunchIcon(id object, SEL selector, id icon, id actions) {
-    // Restore the native view before SpringBoard begins its app-launch transition.
-    NFBCloseDesktopSplit();
+    if (NFBLaunchAppFromDesktopIcon(icon)) return;
     originalLaunchIcon(object,selector,icon,actions);
 }
-static void NFBInstallDesktopLaunchHook(void) {
+static BOOL NFBInstallDesktopLaunchHook(void) {
     static BOOL installed;
-    if (installed) return;
+    if (installed) return YES;
     Class cls = NSClassFromString(@"SBIconController");
     SEL selector = NSSelectorFromString(@"_launchFromIconView:withActions:");
     Method method = class_getInstanceMethod(cls,selector);
-    if (!method) return;
+    if (!method) return NO;
     NSMethodSignature *signature = [NSMethodSignature signatureWithObjCTypes:method_getTypeEncoding(method)];
     if (signature.numberOfArguments != 4 || strcmp(signature.methodReturnType,"v") ||
-        [signature getArgumentTypeAtIndex:2][0] != '@' || [signature getArgumentTypeAtIndex:3][0] != '@') return;
+        [signature getArgumentTypeAtIndex:2][0] != '@' || [signature getArgumentTypeAtIndex:3][0] != '@') return NO;
     MSHookMessageEx(cls,selector,(IMP)NFBDesktopLaunchIcon,(IMP *)&originalLaunchIcon);
     installed = YES;
+    return YES;
 }
 #endif
 BOOL NFBShowDesktopInSplit(UIView *anchor) {
@@ -622,8 +681,10 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
         if (!window) return NFBDesktopFail(@"原生桌面窗口尚未加载，请先返回主屏幕再打开");
 #ifndef NFB_DESKTOP_SIM_TEST
         if (!NFBInstallDesktopHitHook(window)) return NFBDesktopFail(@"原生桌面窗口触摸接口不可用");
+        if (!NFBInstallDesktopLaunchHook()) return NFBDesktopFail(@"桌面应用分屏启动接口不可用");
 #endif
         next.window = window;
+        next.desktopController=NFBDesktopOwner(window.rootViewController,desktop);
         next.originalWindowLevel = window.windowLevel;
         next.originalWindowAlpha = window.alpha;
         next.originalWindowHidden = window.hidden;
@@ -641,23 +702,8 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
         // shows through instead of a flat system background.
         UIView *canvas = [UIView new]; canvas.backgroundColor = UIColor.clearColor;
         canvas.clipsToBounds = YES; next.canvas = canvas; [panel addSubview:canvas];
-        UIView *header = [[UIView alloc] initWithFrame:CGRectMake(0,0,0,36)];
-        header.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-        [header addGestureRecognizer:[[UIPanGestureRecognizer alloc] initWithTarget:next action:@selector(drag:)]];
-        [panel addSubview:header];
-        UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(12, 0, 120, 36)];
-        label.text = @"系统桌面"; label.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
-        [header addSubview:label];
-        UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
-        close.frame = CGRectMake(0, 0, 36, 36); close.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
-        [close setImage:[UIImage systemImageNamed:@"xmark"] forState:UIControlStateNormal];
-        close.accessibilityLabel = @"关闭桌面分屏并恢复桌面";
-        [close addTarget:next action:@selector(closePressed) forControlEvents:UIControlEventTouchUpInside];
-        [panel addSubview:close];
         // Verify geometry before touching the desktop hierarchy.
         if (![next place]) { next.desktop = nil; return NO; }
-        close.frame = CGRectMake(CGRectGetWidth(panel.bounds) - 36, 0, 36, 36);
-        header.frame = CGRectMake(0,0,CGRectGetWidth(panel.bounds),36);
         if (next.startedHome) {
             UIVisualEffectView *frost = [[UIVisualEffectView alloc] initWithEffect:nil];
             frost.frame = [desktop convertRect:desktop.bounds toView:next.originalParent];
@@ -676,9 +722,6 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
         [next adoptDesktopAppearance];
         [next adoptDesktopInteraction];
         if (next.wallpaperCount == 0) [next installPaneBackdrop];
-#ifndef NFB_DESKTOP_SIM_TEST
-        NFBInstallDesktopLaunchHook();
-#endif
         session = next;
         next.windowMutated = YES;
         // Raising the native window must not raise its fullscreen siblings over
@@ -696,6 +739,22 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
         window.alpha = 1; window.userInteractionEnabled = YES; window.hidden = NO;
         [window bringSubviewToFront:panel];
         [next activateDesktop];
+        if (!next.startedHome && next.desktopController) {
+            // Fullscreen apps leave the home controller disappeared. Moving its
+            // view alone does not resume widget child controllers/render hosts.
+            next.suppliedAppearance=YES;
+            [next.desktopController beginAppearanceTransition:YES animated:NO];
+            [next.desktopController endAppearanceTransition];
+            [desktop setNeedsLayout]; [desktop layoutIfNeeded];
+            __weak NFBDesktopSession *refreshSession=next;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                NFBDesktopSession *active=refreshSession;
+                if (active && session==active && !active.restoring) {
+                    [active.desktop setNeedsLayout]; [active.desktop layoutIfNeeded];
+                    NFBDebugLog(@"desktop widget appearance refreshed for fullscreen background");
+                }
+            });
+        }
         next.timer = [NSTimer timerWithTimeInterval:0.1 target:next selector:@selector(check) userInfo:nil repeats:YES];
         [NSRunLoop.mainRunLoop addTimer:next.timer forMode:NSRunLoopCommonModes];
         if (NFBDesktopAnimationsEnabled()) {
