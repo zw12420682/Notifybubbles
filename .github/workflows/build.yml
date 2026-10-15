@@ -25,18 +25,20 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - name: Validate project files
         run: python3 scripts/validate.py
+      - name: Test validation for overlay source updates
+        run: python3 scripts/test_validator.py
       - name: Test retired keyboard cleanup
         run: python3 scripts/test_cleanup.py
       - name: Run notification state tests
         run: |
           xcrun --sdk macosx clang -fobjc-arc -fmodules -Wall -Wextra -Werror \
-            -framework Foundation -I Sources Sources/NFBStore.m Tests/StoreTests.m \
+            -framework Foundation -I Sources Sources/NFBInterfaces.m Sources/NFBStore.m Tests/StoreTests.m \
             -o "$RUNNER_TEMP/test-store"
           "$RUNNER_TEMP/test-store"
       - name: Test TrollOpen adapter contracts
         run: |
           xcrun --sdk macosx clang -fobjc-arc -fmodules -Wall -Wextra -Werror \
-            -DNFB_PORTABLE_ADAPTER_TEST -framework Foundation -I Sources Sources/NFBDebugLog.m Sources/NFBTrollOpen.m Tests/TrollOpenTests.m \
+            -DNFB_PORTABLE_ADAPTER_TEST -framework Foundation -I Sources Sources/NFBInterfaces.m Sources/NFBDebugLog.m Sources/NFBTrollOpen.m Tests/TrollOpenTests.m \
             -o "$RUNNER_TEMP/test-trollopen"
           for mode in missing wrongReturn wrongFlag throws valid desktop frontMissing frontWrongReturn frontWrongArgs frontThrows frontValid floatMissing floatWrongReturn floatMini floatVisible; do
             "$RUNNER_TEMP/test-trollopen" "$mode"
@@ -46,11 +48,17 @@ jobs:
           clang -std=c11 -Wall -Wextra -Werror -I Sources Tests/TransitionTests.c -o "$RUNNER_TEMP/test-transition"
           "$RUNNER_TEMP/test-transition"
           xcrun --sdk macosx clang -fobjc-arc -fmodules -Wall -Wextra -Werror \
-            -framework Foundation -I Sources Sources/NFBDebugLog.m Tests/InterfaceTests.m -o "$RUNNER_TEMP/test-interface"
+            -framework Foundation -I Sources Sources/NFBInterfaces.m Sources/NFBDebugLog.m Tests/InterfaceTests.m -o "$RUNNER_TEMP/test-interface"
           "$RUNNER_TEMP/test-interface"
           python3 scripts/test_package_parser.py
       - name: Test desktop view transfer and restoration in iOS simulator
         run: python3 scripts/test_desktop_simulator.py
+      - name: Test independent state restoration
+        run: |
+          xcrun --sdk macosx clang -fobjc-arc -fmodules -Wall -Wextra -Werror \
+            -framework Foundation -I Sources Sources/NFBDebugLog.m Sources/NFBStateLedger.m Tests/StateLedgerTests.m \
+            -o "$RUNNER_TEMP/test-state-ledger"
+          "$RUNNER_TEMP/test-state-ledger"
       - name: Install packaging tools
         run: brew install ldid xz dpkg
       - name: Install pinned RootHide Theos and iOS SDK
