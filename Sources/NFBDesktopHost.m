@@ -451,7 +451,17 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
     CGFloat target=original.x+width<=maximum+0.5 ? MIN(maximum,original.x+width) : MAX(minimum,original.x-width);
     if (fabs(target-original.x)<width*0.5) return;
     UIView *cover=[self.canvas snapshotViewAfterScreenUpdates:NO];
-    if (!cover) { NFBDebugLog(@"desktop widget refresh: snapshot unavailable; page preserved"); return; }
+    if (!cover) {
+        // A newly attached host may not yet have a compositor snapshot.
+        // Render the existing layer tree as a cover without forcing a screen
+        // update or giving up the page refresh altogether.
+        UIGraphicsImageRenderer *renderer=[[UIGraphicsImageRenderer alloc] initWithBounds:self.canvas.bounds];
+        UIImage *image=[renderer imageWithActions:^(UIGraphicsImageRendererContext *context) {
+            [self.canvas.layer renderInContext:context.CGContext];
+        }];
+        if (image) cover=[[UIImageView alloc] initWithImage:image];
+    }
+    if (!cover) { NFBErrorLog(@"desktop widget refresh: both cover capture paths failed; page preserved"); return; }
     self.refreshScroll=pager; self.refreshOffset=original;
     cover.frame=self.canvas.bounds; cover.userInteractionEnabled=NO;
     self.refreshCover=cover; if (cover) [self.canvas addSubview:cover];

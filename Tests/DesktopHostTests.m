@@ -1,4 +1,5 @@
 #import <UIKit/UIKit.h>
+#import <QuartzCore/QuartzCore.h>
 #import "NFBDesktopHost.h"
 #import "NFBWindowState.h"
 
@@ -352,9 +353,20 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
     [desktop addSubview:pager];
     @try { CheckOpen(NFBShowDesktopInSplit(anchor),@"widget page refresh open",desktop,root); }
     @catch (NSException *e) { [self finishResult:[NSString stringWithFormat:@"FAIL: %@",e]]; return; }
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.3*NSEC_PER_SEC)),dispatch_get_main_queue(), ^{
+    [self awaitWidgetRefresh:pager original:original desktop:desktop anchor:anchor root:root deadline:CACurrentMediaTime()+3];
+}
+- (void)awaitWidgetRefresh:(DesktopPagerFixture *)pager original:(CGPoint)original desktop:(UIView *)desktop
+                    anchor:(UIView *)anchor root:(UIView *)root deadline:(CFTimeInterval)deadline {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.05*NSEC_PER_SEC)),dispatch_get_main_queue(), ^{
+        BOOL complete=pager.moves>=2 && CGPointEqualToPoint(pager.contentOffset,original);
+        if (!complete && CACurrentMediaTime()<deadline) {
+            [self awaitWidgetRefresh:pager original:original desktop:desktop anchor:anchor root:root deadline:deadline];
+            return;
+        }
         @try {
-            Check(pager.moves>=2 && CGPointEqualToPoint(pager.contentOffset,original),@"automatic page roundtrip restores exact original page");
+            Check(complete,[NSString stringWithFormat:@"automatic page roundtrip restores exact original page: moves=%lu actual=%@ expected=%@ bounds=%@ content=%@ active=%d",
+                (unsigned long)pager.moves,NSStringFromCGPoint(pager.contentOffset),NSStringFromCGPoint(original),
+                NSStringFromCGRect(pager.bounds),NSStringFromCGSize(pager.contentSize),NFBDesktopSplitActive()]);
             NFBCloseDesktopSplit();
             Check(CGPointEqualToPoint(pager.contentOffset,original),@"closing preserves refreshed page position");
             [pager removeFromSuperview];
