@@ -17,6 +17,7 @@
 @property(nonatomic, strong) UIWindow *window;
 @property(nonatomic, strong) UIView *panel;
 @property(nonatomic, strong) UIView *canvas;
+@property(nonatomic, strong) UIView *desktopHost;
 @property(nonatomic, strong) UIView *desktop;
 @property(nonatomic, strong) UIView *originalParent;
 @property(nonatomic, weak) UIView *anchor;
@@ -600,14 +601,14 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
     double scale = NFBDesktopScale(CGRectGetWidth(self.originalBounds), CGRectGetHeight(self.originalBounds),
         CGRectGetWidth(self.canvas.bounds),CGRectGetHeight(self.canvas.bounds));
     if (!(scale > 0)) return NFBDesktopFail(@"桌面尺寸无效");
-    if (self.desktop.superview == self.canvas) {
-        CGPoint center = CGPointMake(CGRectGetMidX(self.canvas.bounds),CGRectGetMidY(self.canvas.bounds));
-        CGAffineTransform transform = CGAffineTransformMakeScale(scale,scale);
-        if (!CGRectEqualToRect(self.desktop.bounds,self.originalBounds)) self.desktop.bounds = self.originalBounds;
-        if (!CGPointEqualToPoint(self.desktop.center,center)) self.desktop.center = center;
-        if (!CGAffineTransformEqualToTransform(self.desktop.transform,transform)) self.desktop.transform = transform;
-        self.desktop.hidden = NO; self.desktop.alpha = 1; self.desktop.userInteractionEnabled = YES;
-    }
+    // Keep SpringBoard's desktop in native coordinates. Only this outer host
+    // owns the pane transform; folder transitions may animate desktop geometry.
+    UIView *host = self.desktopHost;
+    CGPoint center = CGPointMake(CGRectGetMidX(self.canvas.bounds),CGRectGetMidY(self.canvas.bounds));
+    CGAffineTransform transform = CGAffineTransformMakeScale(scale,scale);
+    if (!CGRectEqualToRect(host.bounds,self.originalBounds)) host.bounds = self.originalBounds;
+    if (!CGPointEqualToPoint(host.center,center)) host.center = center;
+    if (!CGAffineTransformEqualToTransform(host.transform,transform)) host.transform = transform;
     return YES;
 }
 - (void)check {
@@ -628,8 +629,8 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
             UIAccessibilityPostNotification(UIAccessibilityAnnouncementNotification,@"尚未确认应用分屏打开，桌面分屏已保留");
         }
     }
-    if (self.desktop.superview != self.canvas || ![self place]) {
-        if (self.desktop.superview != self.canvas) NFBDesktopFail(@"系统重新调整了桌面视图，已恢复桌面");
+    if (self.desktop.superview != self.desktopHost || ![self place]) {
+        if (self.desktop.superview != self.desktopHost) NFBDesktopFail(@"系统重新调整了桌面视图，已恢复桌面");
         failurePending = YES; NFBCloseDesktopSplit();
         return;
     }
@@ -773,6 +774,8 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
         // shows through instead of a flat system background.
         UIView *canvas = [UIView new]; canvas.backgroundColor = UIColor.clearColor;
         canvas.clipsToBounds = YES; next.canvas = canvas; [panel addSubview:canvas];
+        UIView *desktopHost = [UIView new]; desktopHost.backgroundColor = UIColor.clearColor;
+        next.desktopHost = desktopHost; [canvas addSubview:desktopHost];
         // Verify geometry before touching the desktop hierarchy.
         if (![next place]) { [next restore]; return NO; }
         if (next.startedHome) {
@@ -786,7 +789,13 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
         next.mutated = YES;
         [NSLayoutConstraint deactivateConstraints:next.constraints];
         desktop.translatesAutoresizingMaskIntoConstraints = YES; desktop.autoresizingMask = UIViewAutoresizingNone;
-        [canvas addSubview:desktop];
+        [desktopHost addSubview:desktop];
+        // Establish native geometry once. The periodic check must not overwrite
+        // positions or transforms that SpringBoard owns during folder animation.
+        desktop.transform = CGAffineTransformIdentity;
+        desktop.bounds = next.originalBounds;
+        desktop.center = CGPointMake(CGRectGetMidX(next.originalBounds),CGRectGetMidY(next.originalBounds));
+        desktop.hidden = NO; desktop.alpha = 1; desktop.userInteractionEnabled = YES;
         if (![next place]) { [next restore]; return NO; }
         // The pane keeps the desktop's icons, folders and widgets; only the
         // wallpaper is forced on screen, and supplied when the subtree has none.

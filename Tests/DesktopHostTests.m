@@ -173,7 +173,20 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
         Check(NFBDesktopSplitActive() && desktop.superview!=root.view,@"real view transferred");
         Check(desktop.window==nativeWindow && nativeWindow.rootViewController==nativeRoot,
             @"desktop remains in its native window and controller scene");
-        UIView *panel=desktop.superview.superview;
+        UIView *host=desktop.superview;
+        UIView *panel=host.superview.superview;
+        Check(CGRectEqualToRect(desktop.bounds,bounds) &&
+            CGPointEqualToPoint(desktop.center,CGPointMake(CGRectGetMidX(bounds),CGRectGetMidY(bounds))) &&
+            CGAffineTransformIsIdentity(desktop.transform),@"desktop retains native coordinates inside scaled host");
+        CGPoint nativeCenter=desktop.center;
+        CGAffineTransform nativeTransform=desktop.transform;
+        desktop.center=CGPointMake(nativeCenter.x+12,nativeCenter.y);
+        desktop.transform=CGAffineTransformMakeScale(0.98,0.98);
+        NFBUpdateDesktopSplit(YES);
+        Check(CGPointEqualToPoint(desktop.center,CGPointMake(nativeCenter.x+12,nativeCenter.y)) &&
+            CGAffineTransformEqualToTransform(desktop.transform,CGAffineTransformMakeScale(0.98,0.98)),
+            @"periodic placement preserves native folder animation geometry");
+        desktop.center=nativeCenter; desktop.transform=nativeTransform;
         CGRect paneRect=[panel convertRect:panel.bounds toView:desktop.window];
         paneRect=[self.window convertRect:paneRect fromWindow:desktop.window];
         Check(CGRectEqualToRect(paneRect,anchor.frame),@"split desktop pane matches the split app pane");
