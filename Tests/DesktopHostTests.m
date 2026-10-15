@@ -16,6 +16,20 @@
 @property(nonatomic,copy) NSString *applicationBundleIdentifier;
 @end
 @implementation DesktopAppIconFixture @end
+@interface DesktopFolderIconFixture : NSObject @end
+@implementation DesktopFolderIconFixture
+- (BOOL)isFolderIcon { return YES; }
+@end
+@interface SBFolderIcon : NSObject @end
+@implementation SBFolderIcon @end
+@interface DesktopIconModelFixture : UIView
+@property(nonatomic,strong) id icon;
+@end
+@implementation DesktopIconModelFixture @end
+@interface DesktopFolderViewFixture : UIView @end
+@implementation DesktopFolderViewFixture
+- (BOOL)isFolderIcon { return YES; }
+@end
 @interface DesktopPagerFixture : UIScrollView
 @property(nonatomic) NSUInteger moves;
 @end
@@ -217,6 +231,15 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
         NFBCloseDesktopSplit();
         Check(desktop.superview==root.view,@"close before app launch restores native view"); state.home=YES; state.frontApp=nil;
         CheckOpen(NFBShowDesktopInSplit(anchor),@"open for split icon launch",desktop,root.view);
+        NSString *previousSubmission=submittedBundle;
+        DesktopFolderViewFixture *folderView=[DesktopFolderViewFixture new]; [desktop addSubview:folderView];
+        Check(!NFBLaunchAppFromDesktopIcon(folderView) && NFBDesktopSplitActive(),@"folder-view flag preserves native folder handling");
+        DesktopIconModelFixture *modelView=[DesktopIconModelFixture new]; [desktop addSubview:modelView];
+        modelView.icon=[DesktopFolderIconFixture new];
+        Check(!NFBLaunchAppFromDesktopIcon(modelView),@"folder-model flag preserves native folder handling");
+        modelView.icon=[SBFolderIcon new];
+        Check(!NFBLaunchAppFromDesktopIcon(modelView),@"native folder class is accepted without flag getter");
+        Check(submittedBundle==previousSubmission,@"opening folders never submits an app request");
         DesktopAppIconFixture *appIcon=[DesktopAppIconFixture new];
         appIcon.applicationBundleIdentifier=@"com.example.desktop-app"; [desktop addSubview:appIcon];
         openAccepted=NO;
@@ -227,13 +250,14 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
         state.home=YES; state.frontApp=nil;
         openAccepted=YES;
         Check(NFBLaunchAppFromDesktopIcon(appIcon) && [submittedBundle isEqualToString:appIcon.applicationBundleIdentifier],@"desktop icon uses Open split adapter");
+        Check(!NFBLaunchAppFromDesktopIcon(folderView) && NFBDesktopSplitActive(),@"pending app launch does not swallow folder actions");
         NFBUpdateDesktopSplit(YES);
         Check(NFBDesktopSplitActive(),@"submitted launch alone does not close desktop");
         state.floatingApp=appIcon.applicationBundleIdentifier; state.floatingWindow=anchor; state.mini=YES;
         NFBUpdateDesktopSplit(YES); Check(NFBDesktopSplitActive(),@"mini window does not confirm split launch");
         state.mini=NO; NFBUpdateDesktopSplit(YES);
         Check(!NFBDesktopSplitActive(),@"visible target split automatically closes desktop");
-        state.floatingApp=nil; [appIcon removeFromSuperview];
+        state.floatingApp=nil; [appIcon removeFromSuperview]; [folderView removeFromSuperview]; [modelView removeFromSuperview];
         CheckOpen(NFBShowDesktopInSplit(anchor),@"open before restore exception",desktop,root.view);
         ((DesktopRootFixture *)root.view).throwNextLayout=YES;
         [root.view setNeedsLayout]; NFBCloseDesktopSplit();

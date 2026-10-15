@@ -96,8 +96,14 @@ BOOL NFBLaunchAppFromDesktopIcon(id iconView) {
     NFBDesktopSession *active=session;
     if (!active || active.restoring) return NO;
     if (![iconView isKindOfClass:UIView.class] || ![(UIView *)iconView isDescendantOfView:active.desktop]) return NO;
-    if (active.pendingApp.length) return YES;
     id icon=NFBCheckedObject(iconView,@"icon");
+    Class folderClass=NSClassFromString(@"SBFolderIcon");
+    if (NFBCheckedBool(iconView,@"isFolderIcon",NO) || NFBCheckedBool(icon,@"isFolderIcon",NO) ||
+        (folderClass && [icon isKindOfClass:folderClass])) {
+        NFBDebugLog(@"desktop folder icon: native folder handling");
+        return NO; // The hook calls the original folder handler; no app launch.
+    }
+    if (active.pendingApp.length) return YES;
     id bundle=NFBCheckedObject(iconView,@"applicationBundleIdentifier");
     if (![bundle isKindOfClass:NSString.class] || ![bundle length])
         bundle=NFBCheckedObject(icon,@"applicationBundleID");
