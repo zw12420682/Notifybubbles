@@ -4,6 +4,9 @@
 #import "NFBWindowState.h"
 
 // Simulator fixtures supply the private classes; the host itself is production code.
+@interface SBFolderContainerView : UIView @end
+@implementation SBFolderContainerView @end
+extern BOOL NFBDesktopSuppressFolderTracking(CALayer *, NSString *);
 @interface SBRootFolderView : UIView @end
 @implementation SBRootFolderView @end
 @interface SBHomeScreenViewController : UIViewController
@@ -174,6 +177,16 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
         Check(NFBDesktopSplitActive() && desktop.superview!=root.view,@"real view transferred");
         Check(desktop.window==nativeWindow && nativeWindow.rootViewController==nativeRoot,
             @"desktop remains in its native window and controller scene");
+        SBFolderContainerView *folderContainer=[[SBFolderContainerView alloc] initWithFrame:desktop.bounds];
+        [desktop addSubview:folderContainer];
+        NSString *trackingKey=@"SBFolderSourceViewTrackingMatchMoveAnimation";
+        Check(NFBDesktopSuppressFolderTracking(folderContainer.layer,trackingKey),@"bypass misplaced folder source tracking only in hosted desktop");
+        for (NSString *key in @[@"transform",@"transform.scale.x",@"opacity",@"position",@"SBHLibraryPodIconZoomMatchMoveAnimation"])
+            Check(!NFBDesktopSuppressFolderTracking(folderContainer.layer,key),@"preserve other native folder animations");
+        Check(!NFBDesktopSuppressFolderTracking(desktop.layer,trackingKey),@"do not filter unrelated desktop layers");
+        [folderContainer removeFromSuperview]; [root.view addSubview:folderContainer];
+        Check(!NFBDesktopSuppressFolderTracking(folderContainer.layer,trackingKey),@"do not filter folder containers outside hosted desktop");
+        [desktop addSubview:folderContainer];
         UIView *host=desktop.superview;
         UIView *panel=host.superview.superview;
         Check(CGRectEqualToRect(desktop.bounds,bounds) &&
@@ -220,6 +233,8 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
         Check([desktop.window hitTest:CGPointMake(1,1) withEvent:nil]==nil,@"outside panel passes through");
         Check(desktop.window.isKeyWindow,@"touch activation gives native desktop focus");
         NFBCloseDesktopSplit(); NFBCloseDesktopSplit();
+        Check(!NFBDesktopSuppressFolderTracking(folderContainer.layer,trackingKey),@"ordinary home screen tracking resumes after session closes");
+        [folderContainer removeFromSuperview];
         Check(self.appWindow.isKeyWindow,@"desktop close restores previous app key window");
         Check(nativeWindow.rootViewController==nativeRoot && !nativeWindow.hidden && nativeWindow.windowLevel==nativeLevel,
             @"close preserves native root controller visibility and window level");
