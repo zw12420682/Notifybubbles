@@ -1,4 +1,6 @@
 #import "NFBManager.h"
+#import "NFBDebugLog.h"
+#import "NFBVersion.h"
 #import "NFBPrivate.h"
 #import <objc/runtime.h>
 #import <substrate.h>
@@ -125,12 +127,12 @@ static void NFBInstall(void) {
     BOOL collection = NFBHook(dispatcher, @"postNotificationWithRequest:", "@", (IMP)replacedPost, (IMP *)&originalPost);
     BOOL remove = NFBHook(dispatcher, @"_didRemoveNotificationRequest:", "@", (IMP)replacedRemove, (IMP *)&originalRemove);
     NFBHook(dispatcher, @"removeNotificationSectionWithIdentifier:", "@", (IMP)replacedRemoveSection, (IMP *)&originalRemoveSection);
-    NSLog(@"[NotifyBubbles] 0.48.39 feed=%d collection=%d withdraw=%d remove=%d; first-device validation required", feed, collection, withdraw, remove);
+    NFBInfoLog(@"NotifyBubbles %@ feed=%d collection=%d withdraw=%d remove=%d", NFB_VERSION, feed, collection, withdraw, remove);
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
         NFBPreferencesChanged, CFSTR("local.notifybubbles/preferences.changed"), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
         NFBPreferencesChanged, CFSTR("local.notifybubbles/clear"), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-    [[NFBManager shared] reloadPreferences];
+    (void)[NFBManager shared]; // init loads preferences exactly once.
 }
 __attribute__((constructor)) static void NFBStart(void) {
     if (![NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.apple.springboard"]) return;

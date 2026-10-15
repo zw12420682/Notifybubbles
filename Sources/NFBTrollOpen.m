@@ -80,57 +80,6 @@ BOOL NFBSplitTrollFrontmostApp(void) {
     }
 }
 
-// Close the current floating window. The device-side method dump proved
-// closeCurrentFloatingWindow is a CLASS method on TOJBBarGestureBridge
-// (B16@0:8 on the metaclass), NOT an instance method on the floating window —
-// which is why the earlier instance-based lookup always reported "unavailable".
-BOOL NFBCloseCurrentFloatingWindow(void) {
-    if (!NSThread.isMainThread) return NO;
-    @try {
-        Class bridge = NSClassFromString(@"TOJBBarGestureBridge");
-        // Diagnostics run once per SpringBoard launch: the floating window's
-        // real selector set is build-specific, and the file is the only way to
-        // confirm a future TrollOpen update did not rename the control methods.
-        NFBDumpFloatingWindowInterfaces(NFBTrollObject(bridge, @"currentVisibleFloatingWindow"));
-        SEL selector = NSSelectorFromString(@"closeCurrentFloatingWindow");
-        if (bridge && [bridge respondsToSelector:selector]) {
-            NSMethodSignature *sig = NFBSignature(bridge, selector);
-            char ret = sig ? sig.methodReturnType[0] : '?';
-            if (sig && sig.numberOfArguments == 2 && (ret == 'v' || ret == 'B' || ret == 'c')) {
-                BOOL accepted = ret == 'v' ? YES : ((BOOL (*)(id, SEL))objc_msgSend)(bridge, selector);
-                if (ret == 'v') ((void (*)(id, SEL))objc_msgSend)(bridge, selector);
-                if (!accepted) return NO;
-                NFBDebugLog(@"close: invoked +[TOJBBarGestureBridge closeCurrentFloatingWindow]");
-                NFBTrollDidMutate(); return YES;
-            }
-            NFBErrorLog(@"close: class method signature mismatch ret=%c args=%lu", ret,
-                        sig ? (unsigned long)sig.numberOfArguments : 0);
-        } else {
-            NFBDebugLog(@"close: +[TOJBBarGestureBridge closeCurrentFloatingWindow] not available");
-        }
-        // Fallback: the floating window instance exposes process-closing helpers
-        // (also confirmed present in the device-side dump, both void with no args).
-        id window = NFBTrollObject(bridge, @"currentVisibleFloatingWindow");
-        for (NSString *name in @[@"closeWindowWithoutTerminatingProcessImmediately",
-                                 @"closeWindowWithoutTerminatingProcessWithoutAnimation"]) {
-            SEL sel = NSSelectorFromString(name);
-            if (![window respondsToSelector:sel]) continue;
-            NSMethodSignature *sig = NFBSignature(window, sel);
-            if (!sig || sig.numberOfArguments != 2 || sig.methodReturnType[0] != 'v') continue;
-            ((void (*)(id, SEL))objc_msgSend)(window, sel);
-            NFBDebugLog(@"close: invoked -%@ (fallback)", name);
-            NFBTrollDidMutate(); return YES;
-        }
-        NFBDebugLog(@"close: no usable close path");
-        return NO;
-    } @catch (__unused NSException *error) {
-        NFBErrorLog(@"TrollOpen close failed: %@", error);
-        return NO;
-    }
-}
-
-// Accept only a no-argument call that returns void or BOOL; anything else could
-// be a same-named helper with a different contract.
 static BOOL NFBCallSimple(id target, SEL selector) {
     if (!target || ![target respondsToSelector:selector]) return NO;
     NSMethodSignature *sig = NFBSignature(target, selector);
@@ -167,47 +116,6 @@ BOOL NFBFullscreenCurrentFloatingWindow(void) {
         return NO;
     } @catch (__unused NSException *error) {
         NFBErrorLog(@"TrollOpen fullscreen failed: %@", error);
-        return NO;
-    }
-}
-
-// Shrink the current floating window to its mini size. The device-side method
-// dump lists minimizeCurrentFloatingWindow on the bridge metaclass, but the
-// owner of these control selectors has drifted across builds before, so probe
-// the class method first and fall back to the window instance — the same
-// dual-path shape fullscreen uses.
-BOOL NFBMinimizeCurrentFloatingWindow(void) {
-    if (!NSThread.isMainThread) return NO;
-    @try {
-        Class bridge = NSClassFromString(@"TOJBBarGestureBridge");
-        SEL selector = NSSelectorFromString(@"minimizeCurrentFloatingWindow");
-        if (NFBCallSimple(bridge, selector)) {
-            NFBDebugLog(@"minimize: invoked +[TOJBBarGestureBridge minimizeCurrentFloatingWindow]");
-            NFBTrollDidMutate(); return YES;
-        }
-        id window = NFBTrollObject(bridge, @"currentVisibleFloatingWindow");
-        NFBDumpFloatingWindowInterfaces(window);
-        if (NFBCallSimple(window, selector)) {
-            NFBDebugLog(@"minimize: invoked -[%@ minimizeCurrentFloatingWindow]",
-                        NSStringFromClass([window class]));
-            NFBTrollDidMutate(); return YES;
-        }
-        // Some builds split the action into "shrink" rather than "minimize".
-        SEL shrink = NSSelectorFromString(@"shrinkFloatingWindows");
-        if (NFBCallSimple(bridge, shrink)) {
-            NFBDebugLog(@"minimize: invoked +[TOJBBarGestureBridge shrinkFloatingWindows]");
-            NFBTrollDidMutate(); return YES;
-        }
-        if (NFBCallSimple(window, shrink)) {
-            NFBDebugLog(@"minimize: invoked -[%@ shrinkFloatingWindows]",
-                        NSStringFromClass([window class]));
-            NFBTrollDidMutate(); return YES;
-        }
-        NFBDebugLog(@"minimize: no usable path (bridge class=%d window=%d)",
-                    bridge != nil, window != nil);
-        return NO;
-    } @catch (__unused NSException *error) {
-        NFBErrorLog(@"TrollOpen minimize failed: %@", error);
         return NO;
     }
 }
@@ -279,9 +187,4 @@ NSString *NFBTrollVisibleApp(void) {
     } @catch (__unused NSException *e) { return nil; }
     id app = NFBTrollObject(window, @"bundleID");
     return [app isKindOfClass:NSString.class] ? app : nil;
-}
-
-BOOL NFBOpenSystemDesktop(void) {
-    // SpringBoard has no ordinary app-process scene identity; never submit it.
-    return NO;
 }

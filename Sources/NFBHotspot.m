@@ -90,7 +90,7 @@ static void NFBCheckHotspot(void) {
         }
     } else reportedUnavailable=NO;
     double now=NSProcessInfo.processInfo.systemUptime;
-    if (policy.submitted && state == 0) NFBErrorLog(@"hotspot auto-close confirmed OFF");
+    if (policy.submitted && state == 0) NFBDebugLog(@"hotspot auto-close confirmed OFF");
     BOOL eligible=configured && state == 1 && clients == 0;
     if (!eligible) { closeAttempts=0; nativeToggleUsed=NO; submittedAt=0; }
     if (policy.submitted && eligible && now-submittedAt >= 10 && closeAttempts < 3) {
@@ -101,9 +101,10 @@ static void NFBCheckHotspot(void) {
     if (NFBHotspotShouldClose(&policy,configured,state,clients,now,idleSeconds)) {
         closeAttempts++; submittedAt=now; policy.submitted=true;
         BOOL sent=NFBDisableHotspot();
-        NFBErrorLog(@"hotspot auto-close attempt %u: submitted=%d; verifying actual switch",closeAttempts,sent);
+        if (sent) NFBInfoLog(@"hotspot auto-close attempt %u submitted; verifying actual switch",closeAttempts);
+        else NFBErrorLog(@"hotspot auto-close attempt %u rejected",closeAttempts);
     }
-    if (!wasTracking && policy.tracking) NFBErrorLog(@"hotspot idle timer started: %.0f seconds, clients=0",idleSeconds);
+    if (!wasTracking && policy.tracking) NFBDebugLog(@"hotspot idle timer started: %.0f seconds, clients=0",idleSeconds);
 
 }
 static void NFBHotspotChanged(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
@@ -141,11 +142,13 @@ static void NFBInstallHotspotObservers(void) {
 }
 void NFBConfigureHotspotAutoClose(BOOL enabled,double minutes) {
     if (!NSThread.isMainThread) return;
-    configured=enabled;
-    idleSeconds=(isfinite(minutes) ? MIN(60,MAX(1,minutes)) : 5)*60;
+    double requestedSeconds=(isfinite(minutes) ? MIN(60,MAX(1,minutes)) : 5)*60;
+    static BOOL initialized;
+    if (initialized && configured==enabled && idleSeconds==requestedSeconds) return;
+    initialized=YES; configured=enabled; idleSeconds=requestedSeconds;
     NFBHotspotReset(&policy);
     closeAttempts=0; nativeToggleUsed=NO; submittedAt=0;
-    NFBErrorLog(@"hotspot auto-close configured: enabled=%d timeout=%.0f",enabled,idleSeconds);
+    NFBDebugLog(@"hotspot auto-close configured: enabled=%d timeout=%.0f",enabled,idleSeconds);
     [timer invalidate]; timer=nil;
     if (!enabled) return;
     NFBInstallHotspotObservers();

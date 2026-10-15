@@ -9,7 +9,6 @@
 #import "NFBPrivate.h"
 #import "NFBStore.h"
 #import "NFBGeometry.h"
-#import "NFBStorageLayout.h"
 #import "NFBSwitcher.h"
 #import "NFBTrollOpen.h"
 #import "NFBWindowControls.h"
@@ -24,15 +23,9 @@
 #import "NFBContainerLayout.h"
 
 static const NSTimeInterval NFBMotion = 0.35;
-// How long a bubble stays expanded after an unread arrives.
-static const NSTimeInterval NFBHold = 1.0;
 // No double-tap recognizer: a short tap resolves on release.
 // Guard against repeated callbacks from the same completed gesture.
 static const NSTimeInterval NFBGestureCooldown = 0.25;
-// While an app sits in the split view its bubble stays fully opaque (alpha 1.0,
-// independent of the user's opacity slider) and every other bubble drops to this
-// fraction, so the split-view app reads as the active one without being pulled
-// to the top of the row.
 
 // Vertical position (0 = top, 1 = bottom) the whole row shifts to while an app
 // is in the split view, so it clears the floating window. Restores on exit.
@@ -41,13 +34,9 @@ static const CGFloat NFBFloatingPosition = 0.80;
 // clear the keyboard. Applies in BOTH split view and fullscreen, and outranks
 // every other position rule.
 static const CGFloat NFBKeyboardPosition = 0.49;
-// How long the folded (no-unread) bubbles stay spread out after a tap on the
-// stack edge, before folding back into a thin stack.
-static const NSTimeInterval NFBStackHold = 4.0;
 // Synthetic bubble id that rides at the top of the row while an app is in the
 // split view. Tapping it clears every background app at once. It never enters
 // the store or the switcher ordering.
-static NSString * const NFBStorageID = @"__notifybubbles.storage__";
 static NSString * const NFBClearAllID = @"__notifybubbles.clearall__";
 #import <QuartzCore/QuartzCore.h>
 
@@ -62,21 +51,9 @@ static double NFBNumber(NSString *key, double fallback) {
     return [value respondsToSelector:@selector(doubleValue)] ? [value doubleValue] : fallback;
 }
 
-// The transparent strip must not block touches beside a half-hidden bubble.
-@interface NFBRail : UIScrollView
-@property(nonatomic) BOOL containerMode;
-@end
-@implementation NFBRail
-- (BOOL)pointInside:(CGPoint)point withEvent:(UIEvent *)event {
-    if (self.containerMode) return [super pointInside:point withEvent:event];
-    if (point.y < CGRectGetMinY(self.bounds) || point.y > CGRectGetMaxY(self.bounds)) return NO;
-    for (UIView *view in self.subviews) {
-        if (![view isKindOfClass:UIControl.class] || !view.userInteractionEnabled) continue;
-        if ([view pointInside:[view convertPoint:point fromView:self] withEvent:event]) return YES;
-    }
-    return NO;
-}
-@end
+// Both active rails are ordinary interactive scroll containers.
+@interface NFBRail : UIScrollView @end
+@implementation NFBRail @end
 
 @interface NFBWindow : UIWindow
 @end
@@ -96,7 +73,6 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, strong) UIView *activeMark;
 - (void)updateActiveMark:(BOOL)active diameter:(CGFloat)diameter duration:(NSTimeInterval)duration;
 @property(nonatomic) BOOL opening;
-@property(nonatomic) BOOL holdStartedRetracted;
 @end
 @implementation NFBBubble
 - (void)updateActiveMark:(BOOL)active diameter:(CGFloat)diameter duration:(NSTimeInterval)duration {
@@ -147,7 +123,6 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, strong) NFBStore *store;
 @property(nonatomic, strong) NFBWindow *window;
 @property(nonatomic, strong) NFBRail *rail;
-@property(nonatomic) BOOL backgroundCollapsed;
 
 @property(nonatomic, strong) NFBBubble *desktopActionButton;
 @property(nonatomic, strong) UITapGestureRecognizer *desktopActionTap;
@@ -159,7 +134,6 @@ static double NFBNumber(NSString *key, double fallback) {
 - (void)desktopActionTapped:(UITapGestureRecognizer *)gesture;
 - (void)layoutDesktopAction:(CGRect)frame target:(UIView *)target duration:(NSTimeInterval)duration;
 
-@property(nonatomic, strong) NFBRail *unreadRail;
 @property(nonatomic, strong) NFBRail *favoritesRail;
 @property(nonatomic, strong) UIVisualEffectView *favoritesMaterial;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NFBBubble *> *favoriteButtons;
@@ -172,40 +146,27 @@ static double NFBNumber(NSString *key, double fallback) {
 - (void)moveFavorite;
 - (void)finishFavoriteDrag;
 - (void)saveFavoritePosition;
-@property(nonatomic, copy) NSArray<NSString *> *backgroundOrder;
 @property(nonatomic, copy) NSString *lastRailActive;
 @property(nonatomic, copy) NSString *lastFavoritesActive;
 - (void)clearAllHeld:(UILongPressGestureRecognizer *)gesture;
 - (void)layoutFavorites:(CGRect)frame diameter:(CGFloat)diameter active:(NSString *)active duration:(NSTimeInterval)duration;
 
-@property(nonatomic) NSTimeInterval edgeUntil;
 @property(nonatomic) BOOL edgeMode;
-@property(nonatomic, strong) UITapGestureRecognizer *edgeTap;
-@property(nonatomic) BOOL draggingEdge;
-@property(nonatomic) CGFloat dragStartY;
-@property(nonatomic) CGFloat dragStartPosition;
-@property(nonatomic) CGFloat dragSavedPosition;
-@property(nonatomic) CGFloat edgeAvailable;
-@property(nonatomic) CGFloat resolvedEdgePosition;
-- (void)edgeLongPressed:(UILongPressGestureRecognizer *)gesture;
 - (void)closeBubble:(NFBBubble *)button;
-- (BOOL)edgeBubbleIsRetracted:(NFBBubble *)button;
-- (void)extendEdgeContainer;
-- (void)restartStorageIdleTimer;
-- (void)edgeContainerTapped:(UITapGestureRecognizer *)gesture;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NFBBubble *> *buttons;
 @property(nonatomic, strong) NSTimer *timer;
-@property(nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *expandedUntil;
 @property(nonatomic, strong) NSCache<NSString *, UIImage *> *icons;
+@property(nonatomic,strong) NSMutableDictionary<NSString *,NSNumber *> *imageRetryAfter;
 @property(nonatomic, strong) NSMutableSet<NSString *> *burstApps;
 @property(nonatomic, strong) NSArray<NSString *> *lastSwitcher;
 @property(nonatomic, strong) NSMutableSet<NSString *> *dismissedSwitcher;
 @property(nonatomic, strong) NSMutableSet<NSString *> *closingApps;
 @property(nonatomic) NSUInteger exitEpoch;
+@property(nonatomic,strong) NSMutableDictionary<NSString *,NSNumber *> *retractTokens;
+@property(nonatomic) NSUInteger presentationEpoch;
 @property(nonatomic) BOOL closePreviousSplit, freezeDesktop, hideInScreenshots;
 @property(nonatomic) CGFloat desktopBlurTransparency, favoriteScrollRows;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *generations;
-@property(nonatomic, strong) NSMutableSet<NSString *> *needsReveal;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *lastBadges;
 @property(nonatomic, strong) NFBRecord *pendingRecord;
 @property(nonatomic) NSTimeInterval pendingUntil;
@@ -214,7 +175,6 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, copy) NSString *lastActiveApp;
 @property(nonatomic, strong) NSMutableArray<NSString *> *recentUsedApps;
 @property(nonatomic, copy) NSArray *lastLayoutApps;
-@property(nonatomic, copy) NSArray<NSString *> *storedApps;
 @property(nonatomic) CGFloat iconSize;
 @property(nonatomic) CGFloat iconOpacity;
 @property(nonatomic) BOOL enabled;
@@ -224,7 +184,6 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic) NSTimeInterval lastGestureAt;
 // Until when the folded (no-unread) bubbles stay spread out after a tap. When
 // in the past, they fold back into a thin stack at the bottom edge.
-@property(nonatomic) NSTimeInterval stackUntil;
 // Apps whose bubble is already retracting because we asked TrollOpen to end the
 // floating window. Marking them lets the retract animation start on the same
 // frame as the window transition instead of waiting for the window to be gone.
@@ -240,23 +199,16 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, copy) NSString *watchedFloating;
 // Previous keyboard state, so refresh can spot the up/down edges.
 @property(nonatomic) BOOL keyboardUp;
-// Bubbles that were out when the keyboard rose; restored when it falls.
-@property(nonatomic, strong) NSMutableSet<NSString *> *keyboardSuspended;
-// Apps whose bubble is mid-shake (a new message arrived while an app sits in
-// the split view). Kept full opacity for the shake's duration.
-@property(nonatomic, strong) NSMutableSet<NSString *> *shakingApps;
 - (void)refresh;
 - (void)updatePrivacy;
 - (void)beginRetracting:(NSString *)app;
 - (void)syncFloatingWatch:(NSString *)floating;
 - (void)floatingWatchFired;
-- (BOOL)isFloatingBubble:(NFBBubble *)button;
 - (BOOL)acceptGesture;
 - (void)burstBubble:(NFBBubble *)button;
 - (BOOL)executeRecord:(NFBRecord *)record;
 - (void)tick;
 - (void)startTimer;
-- (void)extendApp:(NSString *)app;
 - (void)closeAppsInOrder:(NSArray<NSString *> *)apps;
 - (void)openApp:(NSString *)app;
 - (void)showOpenNotice:(NSString *)message;
@@ -264,8 +216,8 @@ static double NFBNumber(NSString *key, double fallback) {
 - (void)clearBackground;
 - (void)clearAllTapped:(UITapGestureRecognizer *)gesture;
 - (void)styleClearAllButton:(NFBBubble *)button;
-- (void)styleStorageButton:(NFBBubble *)button count:(NSUInteger)count;
 - (void)shakeBubble:(NFBBubble *)button;
+- (void)appHeld:(UILongPressGestureRecognizer *)gesture;
 @end
 
 @implementation NFBManager
@@ -279,17 +231,15 @@ static double NFBNumber(NSString *key, double fallback) {
     if ((self = [super init])) {
         _store = [NFBStore new];
         _buttons = [NSMutableDictionary dictionary];
-        _expandedUntil = [NSMutableDictionary dictionary];
         _icons = [NSCache new]; _icons.countLimit = 128;
+        _imageRetryAfter=[NSMutableDictionary dictionary];
         _burstApps = [NSMutableSet set];
         _retracting = [NSMutableSet set];
         _dismissedSwitcher = [NSMutableSet set];
         _closingApps = [NSMutableSet set];
         _generations = [NSMutableDictionary dictionary];
-        _needsReveal = [NSMutableSet set];
         _lastBadges = [NSMutableDictionary dictionary];
-        _keyboardSuspended = [NSMutableSet set];
-        _shakingApps = [NSMutableSet set];
+        _retractTokens=[NSMutableDictionary dictionary];
         __weak NFBManager *weakSelf = self;
         NFBKeyboardInstall(^{ [weakSelf refresh]; });
         [self reloadPreferences];
@@ -303,7 +253,7 @@ static double NFBNumber(NSString *key, double fallback) {
     self.iconSize = NFBSize(NFBNumber(@"IconSize", 48));
     self.iconOpacity = NFBOpacity(NFBNumber(@"IconOpacity", 1));
     BOOL nextEnabled = NFBPreference(@"Enabled", YES);
-    if (self.enabled != nextEnabled) ++self.exitEpoch;
+    if (self.enabled != nextEnabled) { ++self.exitEpoch; ++self.presentationEpoch; }
     self.enabled = nextEnabled;
     NFBConfigureDebugLogging(NFBPreference(@"DebugLogging", NO));
     self.closePreviousSplit = NFBPreference(@"ClosePreviousSplit", YES);
@@ -344,8 +294,6 @@ static double NFBNumber(NSString *key, double fallback) {
     [self.dismissedSwitcher removeObject:appID];
     id image = NFBGet(NFBGet(request, @"content"), @"icon");
     if ([image isKindOfClass:UIImage.class]) [self.icons setObject:image forKey:appID];
-    if ([self shouldShow]) [self extendApp:appID];
-    else [self.needsReveal addObject:appID];
     [self startTimer];
     [self refresh];
     NFBBubble *updated = self.buttons[appID];
@@ -373,7 +321,6 @@ static double NFBNumber(NSString *key, double fallback) {
     NSMutableOrderedSet *apps = [NSMutableOrderedSet orderedSetWithArray:self.lastLayoutApps ?: @[]];
     [apps addObjectsFromArray:self.store.appIDs];
     [apps removeObject:NFBClearAllID];
-    [apps removeObject:NFBStorageID];
     [apps removeObject:NFBSystemDesktopBundleID];
     return apps.array;
 }
@@ -496,42 +443,12 @@ static double NFBNumber(NSString *key, double fallback) {
     button.accessibilityLabel = @"关闭分屏 / 清理后台";
     button.accessibilityHint = @"单击执行 TrollOpen 右侧区域关闭，长按清理后台";
 }
-// Reminder for a fresh notification while an app sits in the split view: a
-// 2-second decaying horizontal shake plus a temporary full-opacity highlight,
-// then the bubble settles back to whatever opacity the split-view layout assigns
-// it. The button's transform is identity here (split view keeps every bubble
-// expanded), so a layer translation never fights the retraction offset.
+// Restart the native split-container pulse when a new notification arrives.
 - (void)shakeBubble:(NFBBubble *)button {
-    if (!button || !button.superview) return;
-    NSString *appID = button.appID;
-    if (self.rail.containerMode) {
-        [button.layer removeAnimationForKey:@"NFBShake"];
-        if (!UIAccessibilityIsReduceMotionEnabled()) {
-            CAKeyframeAnimation *pulse = [CAKeyframeAnimation animationWithKeyPath:@"transform.scale"];
-            pulse.values = @[@1, @0.94, @1, @0.97, @1];
-            pulse.duration = 0.65;
-            [button.imageView.layer addAnimation:pulse forKey:@"NFBContainerPulse"];
-        }
-        return;
-    }
-    [self.shakingApps addObject:appID];
-    [button.layer removeAnimationForKey:@"NFBShake"];
-    if (!UIAccessibilityIsReduceMotionEnabled()) {
-        CAKeyframeAnimation *shake = [CAKeyframeAnimation animationWithKeyPath:@"transform.translation.x"];
-        shake.duration = 2.0;
-        shake.values = @[@0, @(-6), @6, @(-5.25), @5.25, @(-4.5), @4.5, @(-3.75), @3.75, @(-3), @3, @(-2.25), @2.25, @(-1.5), @1.5, @0];
-        shake.keyTimes = @[@0, @(1.0/15), @(2.0/15), @(3.0/15), @(4.0/15), @(5.0/15), @(6.0/15), @(7.0/15),
-                           @(8.0/15), @(9.0/15), @(10.0/15), @(11.0/15), @(12.0/15), @(13.0/15), @(14.0/15), @1.0];
-        shake.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionLinear];
-        shake.removedOnCompletion = YES;
-        [button.layer addAnimation:shake forKey:@"NFBShake"];
-    }
-    [UIView animateWithDuration:0.15 animations:^{ button.alpha = 1.0; } completion:nil];
-    __weak NFBManager *weakSelf = self;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        [weakSelf.shakingApps removeObject:appID];
-        [weakSelf refresh];
-    });
+    if (!button.superview || UIAccessibilityIsReduceMotionEnabled()) return;
+    CAKeyframeAnimation *pulse=[CAKeyframeAnimation animationWithKeyPath:@"transform.scale"];
+    pulse.values=@[@1,@0.94,@1,@0.97,@1]; pulse.duration=0.65;
+    [button.imageView.layer addAnimation:pulse forKey:@"NFBContainerPulse"];
 }
 - (BOOL)isLocked {
     id lock = NFBSingleton(@"SBLockScreenManager");
@@ -549,14 +466,12 @@ static double NFBNumber(NSString *key, double fallback) {
 // window gone, so it only started moving after the window had finished closing.
 - (void)beginRetracting:(NSString *)app {
     if (!app.length) return;
+    NSNumber *token=@([self.retractTokens[app] unsignedIntegerValue]+1); self.retractTokens[app]=token;
     [self.retracting addObject:app];
-    // Drop any active reveal window too: a tap always extends the bubble first,
-    // and that leftover timer would otherwise force it straight back out.
-    [self.expandedUntil removeObjectForKey:app];
-    [self.needsReveal removeObject:app];
     [self refresh];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
+        if (![self.retractTokens[app] isEqual:token]) return;
         [self.retracting removeObject:app];
         [self refresh]; // Adopt whichever state TrollOpen actually settled into.
     });
@@ -601,15 +516,7 @@ static double NFBNumber(NSString *key, double fallback) {
     self.watchedFloating = now;
     [self refresh];
 }
-- (void)extendApp:(NSString *)app {
-    if (self.edgeMode) [self extendEdgeContainer];
-    NSTimeInterval duration = UIAccessibilityIsReduceMotionEnabled() ? 0 : NFBMotion;
-    NSNumber *until = @(CACurrentMediaTime() + duration + NFBHold);
-    self.expandedUntil[app] = until;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((duration + NFBHold) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        if ([self.expandedUntil[app] isEqual:until]) [self refresh];
-    });
-}
+
 - (void)tick {
     if (!self.enabled) return;
     NSString *desktopFailure = NFBConsumeDesktopSplitFailure();
@@ -655,12 +562,14 @@ static double NFBNumber(NSString *key, double fallback) {
 }
 - (void)closeAppsInOrder:(NSArray<NSString *> *)apps {
     NSDictionary *versions = [self.generations copy];
+    NSUInteger epoch=self.exitEpoch;
     [apps enumerateObjectsUsingBlock:^(NSString *app, NSUInteger index, __unused BOOL *stop) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(index * 0.16 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (self.exitEpoch!=epoch) return;
             // A notification or reopened switcher card received after this snapshot survives.
             if (self.generations[app] != versions[app] && ![self.generations[app] isEqual:versions[app]]) return;
             [self.burstApps addObject:app];
-            [self.store closeApp:app]; [self.needsReveal removeObject:app];
+            [self.store closeApp:app];
             if ([self.pendingRecord.appID isEqual:app]) self.pendingRecord = nil;
             [self refresh];
         });
@@ -696,11 +605,6 @@ static double NFBNumber(NSString *key, double fallback) {
     self.window.clipsToBounds = YES;
     self.rail.backgroundColor = UIColor.clearColor;
     self.rail.delegate = self;
-    UITapGestureRecognizer *edgeTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(edgeContainerTapped:)];
-    self.edgeTap = edgeTap;
-    edgeTap.cancelsTouchesInView = NO;
-    edgeTap.delegate = self;
-    [self.rail addGestureRecognizer:edgeTap];
     self.rail.showsVerticalScrollIndicator = NO;
     self.rail.alwaysBounceVertical = NO;
     self.railMaterial = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterial]];
@@ -710,15 +614,10 @@ static double NFBNumber(NSString *key, double fallback) {
     self.railMaterial.alpha = 0;
     [self.window.rootViewController.view addSubview:self.railMaterial];
     [self.window.rootViewController.view addSubview:self.rail];
-    self.unreadRail = [NFBRail new];
-    self.unreadRail.clipsToBounds = YES;
-    self.unreadRail.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
-    self.unreadRail.showsVerticalScrollIndicator = NO;
-    self.unreadRail.backgroundColor = UIColor.clearColor;
-    [self.window.rootViewController.view addSubview:self.unreadRail];
     // Never take the key window; keyboard and app focus belong to the system.
 }
 - (id)iconForApp:(NSString *)appID {
+    // Re-resolve the model each event; cache misses must not survive app installs.
     static NFBWindowState *sample;
     static id model;
     static NSMutableDictionary *objects;
@@ -751,7 +650,7 @@ static double NFBNumber(NSString *key, double fallback) {
     NSString *name = NFBString(NFBGet(icon, @"displayName")) ?: button.appID;
     NSString *label = [NSString stringWithFormat:@"%@，%@", name, text ?: (record ? @"有通知" : @"暂无新通知")];
     if (![button.accessibilityLabel isEqual:label]) button.accessibilityLabel = label;
-    button.accessibilityHint = @"点击伸出并打开；缩回时长按拖动，伸出后长按清除图标及 App";
+    button.accessibilityHint = @"点击打开；长按清除图标及 App";
     // Secondary cleanup: when the system icon's own badge drops to zero (the app
     // was opened and cleared it) but no withdraw reached us, drop this app's
     // records so the store-count badge above also clears on the next refresh.
@@ -764,14 +663,19 @@ static double NFBNumber(NSString *key, double fallback) {
     if ([systemBadge isKindOfClass:NSNumber.class]) self.lastBadges[button.appID] = systemBadge;
     else if (systemCleared) self.lastBadges[button.appID] = @0;
     id image = [self.icons objectForKey:button.appID];
-    if (!image) {
+    if (!image && [self.imageRetryAfter[button.appID] doubleValue]<=CACurrentMediaTime()) {
         image = NFBApplicationImage(button.appID, 2, UIScreen.mainScreen.scale);
-        if ([image isKindOfClass:UIImage.class]) [self.icons setObject:image forKey:button.appID];
+        if ([image isKindOfClass:UIImage.class]) {
+            [self.icons setObject:image forKey:button.appID]; [self.imageRetryAfter removeObjectForKey:button.appID];
+        } else {
+            if (self.imageRetryAfter.count>=128) [self.imageRetryAfter removeAllObjects];
+            self.imageRetryAfter[button.appID]=@(CACurrentMediaTime()+2);
+        }
     }
     button.imageView.image = [image isKindOfClass:UIImage.class] ? image : [UIImage systemImageNamed:@"bell.fill"];
 }
 - (void)updatePrivacy {
-    NFBUpdateDesktopSplit(self.enabled && ![self isLocked]);
+    if (!self.enabled || [self isLocked]) NFBUpdateDesktopSplit(NO);
     BOOL desktopVisible = NFBCurrentWindowState().home;
     // Attachment lookup includes all expanded portrait windows, even behind a landscape window.
     NSString *splitApp = NFBSplitAttachmentApp();
@@ -828,26 +732,7 @@ static double NFBNumber(NSString *key, double fallback) {
     // ends (split-view bubbles come back on their own via floatingApp below).
     BOOL previousKeyboardUp = self.keyboardUp;
     BOOL keyboardUp = NFBKeyboardVisible();
-    if (keyboardUp != self.keyboardUp) {
-        if (keyboardUp) {
-            // Keyboard just rose: snapshot every bubble still riding its unread
-            // timer, so it can be restored instead of silently expiring while
-            // the user is typing.
-            [self.keyboardSuspended removeAllObjects];
-            for (NSString *app in self.store.appIDs) {
-                if ([self.expandedUntil[app] doubleValue] > CACurrentMediaTime()) {
-                    [self.keyboardSuspended addObject:app];
-                }
-            }
-        } else {
-            // Keyboard just fell: re-pop the bubbles it pulled in.
-            for (NSString *app in [self.keyboardSuspended copy]) {
-                if (![self.retracting containsObject:app] && [self.store.appIDs containsObject:app]) [self extendApp:app];
-            }
-            [self.keyboardSuspended removeAllObjects];
-        }
-        self.keyboardUp = keyboardUp;
-    }
+    self.keyboardUp=keyboardUp;
     BOOL home = NFBCurrentWindowState().home;
     BOOL edgeMode = !floatingApp.length;
     NSString *active = NFBTrollVisibleApp() ?: floatingApp ?: (home ? nil : NFBCurrentWindowState().frontApp);
@@ -865,16 +750,11 @@ static double NFBNumber(NSString *key, double fallback) {
     self.edgeMode = edgeMode;
     NSMutableOrderedSet *history = [NSMutableOrderedSet orderedSetWithArray:self.recentUsedApps];
     [history addObjectsFromArray:self.lastSwitcher ?: @[]];
-    // No external unread strip: the edge container owns every visible app.
-    NSArray<NSString *> *unreadApps = @[];
-    NSArray<NSString *> *allEdgeApps = NFBStableApps(apps, history.array, self.backgroundOrder ?: @[]);
-    self.backgroundOrder = allEdgeApps;
     NSArray<NSString *> *railApps;
-    NSUInteger storedCount = 0;
     if (edgeMode) {
         railApps = @[]; // Open owns all edge presentation in this edition.
     } else {
-        // Membership, not merely viewport height, is limited to two recent apps.
+        // Membership, not merely viewport height, is limited to three recent apps.
         NSMutableArray<NSString *> *background = [NSMutableArray array];
         for (NSString *app in apps)
             if ([self.lastSwitcher containsObject:app] || [app isEqual:active]) [background addObject:app];
@@ -882,16 +762,14 @@ static double NFBNumber(NSString *key, double fallback) {
     }
     NSMutableArray<NSString *> *displayApps = [railApps mutableCopy];
     if (!edgeMode) [displayApps addObject:NFBClearAllID];
-    self.storedApps = @[];
     BOOL orderChanged = ![self.lastLayoutApps isEqualToArray:displayApps];
     self.lastLayoutApps = [displayApps copy];
     for (NSString *appID in self.buttons.allKeys) {
         if ([displayApps containsObject:appID]) continue;
         NFBBubble *button = self.buttons[appID];
         [self.buttons removeObjectForKey:appID];
-        [self.expandedUntil removeObjectForKey:appID];
         button.userInteractionEnabled = NO;
-        [self.icons removeObjectForKey:appID];
+        if (![self.favoriteApps containsObject:appID]) [self.icons removeObjectForKey:appID];
         if ([self.burstApps containsObject:appID]) {
             [self.burstApps removeObject:appID];
             [self burstBubble:button];
@@ -904,9 +782,10 @@ static double NFBNumber(NSString *key, double fallback) {
     }
     if (!self.enabled) {
         NFBUpdateOpenEdgeSplitIconsVisible(NO);
+        NSUInteger presentationEpoch=self.presentationEpoch;
         // Delay hiding until the removal animation completes; recheck new arrivals.
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.65 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            if (!self.enabled || !self.buttons.count) self.window.hidden = YES;
+            if (self.presentationEpoch==presentationEpoch && !self.enabled) self.window.hidden = YES;
         });
         return;
     }
@@ -914,13 +793,6 @@ static double NFBNumber(NSString *key, double fallback) {
     [self ensureWindow];
     NFBSetCaptureHidden(self.window.rootViewController.view, self.hideInScreenshots);
     self.window.hidden = NO;
-    for (NSString *app in [self.needsReveal copy]) {
-        // An open keyboard outranks even a fresh notification: leave the reveal
-        // pending instead of burning it, so it shows the moment typing ends.
-        if (keyboardUp) break;
-        if ([self.store.appIDs containsObject:app]) [self extendApp:app];
-        [self.needsReveal removeObject:app];
-    }
     UIView *root = self.window.rootViewController.view;
     CGFloat oldBottomOffset = MAX(0, self.rail.contentSize.height - self.rail.bounds.size.height) - self.rail.contentOffset.y;
     CGRect bounds = root.bounds;
@@ -960,7 +832,7 @@ static double NFBNumber(NSString *key, double fallback) {
         CGFloat room = CGRectGetWidth(bounds) - CGRectGetMaxX(splitFrame) - splitGap - screenMargin;
         diameter = MIN(diameter, MAX(1, room - 14));
     }
-    NSTimeInterval layoutDuration = (UIAccessibilityIsReduceMotionEnabled() || self.draggingEdge) ? 0 : (attachmentChanged ? 0.35 : (attached ? 0.16 : NFBMotion));
+    NSTimeInterval layoutDuration = UIAccessibilityIsReduceMotionEnabled() ? 0 : (attachmentChanged ? 0.35 : (attached ? 0.16 : NFBMotion));
     CGFloat side = diameter + 14;
     CGFloat step = diameter + 9;
     CGFloat available = MAX(side, bounds.size.height - top - MAX(safe.bottom, 20) - 20);
@@ -971,11 +843,11 @@ static double NFBNumber(NSString *key, double fallback) {
     NSUInteger rowCount = railApps.count;
     CGFloat contentHeight = rowCount ? (rowCount - 1) * step + side : 0;
     CGFloat height = MIN(available, contentHeight);
-    // Keyboard outranks every other rule (typing must never be covered): the row
+    // Keyboard placement keeps the row clear while typing. The row
     // shifts to NFBKeyboardPosition in both split view and fullscreen. Otherwise,
     // while an app is in the split view the row shifts down to clear the floating
     // window (NFBFloatingPosition), then returns to the user's slider setting.
-    CGFloat position = keyboardUp && !self.draggingEdge ? NFBKeyboardPosition : (floatingApp.length > 0 ? NFBFloatingPosition : self.verticalPosition);
+    CGFloat position = keyboardUp ? NFBKeyboardPosition : (floatingApp.length > 0 ? NFBFloatingPosition : self.verticalPosition);
     // Anchor the FIRST bubble (index 0, the lowest one) to a fixed screen Y so it
     // never moves: each new bubble stacks upward on top of it. The first bubble's
     // center sits (step - side/2) above the rail's bottom edge, so fixing the
@@ -1019,62 +891,15 @@ static double NFBNumber(NSString *key, double fallback) {
         railFrame = CGRectMake(railFrame.origin.x, y + favoriteHeight + gap, railWidth, height);
         clearCenterY = CGRectGetMaxY(railFrame) + 9 + side / 2;
     }
-    CGRect unreadFrame = CGRectZero;
-    CGFloat unreadContentHeight = unreadApps.count ? (unreadApps.count - 1) * step + side : 0;
-    if (edgeMode) {
-        CGFloat edgeFloor = keyboardUp ? NFBKeyboardTopInView(root) - 12 - step
-            : CGRectGetHeight(bounds) - MAX(safe.bottom, 12);
-        CGFloat outsideHeight = 0;
-        CGFloat room = MAX(0, edgeFloor - top - side - 9 - outsideHeight);
-        height = MIN(MIN(6 * step + side, contentHeight), room);
-        // Reserve a separate transparent strip for unread apps above the container.
-        CGFloat gap = height > 0 && unreadApps.count ? 9 : 0;
-        CGFloat unreadHeight = MIN(unreadContentHeight, MAX(0, room - height - gap));
-        // On short keyboard layouts leave at least one unread row reachable.
-        if (unreadApps.count && unreadHeight < MIN(side, room)) {
-            unreadHeight = MIN(side, room);
-            height = MIN(height, MAX(0, room - unreadHeight - gap));
-        }
-        CGFloat total = height + unreadHeight + gap;
-        CGFloat bottom = MAX(top + total, MIN(edgeFloor - side - 9 - outsideHeight, anchor + step - side / 2 + padding));
-        self.edgeAvailable = available;
-        self.resolvedEdgePosition = (bottom - step + side / 2 - padding - top) / MAX(1, available);
-        BOOL edgeExpanded = !keyboardUp && (self.edgeUntil > CACurrentMediaTime() ||
-            self.rail.dragging || self.rail.decelerating || self.draggingEdge);
-        CGFloat x = CGRectGetWidth(bounds) - railWidth + (edgeExpanded ? 0 : NFBRetraction(diameter));
-        railFrame = CGRectMake(x, bottom - height, railWidth, height);
-        clearCenterY = bottom + 9 + side / 2;
-        unreadFrame = CGRectMake(CGRectGetWidth(bounds) - side, bottom - total,
-            side + NFBRetraction(diameter), unreadHeight);
-    }
     [self layoutFavorites:favoritesFrame diameter:diameter active:active duration:layoutDuration];
     [self layoutDesktopAction:desktopActionFrame target:actionTarget duration:layoutDuration];
-    self.unreadRail.hidden = !edgeMode || !unreadApps.count;
-    [UIView animateWithDuration:layoutDuration delay:0
-        options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseInOut
-        animations:^{ self.unreadRail.frame = unreadFrame; } completion:nil];
-    self.unreadRail.contentSize = CGSizeMake(CGRectGetWidth(unreadFrame), unreadContentHeight);
-    self.unreadRail.alwaysBounceVertical = unreadContentHeight > CGRectGetHeight(unreadFrame);
-    if (!self.unreadRail.dragging && !self.unreadRail.decelerating) {
-        CGFloat offset = MAX(0, unreadContentHeight - CGRectGetHeight(unreadFrame));
-        CGFloat targetOffset = (orderChanged || attachmentChanged) ? offset : MIN(offset, self.unreadRail.contentOffset.y);
-        NSUInteger activeUnread = [unreadApps indexOfObject:active ?: @""];
-        if (activeUnread != NSNotFound && (orderChanged || attachmentChanged || ![self.lastRailActive isEqual:active] || keyboardUp != previousKeyboardUp))
-            targetOffset = NFBRevealOffset(targetOffset, CGRectGetHeight(unreadFrame), unreadContentHeight,
-                NFBRowCenter(unreadApps.count, activeUnread, step, side), side);
-        [UIView animateWithDuration:layoutDuration delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{
-            self.unreadRail.contentOffset = CGPointMake(0, targetOffset);
-        } completion:nil];
-    }
     BOOL hideEdgeIcons = edgeMode;
     self.rail.hidden = hideEdgeIcons;
     self.railMaterial.hidden = hideEdgeIcons;
-    if (hideEdgeIcons) self.unreadRail.hidden = YES;
     BOOL railSizeChanged = !CGSizeEqualToSize(self.rail.bounds.size, railFrame.size);
     // Narrow only the visible edge material. Retain the padded hit/clip area
     // so icon edges, shadows and the external unread badges stay intact.
     CGRect materialFrame = edgeMode ? CGRectInset(railFrame, 5, 0) : railFrame;
-    self.rail.containerMode = YES;
     self.rail.layer.cornerRadius = MIN(14, railWidth / 4);
     self.rail.alwaysBounceVertical = contentHeight > height;
     self.rail.showsVerticalScrollIndicator = NO;
@@ -1105,24 +930,14 @@ static double NFBNumber(NSString *key, double fallback) {
     }
     [displayApps enumerateObjectsUsingBlock:^(NSString *appID, __unused NSUInteger index, __unused BOOL *stop) {
         BOOL isClearAll = [appID isEqualToString:NFBClearAllID];
-        BOOL isStorage = [appID isEqualToString:NFBStorageID];
-        BOOL isFullscreen = NO; // Open exclusively owns fullscreen edge presentation.
-        BOOL isOutside = edgeMode && [unreadApps containsObject:appID];
-        NSUInteger rowIndex = isOutside ? [unreadApps indexOfObject:appID] : [railApps indexOfObject:appID];
-        UIView *parent = (isClearAll || isStorage || isFullscreen) ? root : (isOutside ? self.unreadRail : self.rail);
+        NSUInteger rowIndex = [railApps indexOfObject:appID];
+        UIView *parent = isClearAll ? root : self.rail;
         NFBBubble *button = self.buttons[appID];
         BOOL fresh = !button;
         if (fresh) {
             button = [[NFBBubble alloc] initWithFrame:CGRectZero];
             button.appID = appID;
-            if (isStorage) {
-                UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(storageTapped:)];
-                UILongPressGestureRecognizer *hold = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(storageLongPressed:)];
-                hold.minimumPressDuration = 0.45;
-                [tap requireGestureRecognizerToFail:hold];
-                [button addGestureRecognizer:hold];
-                [button addGestureRecognizer:tap];
-            } else if (isClearAll) {
+            if (isClearAll) {
                 UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(clearAllTapped:)];
                 tap.numberOfTapsRequired = 1;
                 UILongPressGestureRecognizer *hold = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(clearAllHeld:)];
@@ -1133,12 +948,11 @@ static double NFBNumber(NSString *key, double fallback) {
             } else {
                 UITapGestureRecognizer *singleTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(singleTapped:)];
                 singleTap.delegate = self;
-                UILongPressGestureRecognizer *hold = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(edgeLongPressed:)];
+                UILongPressGestureRecognizer *hold = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(appHeld:)];
                 hold.minimumPressDuration = 0.45;
                 hold.cancelsTouchesInView = YES;
                 hold.delegate = self;
                 [singleTap requireGestureRecognizerToFail:hold];
-                [self.edgeTap requireGestureRecognizerToFail:hold];
                 [button addGestureRecognizer:singleTap];
                 [button addGestureRecognizer:hold];
             }
@@ -1152,13 +966,12 @@ static double NFBNumber(NSString *key, double fallback) {
             [parent addSubview:button];
             button.center = position;
         }
-        if (isStorage) [self styleStorageButton:button count:storedCount];
-        else if (isClearAll) {
+        if (isClearAll) {
             [self styleClearAllButton:button];
 
         }
         else [self updateBubble:button record:[self.store latestForApp:appID]];
-        if (!isOutside && !isClearAll && !isStorage) {
+        if (!isClearAll) {
             CGFloat badgeHeight = MIN(16, diameter * 0.5);
             CGFloat badgeWidth = MIN(diameter, MAX(badgeHeight, CGRectGetWidth(button.badge.frame) * 0.8));
             button.badge.frame = CGRectMake(7, 7, badgeWidth, badgeHeight);
@@ -1169,30 +982,15 @@ static double NFBNumber(NSString *key, double fallback) {
         }
         // A bubble we already started retracting must not be re-expanded by the
         // stale "window still visible" reading taken mid-transition.
-        [button updateActiveMark:(!isStorage && !isClearAll && ([active isEqualToString:appID] || isFullscreen))
+        [button updateActiveMark:(!isClearAll && [active isEqualToString:appID])
             diameter:diameter duration:layoutDuration];
-        BOOL retracting = [self.retracting containsObject:appID];
-        // "Has unread" is now the store's unread count, not a short timer: a
-        // bubble with any pending notification stays fully visible (never folds)
-        // until the record is consumed by opening the app.
-        BOOL hasUnread = [self.store countForApp:appID] > 0;
-        // With an app sitting in the TrollOpen split view every bubble stays out
-        // instead of only that app's, so the whole row is reachable at a glance.
-        // Edge read icons move with their container. Only external unread icons
-        // use independent reveal/retraction timers.
-        BOOL expanded = !keyboardUp && !retracting && (floatingApp.length > 0 || [self.expandedUntil[appID] doubleValue] > CACurrentMediaTime());
-        (void)hasUnread;
-        CGFloat retraction = isOutside && !expanded ? NFBRetraction(diameter) : 0;
-        CGAffineTransform target = CGAffineTransformMakeTranslation(retraction, 0);
+        CGAffineTransform target = CGAffineTransformIdentity;
         CGRect targetBounds = CGRectMake(0, 0, side, side);
         // Keep the same bottom-first app ordering on desktop and in split view.
         // The clear action is appended last and therefore stays above all apps.
-        CGFloat rowY = (isClearAll || isStorage || isFullscreen) ? side / 2 : NFBRowCenter(isOutside ? unreadApps.count : rowCount, rowIndex, step, side);
-        CGFloat corner = !isOutside && !isClearAll ? diameter * 0.23 : diameter / 2;
-        // Share the rail center so the standalone fullscreen icon retracts by
-        // the same half-icon distance, with the same animation and timer.
-        CGPoint targetCenter = (isClearAll || isStorage) ? CGPointMake(CGRectGetMidX(railFrame), clearCenterY)
-            : (isFullscreen ? CGPointMake(CGRectGetMidX(railFrame), clearCenterY + side + 9) : CGPointMake(side / 2, rowY));
+        CGFloat rowY = isClearAll ? side / 2 : NFBRowCenter(rowCount, rowIndex, step, side);
+        CGFloat corner = !isClearAll ? diameter * 0.23 : diameter / 2;
+        CGPoint targetCenter = isClearAll ? CGPointMake(CGRectGetMidX(railFrame), clearCenterY) : CGPointMake(side / 2, rowY);
         if (fresh) {
             button.bounds = targetBounds;
             button.center = targetCenter;
@@ -1204,14 +1002,11 @@ static double NFBNumber(NSString *key, double fallback) {
         // The clear-all bubble is an action, not an app: keep it fully opaque so
         // it stays discoverable, unlike the dimmed background bubbles around it.
         CGFloat alpha = self.iconOpacity;
-        if (isClearAll || isStorage) {
+        if (isClearAll) {
             alpha = 1.0;
-        } else if (isFullscreen || [active isEqualToString:appID]) {
+        } else if ([active isEqualToString:appID]) {
             alpha = 1.0;
         }
-        // A bubble mid-shake (fresh notification during split view) stays fully
-        // opaque for the reminder's duration, whatever its normal state is.
-        if (!containerMode && [self.shakingApps containsObject:appID]) alpha = 1.0;
         BOOL changed = fresh || fabs(button.imageView.layer.cornerRadius - corner) > 0.01 || !CGRectEqualToRect(button.bounds, targetBounds) ||
             !CGPointEqualToPoint(button.center, targetCenter) ||
             !CGAffineTransformEqualToTransform(button.transform, target) ||
@@ -1237,7 +1032,6 @@ static double NFBNumber(NSString *key, double fallback) {
     if (!self.favoritesRail) {
         self.favoriteButtons = [NSMutableDictionary dictionary];
         self.favoritesRail = [NFBRail new];
-        self.favoritesRail.containerMode = YES;
         self.favoritesRail.delegate = self;
         self.favoriteHold = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(favoriteHeld:)];
         self.favoriteHold.minimumPressDuration = 0.45;
@@ -1387,18 +1181,11 @@ static double NFBNumber(NSString *key, double fallback) {
     NSTimeInterval now = CACurrentMediaTime();
     if (now - self.lastGestureAt < NFBGestureCooldown) return NO;
     self.lastGestureAt = now;
-    // While the folded stack is spread open, any tap keeps it open for another
-    // NFBStackHold seconds — only 4 seconds of no action folds it back.
-    if (self.edgeMode) [self restartStorageIdleTimer];
     return YES;
 }
 // A bubble belongs to the app currently occupying the TrollOpen floating window.
 // Resolved through one place so tap and long press can never disagree.
-- (BOOL)isFloatingBubble:(NFBBubble *)button {
-    if (!button || self.buttons[button.appID] != button) return NO;
-    NSString *floating = NFBTrollVisibleApp();
-    return floating.length > 0 && [floating isEqualToString:button.appID];
-}
+
 // Grow the floating window back to fullscreen (single tap). Refreshes slightly
 // later, because TrollOpen re-parents the scene across a run loop turn.
 - (void)fullscreenFloatingApp:(NSString *)app {
@@ -1440,7 +1227,7 @@ static double NFBNumber(NSString *key, double fallback) {
         if (NFBExitStillCurrent(exitVersion, [self.generations[app] unsignedIntegerValue], self.enabled && self.exitEpoch == exitEpoch, becameActive, NO)) NFBTerminateApp(app);
         [self refresh];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            [self.closingApps removeObject:app];
+            if ([self.generations[app] unsignedIntegerValue]==exitVersion) [self.closingApps removeObject:app];
         });
     });
 }
@@ -1484,171 +1271,22 @@ static double NFBNumber(NSString *key, double fallback) {
         button.transform = CGAffineTransformScale(button.transform, 1.16, 1.16); button.alpha = 0;
     } completion:^(__unused BOOL done) { [button removeFromSuperview]; }];
 }
-- (void)styleStorageButton:(NFBBubble *)button count:(NSUInteger)count {
-    button.imageView.image = [UIImage systemImageNamed:@"square.stack.3d.up.fill"];
-    button.imageView.contentMode = UIViewContentModeCenter;
-    button.imageView.tintColor = UIColor.labelColor;
-    button.imageView.backgroundColor = UIColor.clearColor;
-    button.imageView.layer.borderWidth = 0.5;
-    button.imageView.layer.borderColor = [UIColor.separatorColor colorWithAlphaComponent:0.35].CGColor;
-    UIVisualEffectView *material = (UIVisualEffectView *)[button.imageView viewWithTag:39001];
-    if (!material) {
-        material = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterial]];
-        material.tag = 39001; material.userInteractionEnabled = NO;
-        material.frame = button.imageView.bounds;
-        material.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        [button.imageView insertSubview:material atIndex:0];
-        // UIImageView draws its own image behind subviews; use a foreground glyph.
-        UIImageView *glyph = [[UIImageView alloc] initWithImage:button.imageView.image];
-        glyph.contentMode = UIViewContentModeCenter; glyph.tintColor = UIColor.labelColor;
-        glyph.frame = material.bounds; glyph.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        [material.contentView addSubview:glyph];
-    }
-    button.imageView.image = nil;
-    button.badge.hidden = NO;
-    button.badge.text = count > 99 ? @"99+" : [NSString stringWithFormat:@"%lu", (unsigned long)count];
-    button.badge.backgroundColor = UIColor.secondarySystemBackgroundColor;
-    button.badge.textColor = UIColor.secondaryLabelColor;
-    CGFloat width = count > 99 ? 28 : 22;
-    button.badge.frame = CGRectMake(self.iconSize + 14 - width, self.iconSize - 8, width, 18);
-    button.badge.font = [UIFont systemFontOfSize:10 weight:UIFontWeightSemibold];
-    button.badge.layer.cornerRadius = 9;
-    button.accessibilityLabel = [NSString stringWithFormat:self.backgroundCollapsed ? @"已收纳 %lu 个无未读应用" : @"可收纳 %lu 个无未读应用", (unsigned long)count];
-    button.accessibilityHint = @"点击收起或展开后台图标，长按上下拖动位置";
-}
-- (void)storageLongPressed:(UILongPressGestureRecognizer *)gesture {
-    if (!self.edgeMode || self.buttons[NFBStorageID] != gesture.view) return;
-    ((NFBBubble *)gesture.view).holdStartedRetracted = YES;
-    [self restartStorageIdleTimer];
-    [self edgeLongPressed:gesture];
-}
-- (void)storageTapped:(UITapGestureRecognizer *)gesture {
-    if (gesture.state != UIGestureRecognizerStateEnded || ![self acceptGesture]) return;
-    self.backgroundCollapsed = !self.backgroundCollapsed;
-    if (!self.backgroundCollapsed) {
-        [self restartStorageIdleTimer];
-        [self extendEdgeContainer];
-    } else self.stackUntil = 0;
-    [self refresh];
-}
-- (void)restartStorageIdleTimer {
-    if (self.backgroundCollapsed) { self.stackUntil = 0; return; }
-    self.stackUntil = CACurrentMediaTime() + NFBStackHold;
-    NSTimeInterval deadline = self.stackUntil;
-    __weak typeof(self) weakSelf = self;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(NFBStackHold * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        typeof(self) owner = weakSelf;
-        if (!owner || owner.stackUntil != deadline || owner.backgroundCollapsed) return;
-        if (owner.draggingEdge || owner.rail.tracking || owner.rail.dragging || owner.rail.decelerating) {
-            [owner restartStorageIdleTimer];
-            return;
-        }
-        owner.stackUntil = 0;
-        owner.backgroundCollapsed = YES;
-        [owner refresh]; // Unread apps remain visible through NFBVisibleEdgeApps.
-    });
-}
-- (BOOL)edgeBubbleIsRetracted:(NFBBubble *)button {
-    if (!self.edgeMode) return NO;
-    CALayer *layer = button.imageView.layer.presentationLayer ?: button.imageView.layer;
-    CGRect image = [layer convertRect:layer.bounds toLayer:self.window.rootViewController.view.layer];
-    return CGRectGetMaxX(image) > CGRectGetWidth(self.window.rootViewController.view.bounds) + 0.5;
-}
+
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldReceiveTouch:(UITouch *)touch {
     if (gesture == self.desktopActionTap || gesture == self.desktopActionHold) {
         self.desktopActionTouchTarget = self.desktopActionTarget;
         return self.enabled && ![self isLocked] && self.desktopActionTouchTarget != nil;
     }
-    if (gesture == self.edgeTap) {
-        // Bubble taps handle their own reveal. Do not race them with a parent tap.
-        for (UIView *view = touch.view; view && view != self.rail; view = view.superview)
-            if ([view isKindOfClass:NFBBubble.class]) return NO;
-        return YES;
-    }
-    if (![gesture.view isKindOfClass:NFBBubble.class]) return YES;
-    NFBBubble *button = (NFBBubble *)gesture.view;
-    BOOL tucked = [self edgeBubbleIsRetracted:button];
-    if ([gesture isKindOfClass:UILongPressGestureRecognizer.class]) button.holdStartedRetracted = tucked;
-    // Freeze the interaction decision at touch-down; a one-second timer must
-    // not turn a held expanded icon into a drag into a drag after its timer expires.
-    if (self.edgeMode) [self restartStorageIdleTimer];
-    if (self.edgeMode && !tucked) {
-        if (button.superview == self.rail) [self extendEdgeContainer];
-        else [self extendApp:button.appID];
-    }
     return YES;
 }
-- (void)edgeLongPressed:(UILongPressGestureRecognizer *)gesture {
-    UIView *root = self.window.rootViewController.view;
-    if (gesture.state == UIGestureRecognizerStateBegan) {
-        NFBBubble *button = (NFBBubble *)gesture.view;
-        if (!self.edgeMode || !button.holdStartedRetracted) {
-            [self closeBubble:button];
-            return;
-        }
-        self.draggingEdge = YES;
-        self.dragStartY = [gesture locationInView:root].y;
-        self.dragSavedPosition = self.verticalPosition;
-        self.dragStartPosition = self.resolvedEdgePosition;
-        self.rail.scrollEnabled = NO;
-        self.unreadRail.scrollEnabled = NO;
-        [self extendEdgeContainer];
-    }
-    if (!self.draggingEdge) return;
-    if (!self.edgeMode || gesture.state == UIGestureRecognizerStateCancelled || gesture.state == UIGestureRecognizerStateFailed) {
-        self.verticalPosition = self.dragSavedPosition;
-        self.draggingEdge = NO;
-    } else if (gesture.state == UIGestureRecognizerStateChanged || gesture.state == UIGestureRecognizerStateBegan || gesture.state == UIGestureRecognizerStateEnded) {
-        CGFloat delta = [gesture locationInView:root].y - self.dragStartY;
-        self.verticalPosition = NFBPosition(self.dragStartPosition + delta / MAX(1, self.edgeAvailable));
-        if (gesture.state == UIGestureRecognizerStateEnded) {
-            self.draggingEdge = NO;
-            CFPreferencesSetAppValue(CFSTR("EdgeVerticalPosition"), (__bridge CFPropertyListRef)@(self.verticalPosition), NFBDomain);
-            CFPreferencesAppSynchronize(NFBDomain);
-        }
-    }
-    if (!self.draggingEdge) {
-        self.rail.scrollEnabled = YES;
-        self.unreadRail.scrollEnabled = YES;
-        [self extendEdgeContainer];
-    }
-    [self refresh];
-}
-- (void)extendEdgeContainer {
-    NSTimeInterval duration = UIAccessibilityIsReduceMotionEnabled() ? 0 : NFBMotion;
-    self.edgeUntil = CACurrentMediaTime() + duration + NFBHold;
-    NSTimeInterval deadline = self.edgeUntil;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((duration + NFBHold) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        if (self.edgeUntil == deadline) [self refresh];
-    });
-}
-- (void)edgeContainerTapped:(UITapGestureRecognizer *)gesture {
-    if (!self.edgeMode || gesture.state != UIGestureRecognizerStateEnded) return;
-    [self restartStorageIdleTimer];
-    [self extendEdgeContainer];
-    [self refresh];
-}
-- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)other {
-    return [gesture isKindOfClass:UITapGestureRecognizer.class] &&
-        [other isKindOfClass:UITapGestureRecognizer.class] &&
-        (gesture == self.edgeTap || other == self.edgeTap);
-}
-- (void)scrollViewWillBeginDragging:(UIScrollView *)scrollView {
-    if (scrollView != self.rail || !self.edgeMode) return;
-    [self restartStorageIdleTimer];
-    [self extendEdgeContainer]; [self refresh];
+- (void)appHeld:(UILongPressGestureRecognizer *)gesture {
+    if (gesture.state==UIGestureRecognizerStateBegan) [self closeBubble:(NFBBubble *)gesture.view];
 }
 - (void)scrollViewDidEndDragging:(UIScrollView *)scrollView willDecelerate:(BOOL)decelerate {
     if (scrollView == self.favoritesRail && !decelerate) [self saveFavoritePosition];
-    if (scrollView != self.rail || !self.edgeMode || decelerate) return;
-    [self restartStorageIdleTimer];
-    [self extendEdgeContainer]; [self refresh];
 }
 - (void)scrollViewDidEndDecelerating:(UIScrollView *)scrollView {
     if (scrollView == self.favoritesRail) [self saveFavoritePosition];
-    if (scrollView != self.rail || !self.edgeMode) return;
-    [self restartStorageIdleTimer];
-    [self extendEdgeContainer]; [self refresh];
 }
 - (void)singleTapped:(UITapGestureRecognizer *)gesture {
     if (gesture.state != UIGestureRecognizerStateEnded) return;
@@ -1663,9 +1301,7 @@ static double NFBNumber(NSString *key, double fallback) {
     self.generations[button.appID] = @([self.generations[button.appID] unsignedIntegerValue] + 1);
     [self.closingApps removeObject:button.appID];
     button.opening = YES;
-    if (self.edgeMode && button.superview == self.rail) [self extendEdgeContainer];
-    [self extendApp:button.appID];
-    [self refresh]; // Starts the same 0.6-second animation used for retraction.
+    [self refresh];
     NFBRecord *record = [self.store latestForApp:button.appID];
     // Dispatch in this same event, never in the animation completion.
     if (record) {

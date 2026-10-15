@@ -8,7 +8,10 @@
 
 void NFBConfigureDebugLogging(BOOL enabled);
 BOOL NFBDebugLoggingEnabled(void);
-void NFBDebugLog(NSString *format, ...) NS_FORMAT_FUNCTION(1, 2);
+void NFBWriteDebugLog(NSString *format, ...) NS_FORMAT_FUNCTION(1, 2);
+void NFBInfoLog(NSString *format, ...) NS_FORMAT_FUNCTION(1, 2);
+// Gate before evaluating expensive arguments in frequent callers.
+#define NFBDebugLog(...) do { if (NFBDebugLoggingEnabled()) NFBWriteDebugLog(__VA_ARGS__); } while (0)
 void NFBErrorLog(NSString *format, ...) NS_FORMAT_FUNCTION(1, 2);
 
 // Dump every method whose name contains one of the given lowercase keywords,

@@ -6,6 +6,7 @@
 #import "NFBDebugLog.h"
 #import "NFBPrivacy.h"
 #import "NFBTrollOpen.h"
+#import "NFBStateLedger.h"
 #import <QuartzCore/QuartzCore.h>
 #ifndef NFB_DESKTOP_SIM_TEST
 #import <substrate.h>
@@ -29,24 +30,15 @@
 @property(nonatomic, copy) NSArray<NSLayoutConstraint *> *constraints;
 @property(nonatomic, strong) NSTimer *timer;
 @property(nonatomic, strong) UIVisualEffectView *backgroundFrost;
-@property(nonatomic, strong) UIView *paneBackdrop;
-@property(nonatomic, strong) NSMutableArray<UIView *> *appearanceViews;
-@property(nonatomic, strong) NSMutableArray<NSNumber *> *appearanceHidden;
-@property(nonatomic, strong) NSMutableArray<NSNumber *> *appearanceAlpha;
 @property(nonatomic) NSUInteger wallpaperCount;
-@property(nonatomic,strong) NSMutableArray<UIView *> *interactionViews;
-@property(nonatomic,strong) NSMutableArray<NSNumber *> *interactionValues;
-@property(nonatomic,strong) NSMutableArray<UIScrollView *> *scrollViews;
-@property(nonatomic,strong) NSMutableArray<NSNumber *> *scrollValues;
-@property(nonatomic,strong) NSMutableArray<UIGestureRecognizer *> *touchGestures;
-@property(nonatomic,strong) NSMutableArray<NSNumber *> *gestureValues;
+@property(nonatomic,strong) NFBStateLedger *appearanceState, *interactionState, *siblingState;
+@property(nonatomic) CFTimeInterval lastInteractionScan;
+@property(nonatomic,strong) NSHashTable<UIView *> *knownInteractiveViews;
 @property(nonatomic,weak) UIWindow *previousKeyWindow;
 @property(nonatomic) CGFloat originalWindowLevel, originalWindowAlpha;
 @property(nonatomic) BOOL originalWindowHidden, originalWindowInteraction, windowMutated;
 @property(nonatomic,strong) UIColor *originalWindowColor;
 @property(nonatomic) BOOL originalWindowOpaque;
-@property(nonatomic,strong) NSMutableArray<UIView *> *windowSiblings;
-@property(nonatomic,strong) NSMutableArray<NSNumber *> *windowSiblingHidden;
 @property(nonatomic) NSUInteger blockedHitReports;
 @property(nonatomic,strong) UIViewController *desktopController;
 @property(nonatomic) BOOL suppliedAppearance;
@@ -56,18 +48,15 @@
 @property(nonatomic) CGPoint refreshOffset;
 @property(nonatomic,strong) UIView *refreshCover;
 - (void)refreshWidgetPage;
+- (void)finishWidgetRefresh;
 - (void)activateDesktop;
 - (void)adoptDesktopInteraction;
 - (void)restoreDesktopInteraction;
-@property(nonatomic, copy) NSString *backgroundApp;
 @property(nonatomic) BOOL startedHome;
-@property(nonatomic) CGPoint dragStart;
 @property(nonatomic) CGRect panelFrame;
 @property(nonatomic) BOOL placed;
-- (void)drag:(UIPanGestureRecognizer *)gesture;
 @property(nonatomic) BOOL restoring, mutated;
 - (BOOL)place;
-- (void)closePressed;
 - (void)check;
 - (void)restore;
 - (void)adoptDesktopAppearance;
@@ -83,19 +72,23 @@ static UIViewController *NFBDesktopOwner(UIViewController *controller, UIView *v
     }
     return nil;
 }
-static UIScrollView *NFBDesktopPager(UIView *view) {
+static UIScrollView *NFBFindIconPager(UIView *view) {
     if (view.hidden || view.alpha<0.01) return nil;
-    if ([view isKindOfClass:UIScrollView.class]) {
-        UIScrollView *scroll=(UIScrollView *)view;
-        NSString *name=NSStringFromClass(scroll.class);
-        if ((scroll.pagingEnabled || [name containsString:@"IconScroll"]) &&
-            scroll.bounds.size.width>0 && scroll.contentSize.width>=scroll.bounds.size.width*2)
-            return scroll;
-    }
+    NSString *name=NSStringFromClass(view.class);
+    if ([name containsString:@"Folder"] && ![name containsString:@"RootFolder"]) return nil;
+    if ([view isKindOfClass:UIScrollView.class] && [name containsString:@"IconScroll"])
+        return (UIScrollView *)view;
     for (UIView *child in view.subviews) {
-        UIScrollView *pager=NFBDesktopPager(child);
-        if (pager) return pager;
+        UIScrollView *pager=NFBFindIconPager(child); if (pager) return pager;
     }
+    return nil;
+}
+static UIScrollView *NFBDesktopPager(UIView *desktop) {
+    UIScrollView *pager=NFBFindIconPager(desktop);
+    if (pager) return pager;
+    for (UIView *view in desktop.subviews)
+        if (!view.hidden && view.alpha>=0.01 && [view isKindOfClass:UIScrollView.class] && [(UIScrollView *)view isPagingEnabled])
+            return (UIScrollView *)view;
     return nil;
 }
 // An open request is not success: close only once Open reports the target pane.
@@ -117,7 +110,9 @@ BOOL NFBLaunchAppFromDesktopIcon(id iconView) {
     }
     active.pendingApp=bundle;
     active.pendingDeadline=CACurrentMediaTime()+8;
-    BOOL submitted=!active.startedHome && [active.backgroundApp isEqualToString:bundle]
+    NFBInvalidateWindowState();
+    NFBWindowState *current=NFBCurrentWindowState();
+    BOOL submitted=!current.home && [current.frontApp isEqualToString:bundle]
         ? NFBSplitTrollFrontmostApp() : NFBOpenTrollApp(bundle);
     if (!submitted) {
         active.pendingApp=nil;
@@ -129,13 +124,14 @@ BOOL NFBLaunchAppFromDesktopIcon(id iconView) {
 static BOOL NFBDesktopAnimationsEnabled(void) {
     return UIView.areAnimationsEnabled && !UIAccessibilityIsReduceMotionEnabled();
 }
-static void NFBLogDesktopTouchTree(UIView *view, NSUInteger depth) {
-    if (depth > 6) return;
+static void NFBLogDesktopTouchTree(UIView *view, NSUInteger depth, NSUInteger *remaining) {
+    if (!NFBDebugLoggingEnabled() || depth > 6 || !*remaining) return;
+    --*remaining;
     NFBDebugLog(@"desktop touch tree: depth=%lu class=%@ hidden=%d alpha=%.2f interaction=%d bounds=%@ frame=%@ gestures=%lu",
         (unsigned long)depth, NSStringFromClass(view.class), view.hidden, view.alpha,
         view.userInteractionEnabled, NSStringFromCGRect(view.bounds), NSStringFromCGRect(view.frame),
         (unsigned long)view.gestureRecognizers.count);
-    for (UIView *child in view.subviews) NFBLogDesktopTouchTree(child, depth+1);
+    for (UIView *child in view.subviews) NFBLogDesktopTouchTree(child, depth+1, remaining);
 }
 // iOS 16.0.3 device logs show the private root wrapper returning itself for
 // every icon/page touch. Only repair that observed blocker, within this session.
@@ -181,11 +177,21 @@ UIView *NFBDesktopSplitHitTest(UIWindow *window, CGPoint point, UIEvent *event, 
     UIView *hit = [active.panel hitTest:local withEvent:event];
     UIView *originalHit=hit;
     hit=NFBDesktopRepairWrapperHit(hit,window,point,event);
-    if (hit!=originalHit)
-        NFBDebugLog(@"desktop wrapper route: %@ -> %@", NSStringFromClass(originalHit.class), NSStringFromClass(hit.class));
-    else if ([NSStringFromClass(hit.class) isEqualToString:@"_SBRootFolderLayoutWrapperView"] && active.blockedHitReports++ < 2)
-        NFBLogDesktopTouchTree(active.desktop,0);
-    NFBDebugLog(@"desktop native hit: %@", hit ? NSStringFromClass(hit.class) : @"nil");
+    if ([NSStringFromClass(hit.class) isEqualToString:@"_SBRootFolderLayoutWrapperView"]) {
+        // A freshly exposed page may contain new disabled descendants. Repair
+        // that observed miss immediately rather than waiting for the next scan.
+        active.lastInteractionScan=0; [active adoptDesktopInteraction];
+        hit=[active.panel hitTest:local withEvent:event];
+        hit=NFBDesktopRepairWrapperHit(hit,window,point,event);
+    }
+    if (NFBDebugLoggingEnabled()) {
+        if (hit!=originalHit)
+            NFBDebugLog(@"desktop wrapper route: %@ -> %@",NSStringFromClass(originalHit.class),NSStringFromClass(hit.class));
+        else if ([NSStringFromClass(hit.class) isEqualToString:@"_SBRootFolderLayoutWrapperView"] && active.blockedHitReports++ < 2) {
+            NSUInteger remaining=80; NFBLogDesktopTouchTree(active.desktop,0,&remaining);
+        }
+        NFBDebugLog(@"desktop native hit: %@",hit ? NSStringFromClass(hit.class) : @"nil");
+    }
     return hit;
 }
 #ifndef NFB_DESKTOP_SIM_TEST
@@ -198,9 +204,12 @@ static UIView *NFBDesktopNativeHitTest(id object, SEL selector, CGPoint point, U
 }
 static BOOL NFBInstallDesktopHitHook(UIWindow *window) {
     Class cls = object_getClass(window);
-    if (desktopHitClass) return cls == desktopHitClass;
+    if (desktopHitClass) return cls == desktopHitClass && originalDesktopHitTest != NULL;
     Method method = class_getInstanceMethod(cls, @selector(hitTest:withEvent:));
     if (!method) return NO;
+    NSMethodSignature *sig=[NSMethodSignature signatureWithObjCTypes:method_getTypeEncoding(method)];
+    if (sig.numberOfArguments!=4 || sig.methodReturnType[0]!='@' ||
+        strcmp([sig getArgumentTypeAtIndex:2],@encode(CGPoint)) || [sig getArgumentTypeAtIndex:3][0]!='@') return NO;
     // Hook the actual system window class, including its private hit-test override.
     MSHookMessageEx(cls, @selector(hitTest:withEvent:), (IMP)NFBDesktopNativeHitTest,
                    (IMP *)&originalDesktopHitTest);
@@ -410,11 +419,23 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
     return nil;
 }
 @implementation NFBDesktopSession
+- (void)finishWidgetRefresh {
+    UIScrollView *pager=self.refreshScroll; CGPoint offset=self.refreshOffset;
+    NFBAttemptCleanup(@"widget page offset", ^{
+        if (pager) [UIView performWithoutAnimation:^{ [pager setContentOffset:offset animated:NO]; [pager layoutIfNeeded]; }];
+    });
+    self.refreshScroll=nil;
+    NFBAttemptCleanup(@"widget cover", ^{ [self.refreshCover removeFromSuperview]; }); self.refreshCover=nil;
+}
 - (void)refreshWidgetPage {
+    @try {
     if (session!=self || self.restoring || self.startedHome || self.pendingApp.length) return;
     UIScrollView *pager=NFBDesktopPager(self.desktop);
     if (!pager || pager.dragging || pager.decelerating) {
-        NFBErrorLog(@"desktop widget page refresh: no idle horizontal pager"); return;
+        NFBDebugLog(@"desktop widget page refresh: no idle horizontal pager"); return;
+    }
+    if (pager.contentSize.width<pager.bounds.size.width*2 || pager.bounds.size.width<=0) {
+        NFBDebugLog(@"desktop widget refresh: only one reachable page; no page roundtrip"); return;
     }
     CGPoint original=pager.contentOffset;
     CGFloat width=pager.bounds.size.width;
@@ -422,8 +443,9 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
     CGFloat maximum=pager.contentSize.width-width+pager.adjustedContentInset.right;
     CGFloat target=original.x+width<=maximum+0.5 ? MIN(maximum,original.x+width) : MAX(minimum,original.x-width);
     if (fabs(target-original.x)<width*0.5) return;
-    self.refreshScroll=pager; self.refreshOffset=original;
     UIView *cover=[self.canvas snapshotViewAfterScreenUpdates:NO];
+    if (!cover) { NFBDebugLog(@"desktop widget refresh: snapshot unavailable; page preserved"); return; }
+    self.refreshScroll=pager; self.refreshOffset=original;
     cover.frame=self.canvas.bounds; cover.userInteractionEnabled=NO;
     self.refreshCover=cover; if (cover) [self.canvas addSubview:cover];
     // Reproduce the device-proven page exit/reentry, with the original page
@@ -436,14 +458,12 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.1*NSEC_PER_SEC)),dispatch_get_main_queue(), ^{
         NFBDesktopSession *active=weakSession;
         if (!active || session!=active || active.restoring) return;
-        [UIView performWithoutAnimation:^{
-            [pager setContentOffset:original animated:NO];
-            [pager layoutIfNeeded];
-        }];
-        [active.refreshCover removeFromSuperview]; active.refreshCover=nil;
-        active.refreshScroll=nil;
+        [active finishWidgetRefresh];
         NFBDebugLog(@"desktop widget page refresh: restored %@ offset=%@",NSStringFromClass(pager.class),NSStringFromCGPoint(original));
     });
+    } @catch (NSException *error) {
+        [self finishWidgetRefresh]; NFBErrorLog(@"desktop widget refresh failed: %@",error);
+    }
 }
 - (void)activateDesktop {
     if (self.restoring) return;
@@ -451,36 +471,27 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
     if (!self.window.isKeyWindow) [self.window makeKeyWindow];
 }
 - (void)rememberAppearance:(UIView *)view {
-    [self.appearanceViews addObject:view];
-    [self.appearanceHidden addObject:@(view.hidden)];
-    [self.appearanceAlpha addObject:@(view.alpha)];
+    if (!self.appearanceState) self.appearanceState=[NFBStateLedger new];
+    BOOL hidden=view.hidden; CGFloat alpha=view.alpha;
+    [self.appearanceState remember:view key:@"appearance" restore:^{ view.hidden=hidden; view.alpha=alpha; }];
 }
 - (void)adoptDesktopAppearance {
     NSMutableArray<UIView *> *reveal = [NSMutableArray array];
     NSMutableArray<UIView *> *wallpaper = [NSMutableArray array];
     NFBCollectRevealViews(self.desktop, reveal, wallpaper);
-    self.appearanceViews = [NSMutableArray array];
-    self.appearanceHidden = [NSMutableArray array];
-    self.appearanceAlpha = [NSMutableArray array];
     for (UIView *view in reveal) {
         [self rememberAppearance:view];
         view.hidden = NO;
         view.alpha = 1;
     }
     self.wallpaperCount = wallpaper.count;
-    NSUInteger hidden = 0;
-    NFBCountHiddenViews(self.desktop, &hidden);
-    NFBDebugLog(@"desktop pane: revealed %lu view(s), wallpaper=%lu, still hidden=%lu",
-        (unsigned long)reveal.count, (unsigned long)wallpaper.count, (unsigned long)hidden);
-}
-- (void)restoreDesktopAppearance {
-    for (NSUInteger index = 0; index < self.appearanceViews.count; index++) {
-        UIView *view = self.appearanceViews[index];
-        view.hidden = self.appearanceHidden[index].boolValue;
-        view.alpha = self.appearanceAlpha[index].doubleValue;
+    if (NFBDebugLoggingEnabled()) {
+        NSUInteger hidden=0; NFBCountHiddenViews(self.desktop,&hidden);
+        NFBDebugLog(@"desktop pane: revealed %lu view(s), wallpaper=%lu, still hidden=%lu",
+            (unsigned long)reveal.count,(unsigned long)wallpaper.count,(unsigned long)hidden);
     }
-    self.appearanceViews = nil; self.appearanceHidden = nil; self.appearanceAlpha = nil;
 }
+- (void)restoreDesktopAppearance { [self.appearanceState restore]; self.appearanceState=nil; }
 - (void)installPaneBackdrop {
     // The desktop subtree carries no wallpaper of its own, so borrow one: a
     // snapshot of the live system wallpaper when it is on screen, otherwise a
@@ -503,55 +514,54 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
         backdrop = material;
     }
     backdrop.userInteractionEnabled = NO;
-    self.paneBackdrop = backdrop;
     [self.canvas insertSubview:backdrop atIndex:0];
     NFBDebugLog(@"desktop pane: backdrop installed (%@)", NSStringFromClass(backdrop.class));
 }
 - (void)adoptDesktopInteraction {
-    if (!self.interactionViews) { self.interactionViews = [NSMutableArray array]; self.interactionValues = [NSMutableArray array]; }
-    if (!self.scrollViews) { self.scrollViews = [NSMutableArray array]; self.scrollValues = [NSMutableArray array]; }
-    if (!self.touchGestures) { self.touchGestures = [NSMutableArray array]; self.gestureValues = [NSMutableArray array]; }
-    NSMutableArray<UIView *> *stack = [NSMutableArray arrayWithObject:self.desktop];
-    while (stack.count) {
-        UIView *view = stack.lastObject; [stack removeLastObject];
-        if (view.hidden || view.alpha < 0.01) continue; // Never expose offscreen pages.
-        [stack addObjectsFromArray:view.subviews];
-        BOOL target = [view isKindOfClass:UIScrollView.class] || [view isKindOfClass:UIControl.class] ||
-            [NSStringFromClass(view.class) containsString:@"IconView"] || view.gestureRecognizers.count > 0;
-        if (!target) continue;
-        for (UIView *ancestor=view; ancestor && ancestor != self.canvas; ancestor=ancestor.superview) {
+    if (!self.interactionState) self.interactionState=[NFBStateLedger new];
+    CFTimeInterval now=CACurrentMediaTime();
+    // Keep the fast touch repair on known paths; discover newly visible pages at
+    // most every 0.25 seconds, independent of the manager's multiple callers.
+    if (!self.knownInteractiveViews || now-self.lastInteractionScan>=0.25) {
+        self.lastInteractionScan=now;
+        self.knownInteractiveViews=[NSHashTable weakObjectsHashTable];
+        NSMutableArray<UIView *> *stack=[NSMutableArray arrayWithObject:self.desktop];
+        while (stack.count) {
+            UIView *view=stack.lastObject; [stack removeLastObject];
+            if (view.hidden || view.alpha<0.01) continue;
+            [stack addObjectsFromArray:view.subviews];
+            if ([view isKindOfClass:UIScrollView.class] || [view isKindOfClass:UIControl.class] ||
+                [NSStringFromClass(view.class) containsString:@"IconView"] || view.gestureRecognizers.count)
+                [self.knownInteractiveViews addObject:view];
+        }
+    }
+    for (UIView *view in self.knownInteractiveViews.allObjects) {
+        if (![view isDescendantOfView:self.desktop] || view.hidden || view.alpha<0.01) continue;
+        BOOL visible=YES;
+        for (UIView *ancestor=view; ancestor && ancestor!=self.canvas; ancestor=ancestor.superview)
+            if (ancestor.hidden || ancestor.alpha<0.01) { visible=NO; break; }
+        if (!visible) continue;
+        for (UIView *ancestor=view; ancestor && ancestor!=self.canvas; ancestor=ancestor.superview) {
             if (!ancestor.userInteractionEnabled) {
-                if (![self.interactionViews containsObject:ancestor]) {
-                    [self.interactionViews addObject:ancestor]; [self.interactionValues addObject:@NO];
-                }
+                [self.interactionState remember:ancestor key:@"interaction" restore:^{ ancestor.userInteractionEnabled=NO; }];
                 ancestor.userInteractionEnabled=YES;
             }
         }
         if ([view isKindOfClass:UIScrollView.class]) {
-            UIScrollView *scroll=(UIScrollView *)view;
-            if (![self.scrollViews containsObject:scroll]) {
-                [self.scrollViews addObject:scroll]; [self.scrollValues addObject:@(scroll.scrollEnabled)];
-            }
-            scroll.scrollEnabled=YES;
+            UIScrollView *scroll=(UIScrollView *)view; BOOL enabled=scroll.scrollEnabled;
+            [self.interactionState remember:scroll key:@"scroll" restore:^{ scroll.scrollEnabled=enabled; }];
+            if (!enabled) scroll.scrollEnabled=YES;
         }
-        for (UIGestureRecognizer *gesture in view.gestureRecognizers) {
+        for (UIGestureRecognizer *gesture in view.gestureRecognizers)
             if (!gesture.enabled && ([gesture isKindOfClass:UITapGestureRecognizer.class] ||
-                ([view isKindOfClass:UIScrollView.class] && gesture == [(UIScrollView *)view panGestureRecognizer]))) {
-                if (![self.touchGestures containsObject:gesture]) {
-                    [self.touchGestures addObject:gesture]; [self.gestureValues addObject:@NO];
-                }
+                ([view isKindOfClass:UIScrollView.class] && gesture==[(UIScrollView *)view panGestureRecognizer]))) {
+                [self.interactionState remember:gesture key:@"gesture" restore:^{ gesture.enabled=NO; }];
                 gesture.enabled=YES;
             }
-        }
     }
-
 }
 - (void)restoreDesktopInteraction {
-    for (NSUInteger i=0;i<self.touchGestures.count;i++) self.touchGestures[i].enabled=self.gestureValues[i].boolValue;
-    for (NSUInteger i=0;i<self.scrollViews.count;i++) self.scrollViews[i].scrollEnabled=self.scrollValues[i].boolValue;
-    for (NSUInteger i=0;i<self.interactionViews.count;i++) self.interactionViews[i].userInteractionEnabled=self.interactionValues[i].boolValue;
-    self.interactionViews=nil; self.interactionValues=nil; self.scrollViews=nil; self.scrollValues=nil;
-    self.touchGestures=nil; self.gestureValues=nil;
+    [self.interactionState restore]; self.interactionState=nil; self.knownInteractiveViews=nil;
 }
 - (BOOL)place {
     UIWindow *window = self.window;
@@ -579,7 +589,7 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
     CGPoint panelCenter = CGPointMake(CGRectGetMidX(frame),CGRectGetMidY(frame));
     if (!CGRectEqualToRect(self.panel.bounds,panelBounds)) self.panel.bounds = panelBounds;
     if (!CGPointEqualToPoint(self.panel.center,panelCenter)) self.panel.center = panelCenter;
-    // The wallpaper fills the whole pane; the header floats above it.
+    // The wallpaper and native desktop fill the whole pane.
     self.canvas.frame = self.panel.bounds;
     double scale = NFBDesktopScale(CGRectGetWidth(self.originalBounds), CGRectGetHeight(self.originalBounds),
         CGRectGetWidth(self.canvas.bounds),CGRectGetHeight(self.canvas.bounds));
@@ -594,15 +604,6 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
     }
     return YES;
 }
-- (void)drag:(UIPanGestureRecognizer *)gesture {
-    if (gesture.state == UIGestureRecognizerStateBegan) self.dragStart = self.panelFrame.origin;
-    CGPoint translation = [gesture translationInView:self.window];
-    CGRect frame = self.panelFrame;
-    frame.origin = CGPointMake(self.dragStart.x+translation.x,self.dragStart.y+translation.y);
-    self.panelFrame = frame;
-    [self place];
-}
-- (void)closePressed { NFBCloseDesktopSplit(); }
 - (void)check {
     if (session != self || self.restoring) return;
     if (NFBDesktopLocked()) {
@@ -635,50 +636,57 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
 }
 - (void)restore {
     if (self.restoring) return;
-    self.restoring = YES;
-    [self.timer invalidate]; self.timer = nil;
-    if (self.refreshScroll) [self.refreshScroll setContentOffset:self.refreshOffset animated:NO];
-    self.refreshScroll=nil; [self.refreshCover removeFromSuperview]; self.refreshCover=nil;
+    self.restoring=YES;
+    [self.timer invalidate]; self.timer=nil;
+    [self finishWidgetRefresh];
     [self restoreDesktopInteraction];
     if (self.suppliedAppearance) {
-        [self.desktopController beginAppearanceTransition:NO animated:NO];
-        [self.desktopController endAppearanceTransition];
+        NFBAttemptCleanup(@"desktop lifecycle", ^{
+            [self.desktopController beginAppearanceTransition:NO animated:NO];
+            [self.desktopController endAppearanceTransition];
+        });
         self.suppliedAppearance=NO;
     }
     [self restoreDesktopAppearance];
-    UIView *view = self.desktop;
+    UIView *view=self.desktop;
     if (self.mutated && view && self.originalParent) {
-        [view removeFromSuperview];
-        view.transform = CGAffineTransformIdentity;
-        view.bounds = self.originalBounds; view.center = self.originalCenter;
-        view.autoresizingMask = self.originalAutoresizing;
-        view.translatesAutoresizingMaskIntoConstraints = self.originalTranslates;
-        view.hidden = self.originalHidden; view.alpha = self.originalAlpha;
-        view.userInteractionEnabled = self.originalInteraction;
-        [self.originalParent insertSubview:view atIndex:MIN(self.originalIndex, self.originalParent.subviews.count)];
-        view.transform = self.originalTransform;
-        [NSLayoutConstraint activateConstraints:self.constraints];
-        [self.originalParent setNeedsLayout];
-        [self.originalParent layoutIfNeeded];
+        NFBAttemptCleanup(@"desktop geometry", ^{
+            view.transform=CGAffineTransformIdentity;
+            view.bounds=self.originalBounds; view.center=self.originalCenter;
+            view.autoresizingMask=self.originalAutoresizing;
+            view.translatesAutoresizingMaskIntoConstraints=self.originalTranslates;
+            view.hidden=self.originalHidden; view.alpha=self.originalAlpha;
+            view.userInteractionEnabled=self.originalInteraction;
+        });
+        NFBAttemptCleanup(@"desktop parent", ^{
+            [self.originalParent insertSubview:view atIndex:MIN(self.originalIndex,self.originalParent.subviews.count)];
+            view.transform=self.originalTransform;
+        });
+        NFBAttemptCleanup(@"desktop constraints", ^{ [NSLayoutConstraint activateConstraints:self.constraints]; });
+        NFBAttemptCleanup(@"desktop layout", ^{ [self.originalParent setNeedsLayout]; [self.originalParent layoutIfNeeded]; });
+        // A failing private parent must not leave the desktop owned by a retiring panel.
+        if ([view isDescendantOfView:self.panel])
+            NFBAttemptCleanup(@"desktop fallback parent", ^{ [self.window addSubview:view]; });
     }
-    [self.panel removeFromSuperview];
-    [self.backgroundFrost removeFromSuperview];
+    NFBAttemptCleanup(@"panel", ^{ [self.panel removeFromSuperview]; });
+    NFBAttemptCleanup(@"backdrop", ^{ [self.backgroundFrost removeFromSuperview]; });
+    [self.siblingState restore]; self.siblingState=nil;
     if (self.windowMutated) {
-        for (NSUInteger i=0; i<self.windowSiblings.count; i++)
-            self.windowSiblings[i].hidden=self.windowSiblingHidden[i].boolValue;
-        self.window.backgroundColor=self.originalWindowColor;
-        self.window.opaque=self.originalWindowOpaque;
-        self.window.windowLevel = self.originalWindowLevel;
-        self.window.alpha = self.originalWindowAlpha;
-        self.window.userInteractionEnabled = self.originalWindowInteraction;
-        self.window.hidden = self.originalWindowHidden;
-        if (self.window.isKeyWindow && self.previousKeyWindow && !self.previousKeyWindow.hidden)
-            [self.previousKeyWindow makeKeyWindow];
+        NFBAttemptCleanup(@"window color", ^{ self.window.backgroundColor=self.originalWindowColor; self.window.opaque=self.originalWindowOpaque; });
+        NFBAttemptCleanup(@"window level", ^{ self.window.windowLevel=self.originalWindowLevel; });
+        NFBAttemptCleanup(@"window alpha", ^{ self.window.alpha=self.originalWindowAlpha; });
+        NFBAttemptCleanup(@"window interaction", ^{ self.window.userInteractionEnabled=self.originalWindowInteraction; });
+        NFBAttemptCleanup(@"window visibility", ^{ self.window.hidden=self.originalWindowHidden; });
+        NFBAttemptCleanup(@"window focus", ^{
+            if (self.window.isKeyWindow && self.previousKeyWindow && !self.previousKeyWindow.hidden)
+                [self.previousKeyWindow makeKeyWindow];
+        });
     }
-    self.backgroundFrost = nil;
-    self.window = nil; self.desktop = nil; self.originalParent = nil; self.constraints = nil;
+    self.backgroundFrost=nil; self.window=nil; self.desktop=nil; self.originalParent=nil;
+    self.constraints=nil; self.desktopController=nil;
     NFBInvalidateWindowState();
 }
+
 @end
 BOOL NFBDesktopSplitActive(void) { return session != nil && !session.restoring; }
 void NFBCloseDesktopSplit(void) {
@@ -726,7 +734,7 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
         UIView *desktop = NFBDesktopSource(anchor);
         if (!desktop) return NFBDesktopFail(@"没有找到已加载的系统桌面视图");
         NFBWindowState *state = NFBCurrentWindowState();
-        next.startedHome = state.home; next.backgroundApp = state.frontApp;
+        next.startedHome = state.home;
         next.desktop = desktop; next.originalParent = desktop.superview; next.anchor = anchor;
         next.originalIndex = [desktop.superview.subviews indexOfObjectIdenticalTo:desktop];
         next.originalBounds = desktop.bounds; next.originalCenter = desktop.center;
@@ -760,7 +768,7 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
         UIView *canvas = [UIView new]; canvas.backgroundColor = UIColor.clearColor;
         canvas.clipsToBounds = YES; next.canvas = canvas; [panel addSubview:canvas];
         // Verify geometry before touching the desktop hierarchy.
-        if (![next place]) { next.desktop = nil; return NO; }
+        if (![next place]) { [next restore]; return NO; }
         if (next.startedHome) {
             UIVisualEffectView *frost = [[UIVisualEffectView alloc] initWithEffect:nil];
             frost.frame = [desktop convertRect:desktop.bounds toView:next.originalParent];
@@ -783,12 +791,11 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
         next.windowMutated = YES;
         // Raising the native window must not raise its fullscreen siblings over
         // the app behind the pane. Save them so close restores the native tree.
-        next.windowSiblings=[NSMutableArray array];
-        next.windowSiblingHidden=[NSMutableArray array];
+        next.siblingState=[NFBStateLedger new];
         for (UIView *sibling in window.subviews) {
             if (sibling==panel) continue;
-            [next.windowSiblings addObject:sibling];
-            [next.windowSiblingHidden addObject:@(sibling.hidden)];
+            BOOL hidden=sibling.hidden;
+            [next.siblingState remember:sibling key:@"sibling visibility" restore:^{ sibling.hidden=hidden; }];
             sibling.hidden=YES;
         }
         window.backgroundColor=UIColor.clearColor; window.opaque=NO;
@@ -807,9 +814,11 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
             dispatch_async(dispatch_get_main_queue(), ^{
                 NFBDesktopSession *active=refreshSession;
                 if (active && session==active && !active.restoring) {
-                    [active.desktop setNeedsLayout]; [active.desktop layoutIfNeeded];
-                    [active refreshWidgetPage];
-                    NFBDebugLog(@"desktop widget appearance refreshed for fullscreen background");
+                    @try {
+                        [active.desktop setNeedsLayout]; [active.desktop layoutIfNeeded];
+                        [active refreshWidgetPage];
+                        NFBDebugLog(@"desktop widget appearance refreshed for fullscreen background");
+                    } @catch (NSException *error) { NFBErrorLog(@"desktop widget activation failed: %@",error); }
                 }
             });
         }
@@ -822,7 +831,7 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
                 next.backgroundFrost.effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial];
             } completion:nil];
         } else next.backgroundFrost.effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial];
-        NFBErrorLog(@"desktop native host: view=%@ window=%@ root=%@ sameScene=%d pane=%@",
+        NFBDebugLog(@"desktop native host: view=%@ window=%@ root=%@ sameScene=%d pane=%@",
             NSStringFromClass(desktop.class), NSStringFromClass(window.class),
             NSStringFromClass(window.rootViewController.class), desktop.window==window,
             NSStringFromCGRect(next.panelFrame));

@@ -1,7 +1,7 @@
 include $(THEOS)/makefiles/common.mk
 
 BUNDLE_NAME = NFBPreferences
-NFBPreferences_FILES = NFBPreferences.m
+NFBPreferences_FILES = NFBPreferences.m ../Sources/NFBInterfaces.m
 NFBPreferences_CFLAGS = -fobjc-arc
 NFBPreferences_FRAMEWORKS = UIKit Foundation MobileCoreServices
 NFBPreferences_PRIVATE_FRAMEWORKS = Preferences

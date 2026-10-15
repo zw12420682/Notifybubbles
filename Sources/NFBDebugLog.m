@@ -5,8 +5,8 @@
 static atomic_bool verbose;
 void NFBConfigureDebugLogging(BOOL enabled) { atomic_store(&verbose, enabled); }
 BOOL NFBDebugLoggingEnabled(void) { return atomic_load(&verbose); }
-static void NFBQueueLog(BOOL error, NSString *format, va_list arguments) {
-    if (!error && !NFBDebugLoggingEnabled()) return;
+static void NFBQueueLog(NSString *level, NSString *format, va_list arguments) {
+    if ([level isEqualToString:@"debug"] && !NFBDebugLoggingEnabled()) return;
     static dispatch_queue_t queue;
     static dispatch_semaphore_t capacity;
     static dispatch_once_t once;
@@ -19,7 +19,7 @@ static void NFBQueueLog(BOOL error, NSString *format, va_list arguments) {
     if (message.length > 4096) message = [message substringToIndex:4096];
     dispatch_async(queue, ^{
         @autoreleasepool {
-            NSLog(@"[NFB %@] %@", error ? @"error" : @"debug", message);
+            NSLog(@"[NFB %@] %@", level, message);
             static NSString *path;
             static BOOL selected;
             static NSDateFormatter *formatter;
@@ -54,9 +54,13 @@ static void NFBQueueLog(BOOL error, NSString *format, va_list arguments) {
         dispatch_semaphore_signal(capacity);
     });
 }
-void NFBDebugLog(NSString *format, ...) {
-    va_list arguments; va_start(arguments, format); NFBQueueLog(NO, format, arguments); va_end(arguments);
+void NFBWriteDebugLog(NSString *format, ...) {
+    va_list arguments; va_start(arguments, format); NFBQueueLog(@"debug", format, arguments); va_end(arguments);
 }
 void NFBErrorLog(NSString *format, ...) {
-    va_list arguments; va_start(arguments, format); NFBQueueLog(YES, format, arguments); va_end(arguments);
+    va_list arguments; va_start(arguments, format); NFBQueueLog(@"error", format, arguments); va_end(arguments);
+}
+
+void NFBInfoLog(NSString *format, ...) {
+    va_list arguments; va_start(arguments, format); NFBQueueLog(@"info", format, arguments); va_end(arguments);
 }

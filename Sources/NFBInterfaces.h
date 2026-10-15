@@ -6,25 +6,8 @@
 
 // Cache by runtime class (including metaclasses) and selector. Successful
 // encodings stay valid when another tweak changes an IMP with the same ABI.
-static inline NSMethodSignature *NFBSignature(id object, SEL selector) {
-    if (!object || ![object respondsToSelector:selector]) return nil;
-    static NSMapTable *classes;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{ classes = [NSMapTable strongToStrongObjectsMapTable]; });
-    Class cls = object_getClass(object);
-    NSString *name = NSStringFromSelector(selector);
-    @synchronized (classes) {
-        NSMutableDictionary *methods = [classes objectForKey:cls];
-        NSMethodSignature *signature = methods[name];
-        if (signature) return signature;
-        Method method = class_getInstanceMethod(cls, selector);
-        if (!method) return [object methodSignatureForSelector:selector]; // forwarding: don't cache
-        signature = [NSMethodSignature signatureWithObjCTypes:method_getTypeEncoding(method)];
-        if (!methods) { methods = [NSMutableDictionary dictionary]; [classes setObject:methods forKey:cls]; }
-        if (signature) methods[name] = signature;
-        return signature;
-    }
-}
+NSMethodSignature *NFBSignature(id object, SEL selector);
+
 static inline BOOL NFBObjectGetterCompatible(id object, SEL selector) {
     NSMethodSignature *signature = NFBSignature(object, selector);
     return signature && signature.numberOfArguments == 2 && signature.methodReturnType[0] == '@';

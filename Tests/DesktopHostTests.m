@@ -25,6 +25,17 @@
     [super setContentOffset:offset animated:animated];
 }
 @end
+@interface DesktopRootFixture : UIView
+@property(nonatomic) BOOL throwNextLayout;
+@end
+@implementation DesktopRootFixture
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    if (self.throwNextLayout) {
+        self.throwNextLayout=NO;
+        [NSException raise:@"FixtureLayoutFailure" format:@"Expected private layout failure"]; }
+}
+@end
 extern BOOL NFBLaunchAppFromDesktopIcon(id);
 static BOOL openAccepted=YES;
 static NSString *submittedBundle;
@@ -95,7 +106,9 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
 @implementation TestDelegate
 - (BOOL)application:(__unused UIApplication *)application didFinishLaunchingWithOptions:(__unused NSDictionary *)options {
     self.window=[[DesktopNativeWindowFixture alloc] initWithFrame:UIScreen.mainScreen.bounds];
-    UIViewController *root=[UIViewController new]; self.window.rootViewController=root;
+    UIViewController *root=[UIViewController new];
+    root.view=[[DesktopRootFixture alloc] initWithFrame:self.window.bounds];
+    self.window.rootViewController=root;
     [self.window makeKeyAndVisible];
     dispatch_async(dispatch_get_main_queue(), ^{ [self runTests]; });
     return YES;
@@ -126,6 +139,12 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
         UIWindow *nativeWindow=desktop.window;
         UIViewController *nativeRoot=nativeWindow.rootViewController;
         CGFloat nativeLevel=nativeWindow.windowLevel;
+        CGRect originalAnchor=anchor.frame; NSUInteger originalSubviews=nativeWindow.subviews.count;
+        anchor.frame=CGRectMake(30,200,50,80);
+        Check(!NFBShowDesktopInSplit(anchor),@"invalid pane preflight fails");
+        Check(nativeWindow.subviews.count==originalSubviews && desktop.superview==root.view,
+            @"failed preflight leaves no panel attached to native window");
+        anchor.frame=originalAnchor;
         CGRect bounds=desktop.bounds; CGPoint center=desktop.center;
         desktop.userInteractionEnabled=NO;
         UIView *wrapper=[[_SBRootFolderLayoutWrapperView alloc] initWithFrame:desktop.bounds];
@@ -202,6 +221,10 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
         appIcon.applicationBundleIdentifier=@"com.example.desktop-app"; [desktop addSubview:appIcon];
         openAccepted=NO;
         Check(NFBLaunchAppFromDesktopIcon(appIcon) && NFBDesktopSplitActive(),@"rejected split launch retains desktop");
+        state.home=NO; state.frontApp=appIcon.applicationBundleIdentifier;
+        Check(NFBLaunchAppFromDesktopIcon(appIcon) && [submittedBundle isEqualToString:@"frontmost"],
+            @"launch resolves current foreground rather than captured opening state");
+        state.home=YES; state.frontApp=nil;
         openAccepted=YES;
         Check(NFBLaunchAppFromDesktopIcon(appIcon) && [submittedBundle isEqualToString:appIcon.applicationBundleIdentifier],@"desktop icon uses Open split adapter");
         NFBUpdateDesktopSplit(YES);
@@ -211,6 +234,11 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
         state.mini=NO; NFBUpdateDesktopSplit(YES);
         Check(!NFBDesktopSplitActive(),@"visible target split automatically closes desktop");
         state.floatingApp=nil; [appIcon removeFromSuperview];
+        CheckOpen(NFBShowDesktopInSplit(anchor),@"open before restore exception",desktop,root.view);
+        ((DesktopRootFixture *)root.view).throwNextLayout=YES;
+        [root.view setNeedsLayout]; NFBCloseDesktopSplit();
+        Check(desktop.superview==root.view && nativeWindow.windowLevel==nativeLevel && !nativeWindow.hidden && self.appWindow.isKeyWindow,
+            @"layout exception cannot skip native window and focus restoration");
         CheckOpen(NFBShowDesktopInSplit(anchor),@"open before disabling",desktop,root.view);
         NFBUpdateDesktopSplit(NO); Check(!NFBDesktopSplitActive(),@"disabled closes");
         state.home=NO; state.frontApp=@"com.example.background"; desktop.hidden=YES; desktop.alpha=0;
@@ -293,8 +321,40 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
             NFBCloseDesktopSplit();
             Check(CGPointEqualToPoint(pager.contentOffset,original),@"closing preserves refreshed page position");
             [pager removeFromSuperview];
-            [self finishResult:@"PASS"];
+            [self runWidgetCancellationTests:desktop anchor:anchor root:root];
         } @catch (NSException *e) { [self finishResult:[NSString stringWithFormat:@"FAIL: %@",e]]; }
+    });
+}
+- (void)runWidgetCancellationTests:(UIView *)desktop anchor:(UIView *)anchor root:(UIView *)root {
+    DesktopPagerFixture *pager=[[DesktopPagerFixture alloc] initWithFrame:desktop.bounds];
+    pager.pagingEnabled=YES;
+    pager.contentSize=CGSizeMake(pager.bounds.size.width*2,pager.bounds.size.height);
+    CGPoint original=CGPointMake(pager.bounds.size.width,0);
+    [pager setContentOffset:original animated:NO]; [desktop addSubview:pager];
+    @try { CheckOpen(NFBShowDesktopInSplit(anchor),@"refresh cancellation open",desktop,root); }
+    @catch (NSException *e) { [self finishResult:[NSString stringWithFormat:@"FAIL: %@",e]]; return; }
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.03*NSEC_PER_SEC)),dispatch_get_main_queue(), ^{
+        @try {
+            NFBCloseDesktopSplit();
+            Check(CGPointEqualToPoint(pager.contentOffset,original),@"close cancels in-flight refresh and restores page");
+            [pager removeFromSuperview];
+            CheckOpen(NFBShowDesktopInSplit(anchor),@"fresh session after canceled refresh",desktop,root);
+        } @catch (NSException *e) { [self finishResult:[NSString stringWithFormat:@"FAIL: %@",e]]; return; }
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.15*NSEC_PER_SEC)),dispatch_get_main_queue(), ^{
+            @try {
+                Check(NFBDesktopSplitActive() && CGPointEqualToPoint(pager.contentOffset,original),@"old refresh callback cannot mutate replacement session");
+                NFBCloseDesktopSplit();
+                pager.contentSize=pager.bounds.size; [pager setContentOffset:CGPointZero animated:NO]; pager.moves=0;
+                [desktop addSubview:pager];
+                CheckOpen(NFBShowDesktopInSplit(anchor),@"single page open",desktop,root);
+            } @catch (NSException *e) { [self finishResult:[NSString stringWithFormat:@"FAIL: %@",e]]; return; }
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.15*NSEC_PER_SEC)),dispatch_get_main_queue(), ^{
+                @try {
+                    Check(pager.moves==0 && CGPointEqualToPoint(pager.contentOffset,CGPointZero),@"single page never scrolls outside its content");
+                    NFBCloseDesktopSplit(); [pager removeFromSuperview]; [self finishResult:@"PASS"];
+                } @catch (NSException *e) { [self finishResult:[NSString stringWithFormat:@"FAIL: %@",e]]; }
+            });
+        });
     });
 }
 

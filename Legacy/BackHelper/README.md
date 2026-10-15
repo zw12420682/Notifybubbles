@@ -1,0 +1,1 @@
+Archived application-side back helper. Not compiled or packaged. Keep installation cleanup for upgrades. Restore only as an intentional feature change; archived imports are not an active build target.
