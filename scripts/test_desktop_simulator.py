@@ -2,8 +2,11 @@
 """Run production desktop hosting against real UIKit views in an iOS simulator.
 Private desktop fixtures test the transplant, not SpringBoard device compatibility.
 """
-import json, os, pathlib, plistlib, platform, subprocess, time
+import hashlib, json, os, pathlib, plistlib, platform, subprocess, time
 root=pathlib.Path(__file__).resolve().parents[1]
+print("Desktop simulator touch-fixture-v2", flush=True)
+for relative in ("Tests/DesktopHostTests.m", "Sources/NFBDesktopHost.m"):
+    print(relative+" sha256="+hashlib.sha256((root/relative).read_bytes()).hexdigest(), flush=True)
 work=pathlib.Path(os.environ.get("RUNNER_TEMP", "/tmp"))/"nfb-desktop-test"
 app=work/"DesktopHostTest.app"; app.mkdir(parents=True,exist_ok=True)
 def run(*args):

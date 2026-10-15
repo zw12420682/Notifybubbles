@@ -107,6 +107,16 @@ static void CheckOpen(BOOL opened, NSString *name, UIView *desktop, UIView *root
         (unsigned long)root.subviews.count, NFBWindowSummary()];
     [NSException raise:@"DesktopTestFailure" format:@"%@ | %@", name, detail];
 }
+static NSString *NFBHitPath(UIView *view, UIWindow *window, CGPoint point) {
+    NSMutableArray *parts=[NSMutableArray array];
+    for (UIView *current=view; current; current=current.superview) {
+        CGPoint local=[current convertPoint:point fromView:window];
+        [parts addObject:[NSString stringWithFormat:@"%@ frame=%@ bounds=%@ point=%@ inside=%d hidden=%d alpha=%.3f interaction=%d",
+            NSStringFromClass(current.class),NSStringFromCGRect(current.frame),NSStringFromCGRect(current.bounds),
+            NSStringFromCGPoint(local),[current pointInside:local withEvent:nil],current.hidden,(double)current.alpha,current.userInteractionEnabled]];
+    }
+    return [parts componentsJoinedByString:@" -> "];
+}
 extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
 @interface DesktopNativeWindowFixture : UIWindow
 @end
@@ -186,7 +196,9 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
         Check(!NFBDesktopSuppressFolderTracking(desktop.layer,trackingKey),@"do not filter unrelated desktop layers");
         [folderContainer removeFromSuperview]; [root.view addSubview:folderContainer];
         Check(!NFBDesktopSuppressFolderTracking(folderContainer.layer,trackingKey),@"do not filter folder containers outside hosted desktop");
-        [desktop addSubview:folderContainer];
+        // This full-size fixture is only for layer-filter scope checks. Detach
+        // it before hit-testing so it cannot intercept the native child touch.
+        [folderContainer removeFromSuperview];
         UIView *host=desktop.superview;
         UIView *panel=host.superview.superview;
         Check(CGRectEqualToRect(desktop.bounds,bounds) &&
@@ -218,7 +230,11 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
         Check(self.window.isKeyWindow,@"native desktop receives focus at open");
         for (NSLayoutConstraint *constraint in constraints) Check(!constraint.active,@"external constraints detached");
         CGPoint point=[touch convertPoint:CGPointMake(30,30) toView:desktop.window];
-        Check([desktop.window hitTest:point withEvent:nil]==touch,@"scaled hit testing reaches native child");
+        Check(folderContainer.superview==nil,@"touch-fixture-v2: folder test container detached before hit test");
+        UIView *actualHit=[desktop.window hitTest:point withEvent:nil];
+        Check(actualHit==touch,[NSString stringWithFormat:@"touch-fixture-v2: scaled hit testing reaches native child | point=%@ actual=[%@] expected=[%@] desktopChildren=%@",
+            NSStringFromCGPoint(point),NFBHitPath(actualHit,desktop.window,point),NFBHitPath(touch,desktop.window,point),
+            [desktop.subviews valueForKey:@"description"]]);
         UIView *hiddenPage=[[UIView alloc] initWithFrame:wrapper.bounds];
         hiddenPage.hidden=YES; [wrapper addSubview:hiddenPage];
         Check([desktop.window hitTest:point withEvent:nil]==touch,@"wrapper repair excludes hidden pages");
@@ -232,6 +248,10 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
         [wrapper addSubview:disabledContainer];
         Check([desktop.window hitTest:CGPointMake(1,1) withEvent:nil]==nil,@"outside panel passes through");
         Check(desktop.window.isKeyWindow,@"touch activation gives native desktop focus");
+        // Reattach only after all touch checks to verify session teardown also
+        // stops filtering a folder that remains inside the native desktop.
+        [desktop addSubview:folderContainer];
+        Check(NFBDesktopSuppressFolderTracking(folderContainer.layer,trackingKey),@"tracking filter active immediately before session teardown");
         NFBCloseDesktopSplit(); NFBCloseDesktopSplit();
         Check(!NFBDesktopSuppressFolderTracking(folderContainer.layer,trackingKey),@"ordinary home screen tracking resumes after session closes");
         [folderContainer removeFromSuperview];
