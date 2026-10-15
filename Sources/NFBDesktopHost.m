@@ -44,6 +44,7 @@
 @property(nonatomic,weak) UIView *diagnosticFolderIcon;
 @property(nonatomic) CFTimeInterval lastFolderTrace;
 @property(nonatomic) NSUInteger folderTraceCount;
+@property(nonatomic) NSUInteger folderAnimationReports;
 @property(nonatomic,strong) UIViewController *desktopController;
 @property(nonatomic) BOOL suppliedAppearance;
 @property(nonatomic,copy) NSString *pendingApp;
@@ -110,6 +111,7 @@ static void NFBLogFolderTree(UIView *view, UIWindow *window, NSUInteger depth, N
     if (!view || depth>16 || *visited>=256 || *logged>=16) return;
     (*visited)++;
     NSString *name=NSStringFromClass(view.class);
+    if ([name containsString:@"RecycledViewsContainer"]) return;
     if (([name containsString:@"Folder"] && ![name containsString:@"RootFolder"]) || view.layer.animationKeys.count) {
         (*logged)++; NFBLogFolderGeometry(view,window,@"transition-node");
     }
@@ -134,6 +136,66 @@ static void NFBTraceFolderTransition(NFBDesktopSession *active) {
         });
     }
 }
+#ifndef NFB_DESKTOP_SIM_TEST
+static void (*originalFolderAddAnimation)(CALayer *, SEL, CAAnimation *, NSString *);
+static BOOL NFBLayerInDesktop(CALayer *layer, CALayer *desktopLayer) {
+    for (CALayer *ancestor=layer; ancestor; ancestor=ancestor.superlayer)
+        if (ancestor==desktopLayer) return YES;
+    return NO;
+}
+static NSString *NFBFolderAnimationValues(CAAnimation *animation) {
+    if ([animation isKindOfClass:CABasicAnimation.class]) {
+        CABasicAnimation *basic=(CABasicAnimation *)animation;
+        return [NSString stringWithFormat:@"path=%@ from=%@ to=%@ by=%@ additive=%d",basic.keyPath,basic.fromValue,basic.toValue,basic.byValue,basic.additive];
+    }
+    if ([animation isKindOfClass:CAKeyframeAnimation.class]) {
+        CAKeyframeAnimation *keyframe=(CAKeyframeAnimation *)animation;
+        return [NSString stringWithFormat:@"path=%@ values=%@ additive=%d",keyframe.keyPath,keyframe.values,keyframe.additive];
+    }
+    if ([animation isKindOfClass:CAAnimationGroup.class]) {
+        NSMutableArray *children=[NSMutableArray array];
+        for (CAAnimation *child in [(CAAnimationGroup *)animation animations])
+            [children addObject:NFBFolderAnimationValues(child)];
+        return [children componentsJoinedByString:@"; "];
+    }
+    return NSStringFromClass(animation.class);
+}
+static void NFBFolderAddAnimation(CALayer *layer, SEL selector, CAAnimation *animation, NSString *key) {
+    NFBDesktopSession *active=session;
+    // Scope observation to the live desktop and cap output per session. This
+    // receives the animation at submission, including short close transitions
+    // that periodic UIView snapshots can miss. Forward the original unchanged.
+    if (NSThread.isMainThread && active && !active.restoring && active.diagnosticFolderIcon &&
+        active.folderAnimationReports<160 && NFBLayerInDesktop(layer,active.desktop.layer)) {
+        @try {
+            UIView *owner=nil;
+            for (CALayer *ancestor=layer; ancestor; ancestor=ancestor.superlayer) {
+                if ([ancestor.delegate isKindOfClass:UIView.class]) { owner=(UIView *)ancestor.delegate; break; }
+            }
+            BOOL relevant=[key.lowercaseString containsString:@"folder"];
+            for (UIView *view=owner; view && view!=active.desktop; view=view.superview) {
+                NSString *name=NSStringFromClass(view.class);
+                if ([name containsString:@"Folder"] && ![name containsString:@"RootFolder"]) relevant=YES;
+            }
+            if (relevant) {
+                active.folderAnimationReports++;
+                NFBInfoLog(@"folder animation #%lu key=%@ layer=%p owner=%@ duration=%.4f %@ modelPosition=%@ modelBounds=%@",
+                    (unsigned long)active.folderAnimationReports,key,layer,NSStringFromClass(owner.class),animation.duration,
+                    NFBFolderAnimationValues(animation),NSStringFromCGPoint(layer.position),NSStringFromCGRect(layer.bounds));
+                if (owner) NFBLogFolderGeometry(owner,active.window,@"animation-owner");
+                NFBLogFolderGeometry(active.diagnosticFolderIcon,active.window,@"animation-source");
+            }
+        } @catch (NSException *error) { NFBErrorLog(@"folder animation observation failed: %@",error); }
+    }
+    originalFolderAddAnimation(layer,selector,animation,key);
+}
+static void NFBInstallFolderAnimationDiagnostics(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        MSHookMessageEx(CALayer.class,@selector(addAnimation:forKey:),(IMP)NFBFolderAddAnimation,(IMP *)&originalFolderAddAnimation);
+    });
+}
+#endif
 // An open request is not success: close only once Open reports the target pane.
 BOOL NFBLaunchAppFromDesktopIcon(id iconView) {
     NFBDesktopSession *active=session;
@@ -811,6 +873,7 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
 #ifndef NFB_DESKTOP_SIM_TEST
         if (!NFBInstallDesktopHitHook(window)) return NFBDesktopFail(@"原生桌面窗口触摸接口不可用");
         if (!NFBInstallDesktopLaunchHook()) return NFBDesktopFail(@"桌面应用分屏启动接口不可用");
+        NFBInstallFolderAnimationDiagnostics();
 #endif
         next.window = window;
         next.desktopController=NFBDesktopOwner(window.rootViewController,desktop);
