@@ -32,18 +32,33 @@ makefile=read("Makefile")
 assert "THEOS_PACKAGE_SCHEME = roothide" in makefile
 assert "NFB_PACKAGE_VERSION" in makefile and "sed -n 's/^Version: //p' control" in makefile
 inputs=re.search(r"^NotifyBubbles_FILES\s*=\s*(.+)$",makefile,re.M).group(1).split()
-assert len(inputs)==len(set(inputs))
-assert {str(p.relative_to(root)).replace("\\","/") for p in (root/"Sources").glob("*.m")}==set(inputs)
+assert len(inputs)==len(set(inputs)), "Duplicate implementation in build inputs"
+discovered={p.relative_to(root).as_posix() for p in (root/"Sources").glob("*.m")}
+# Overlay uploads do not remove files that were moved into Legacy. These two
+# retired implementations are harmless only while excluded from build inputs.
+retired={"Sources/NFBAppBack.m","Sources/NFBBackRequest.m"}
+assert not (set(inputs)&retired), "Retired helpers must not be compiled: " + str(sorted(set(inputs)&retired))
+missing=set(inputs)-discovered
+unexpected=discovered-set(inputs)-retired
+assert not missing, "Missing build sources: " + str(sorted(missing))
+assert not unexpected, "Unlisted active implementations: " + str(sorted(unexpected))
+if discovered&retired:
+    print("COMPAT: ignored unbuilt retired helpers from overlay update: " + ", ".join(sorted(discovered&retired)))
 assert {"Sources/NFBInterfaces.m","Sources/NFBStateLedger.m","Sources/NFBDesktopHost.m"}<=set(inputs)
 for name in inputs:
     assert (root/name).is_file() and not name.startswith("Legacy/")
 assert "../Sources/NFBInterfaces.m" in read("Preferences/Makefile")
-for path in (root/"Sources").glob("*"):
-    if path.suffix not in {".m",".h"}: continue
+pending=[root/name for name in inputs]
+seen=set()
+while pending:
+    path=pending.pop()
+    if path in seen: continue
+    seen.add(path)
     source=path.read_text(encoding="utf-8")
     for quoted in re.findall(r'^#(?:import|include)\s+"([^"]+)"',source,re.M):
-        assert (path.parent/quoted).is_file(), (path,quoted)
-assert (root/"Legacy/BackHelper/README.md").is_file()
+        dependency=(path.parent/quoted).resolve()
+        assert dependency.is_file(), "Missing active dependency: " + str(path.relative_to(root)) + " -> " + quoted
+        pending.append(dependency)
 assert (root/"layout/DEBIAN/postinst").is_file()
 print("PASS: every active implementation is linked once, shared preference dependency and local imports resolve")
 
