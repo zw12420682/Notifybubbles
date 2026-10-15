@@ -1,0 +1,34 @@
+from pathlib import Path
+import shutil, subprocess, sys, tempfile
+
+source=Path(__file__).resolve().parents[1]
+base=source.parent/'nfb-validator-cases'
+assert base.resolve().is_relative_to(source.parent)
+base.mkdir(parents=True,exist_ok=True)
+cases=['clean','overlay','without_archive','unknown','older_keyboard_badges','missing_source','retired_built','missing_header','duplicate']
+for case in cases:
+    with tempfile.TemporaryDirectory(prefix=case+'-',dir=base) as directory:
+        project=Path(directory).resolve()
+        assert project.is_relative_to(base)
+        ignore=shutil.ignore_patterns('__pycache__','.git','.theos*','packages',*(['Legacy'] if case=='without_archive' else []))
+        shutil.copytree(source,project,dirs_exist_ok=True,ignore=ignore)
+        if case in ['overlay','retired_built']:
+            for name in ['NFBAppBack.m','NFBBackRequest.m']:
+                (project/'Sources'/name).write_text('#import \"MissingArchivedHeader.h\"\n',encoding='utf-8')
+        if case=='unknown': (project/'Sources/Unexpected.m').write_text('// fixture\n',encoding='utf-8')
+        if case=='older_keyboard_badges':
+            for name in ['NFBDarkKeyboard.m','NFBTrollBadges.m']:
+                (project/'Sources'/name).write_text('#import "UnusedMissingHeader.h"\n',encoding='utf-8')
+        if case=='missing_source': (project/'Sources/NFBStateLedger.m').unlink()
+        if case=='missing_header': (project/'Sources/NFBStateLedger.h').unlink()
+        if case in ['retired_built','duplicate']:
+            p=project/'Makefile'
+            extra='Sources/NFBAppBack.m' if case=='retired_built' else 'Sources/Tweak.m'
+            p.write_text(p.read_text(encoding='utf-8').replace('NotifyBubbles_FILES = ','NotifyBubbles_FILES = '+extra+' '),encoding='utf-8',newline='\n')
+        run=subprocess.run([sys.executable,'-X','utf8',str(project/'scripts/validate.py')],capture_output=True,text=True,encoding='utf-8')
+        expected=case in ['clean','overlay','without_archive','unknown','older_keyboard_badges']
+        assert (run.returncode==0)==expected,(case,run.stdout,run.stderr)
+        messages={'missing_source':'Missing build sources','retired_built':'Retired helpers must not be compiled','missing_header':'Missing active dependency','duplicate':'Duplicate implementation'}
+        if case in messages: assert messages[case] in run.stderr,(case,run.stderr)
+        if case in ['overlay','unknown','older_keyboard_badges']: assert 'NOTE: source files excluded from Makefile build inputs:' in run.stdout
+        print('PASS:',case)

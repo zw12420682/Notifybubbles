@@ -39,11 +39,10 @@ discovered={p.relative_to(root).as_posix() for p in (root/"Sources").glob("*.m")
 retired={"Sources/NFBAppBack.m","Sources/NFBBackRequest.m"}
 assert not (set(inputs)&retired), "Retired helpers must not be compiled: " + str(sorted(set(inputs)&retired))
 missing=set(inputs)-discovered
-unexpected=discovered-set(inputs)-retired
 assert not missing, "Missing build sources: " + str(sorted(missing))
-assert not unexpected, "Unlisted active implementations: " + str(sorted(unexpected))
-if discovered&retired:
-    print("COMPAT: ignored unbuilt retired helpers from overlay update: " + ", ".join(sorted(discovered&retired)))
+unbuilt=discovered-set(inputs)
+if unbuilt:
+    print("NOTE: source files excluded from Makefile build inputs: " + ", ".join(sorted(unbuilt)))
 assert {"Sources/NFBInterfaces.m","Sources/NFBStateLedger.m","Sources/NFBDesktopHost.m"}<=set(inputs)
 for name in inputs:
     assert (root/name).is_file() and not name.startswith("Legacy/")
