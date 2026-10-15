@@ -69,10 +69,21 @@ assert "SBDeviceApplicationSceneEntity" not in read("Sources/NFBDesktopHost.m")
 print("PASS: private gesture target memory inspection and ordinary SpringBoard scene route stay excluded")
 
 workflow=read(".github/workflows/build.yml")
-for test in ["StoreTests.m","TrollOpenTests.m","TransitionTests.c","InterfaceTests.m","StateLedgerTests.m"]:
-    assert (root/"Tests"/test).is_file() and test in workflow
-for script in ["validate.py","test_cleanup.py","test_package_parser.py","test_desktop_simulator.py","check_package.py"]:
-    assert (root/"scripts"/script).is_file() and script in workflow
+tests=["StoreTests.m","TrollOpenTests.m","TransitionTests.c","InterfaceTests.m","StateLedgerTests.m"]
+scripts=["validate.py","test_validator.py","test_cleanup.py","test_package_parser.py","test_desktop_simulator.py","check_package.py"]
+problems=[]
+for test in tests:
+    if not (root/"Tests"/test).is_file(): problems.append("Missing test file: Tests/"+test)
+    if test not in workflow: problems.append("Missing workflow test step for: "+test)
+for script in scripts:
+    if not (root/"scripts"/script).is_file(): problems.append("Missing CI script: scripts/"+script)
+    if script not in workflow: problems.append("Missing workflow script step for: "+script)
 simulator=read("scripts/test_desktop_simulator.py")
-assert "NFBInterfaces.m" in simulator and "NFBStateLedger.m" in simulator
+for dependency in ["NFBInterfaces.m","NFBStateLedger.m"]:
+    if dependency not in simulator: problems.append("Old simulator build command omits: "+dependency)
+blocks=re.findall(r"(?m)^ {8}run: \|\n((?: {10}[^\n]*\n|\n)+)",workflow+"\n")
+for test in ["StoreTests.m","TrollOpenTests.m","InterfaceTests.m"]:
+    if not any(test in block and "Sources/NFBInterfaces.m" in block for block in blocks):
+        problems.append("Old Foundation test build command omits Sources/NFBInterfaces.m for: "+test)
+assert not problems, "Build/test files are out of sync:\n - "+"\n - ".join(problems)+"\nReplace .github/workflows/build.yml, Tests/ and scripts/ together from the build-support patch."
 print("PASS: behavioral, cleanup, ABI adapter, state restoration and UIKit tests are configured in CI")
