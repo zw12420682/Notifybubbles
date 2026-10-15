@@ -41,6 +41,9 @@
 @property(nonatomic,strong) UIColor *originalWindowColor;
 @property(nonatomic) BOOL originalWindowOpaque;
 @property(nonatomic) NSUInteger blockedHitReports;
+@property(nonatomic,weak) UIView *diagnosticFolderIcon;
+@property(nonatomic) CFTimeInterval lastFolderTrace;
+@property(nonatomic) NSUInteger folderTraceCount;
 @property(nonatomic,strong) UIViewController *desktopController;
 @property(nonatomic) BOOL suppliedAppearance;
 @property(nonatomic,copy) NSString *pendingApp;
@@ -92,6 +95,45 @@ static UIScrollView *NFBDesktopPager(UIView *desktop) {
             return (UIScrollView *)view;
     return nil;
 }
+// Temporary bounded device diagnostics: UIKit conversion and layer presentation
+// values are observed only. Do not modify SpringBoard's folder animation.
+static void NFBLogFolderGeometry(UIView *view, UIWindow *window, NSString *label) {
+    CALayer *shown=view.layer.presentationLayer;
+    NFBInfoLog(@"folder geometry %@ class=%@ parent=%@ bounds=%@ center=%@ transform=%@ windowRect=%@ layerPosition=%@ presentationPosition=%@ presentationBounds=%@ animations=%@ hidden=%d alpha=%.3f",
+        label,NSStringFromClass(view.class),NSStringFromClass(view.superview.class),
+        NSStringFromCGRect(view.bounds),NSStringFromCGPoint(view.center),NSStringFromCGAffineTransform(view.transform),
+        NSStringFromCGRect([view convertRect:view.bounds toView:window]),NSStringFromCGPoint(view.layer.position),
+        shown ? NSStringFromCGPoint(shown.position) : @"none",shown ? NSStringFromCGRect(shown.bounds) : @"none",
+        view.layer.animationKeys,view.hidden,(double)view.alpha);
+}
+static void NFBLogFolderTree(UIView *view, UIWindow *window, NSUInteger depth, NSUInteger *visited, NSUInteger *logged) {
+    if (!view || depth>16 || *visited>=256 || *logged>=16) return;
+    (*visited)++;
+    NSString *name=NSStringFromClass(view.class);
+    if (([name containsString:@"Folder"] && ![name containsString:@"RootFolder"]) || view.layer.animationKeys.count) {
+        (*logged)++; NFBLogFolderGeometry(view,window,@"transition-node");
+    }
+    for (UIView *child in view.subviews) NFBLogFolderTree(child,window,depth+1,visited,logged);
+}
+static void NFBTraceFolderTransition(NFBDesktopSession *active) {
+    if (!active.diagnosticFolderIcon || active.folderTraceCount>=12) return;
+    CFTimeInterval now=CACurrentMediaTime();
+    if (active.lastFolderTrace && now-active.lastFolderTrace<1) return;
+    active.lastFolderTrace=now; NSUInteger trace=++active.folderTraceCount;
+    __weak NFBDesktopSession *weakSession=active;
+    for (NSNumber *delay in @[@0,@0.1,@0.25,@0.5,@0.9]) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(delay.doubleValue*NSEC_PER_SEC)),dispatch_get_main_queue(), ^{
+            NFBDesktopSession *current=weakSession;
+            if (!current || current!=session || current.restoring) return;
+            NFBInfoLog(@"folder trace=%lu delay=%.2f nativeWindow=%@",(unsigned long)trace,delay.doubleValue,NSStringFromCGRect(current.window.bounds));
+            NFBLogFolderGeometry(current.diagnosticFolderIcon,current.window,@"source-icon");
+            NFBLogFolderGeometry(current.desktop,current.window,@"desktop");
+            NFBLogFolderGeometry(current.desktopHost,current.window,@"host");
+            NSUInteger visited=0,logged=0;
+            NFBLogFolderTree(current.window,current.window,0,&visited,&logged);
+        });
+    }
+}
 // An open request is not success: close only once Open reports the target pane.
 BOOL NFBLaunchAppFromDesktopIcon(id iconView) {
     NFBDesktopSession *active=session;
@@ -101,6 +143,8 @@ BOOL NFBLaunchAppFromDesktopIcon(id iconView) {
     Class folderClass=NSClassFromString(@"SBFolderIcon");
     if (NFBCheckedBool(iconView,@"isFolderIcon",NO) || NFBCheckedBool(icon,@"isFolderIcon",NO) ||
         (folderClass && [icon isKindOfClass:folderClass])) {
+        active.diagnosticFolderIcon=iconView;
+        NFBTraceFolderTransition(active);
         NFBDebugLog(@"desktop folder icon: native folder handling");
         return NO; // The hook calls the original folder handler; no app launch.
     }
@@ -180,7 +224,10 @@ UIView *NFBDesktopSplitHitTest(UIWindow *window, CGPoint point, UIEvent *event, 
     CGPoint local = [active.panel convertPoint:point fromView:window];
     if (![active.panel pointInside:local withEvent:event]) return nil;
     if (active.refreshScroll) return active.panel;
-    if (event) [active activateDesktop];
+    if (event) {
+        [active activateDesktop];
+        NFBTraceFolderTransition(active);
+    }
     UIView *hit = [active.panel hitTest:local withEvent:event];
     UIView *originalHit=hit;
     hit=NFBDesktopRepairWrapperHit(hit,window,point,event);
