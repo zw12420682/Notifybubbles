@@ -349,8 +349,9 @@ static UIView *NFBDesktopFromTree(UIView *view, UIView *anchor) {
     return nil;
 }
 static UIView *NFBDesktopSource(UIView *anchor) {
+    NSArray<UIWindow *> *windows=NFBDesktopWindows();
     // Prefer the complete home controller (dock and folder presentation included).
-    for (UIWindow *window in NFBDesktopWindows()) {
+    for (UIWindow *window in windows) {
 
         UIView *view = NFBDesktopFromController(window.rootViewController, anchor);
         if (view) return view;
@@ -360,7 +361,7 @@ static UIView *NFBDesktopSource(UIView *anchor) {
         UIView *view = [(UIViewController *)icons view];
         if (NFBDesktopEligible(view, anchor)) return view;
     }
-    for (UIWindow *window in NFBDesktopWindows()) {
+    for (UIWindow *window in windows) {
 
         UIView *view = NFBDesktopContentInTree(window, anchor);
         if (view) return view;
@@ -381,7 +382,7 @@ static UIView *NFBDesktopSource(UIView *anchor) {
             if (candidate) return candidate;
         }
     }
-    for (UIWindow *window in NFBDesktopWindows()) {
+    for (UIWindow *window in windows) {
         UIView *view = NFBDesktopFromTree(window, anchor);
         if (view) {
             NFBErrorLog(@"desktop source resolved by hierarchy scan in %@", NSStringFromClass(window.class));
@@ -640,7 +641,7 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
     if (!CGRectEqualToRect(self.panel.bounds,panelBounds)) self.panel.bounds = panelBounds;
     if (!CGPointEqualToPoint(self.panel.center,panelCenter)) self.panel.center = panelCenter;
     // The wallpaper and native desktop fill the whole pane.
-    self.canvas.frame = self.panel.bounds;
+    if (!CGRectEqualToRect(self.canvas.frame,self.panel.bounds)) self.canvas.frame = self.panel.bounds;
     double scale = NFBDesktopScale(CGRectGetWidth(self.originalBounds), CGRectGetHeight(self.originalBounds),
         CGRectGetWidth(self.canvas.bounds),CGRectGetHeight(self.canvas.bounds));
     if (!(scale > 0)) return NFBDesktopFail(@"桌面尺寸无效");
@@ -882,6 +883,9 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
             });
         }
         next.timer = [NSTimer timerWithTimeInterval:0.1 target:next selector:@selector(check) userInfo:nil repeats:YES];
+        // Keep the 100 ms safety/launch checks; let the run loop coalesce
+        // wakeups by up to 10 ms without increasing polling frequency.
+        next.timer.tolerance = 0.01;
         [NSRunLoop.mainRunLoop addTimer:next.timer forMode:NSRunLoopCommonModes];
         if (NFBDesktopAnimationsEnabled()) {
             panel.alpha = 0; panel.transform = CGAffineTransformMakeScale(0.94,0.94);

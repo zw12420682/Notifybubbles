@@ -672,7 +672,9 @@ static double NFBNumber(NSString *key, double fallback) {
             self.imageRetryAfter[button.appID]=@(CACurrentMediaTime()+2);
         }
     }
-    button.imageView.image = [image isKindOfClass:UIImage.class] ? image : [UIImage systemImageNamed:@"bell.fill"];
+    UIImage *resolved=[image isKindOfClass:UIImage.class] ? image : [UIImage systemImageNamed:@"bell.fill"];
+    // Refreshing counts/window state does not require redisplaying an unchanged icon.
+    if (button.imageView.image != resolved) button.imageView.image = resolved;
 }
 - (void)updatePrivacy {
     if (!self.enabled || [self isLocked]) NFBUpdateDesktopSplit(NO);
