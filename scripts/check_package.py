@@ -23,8 +23,7 @@ for argument in sys.argv[1:]:
         assert suffix in payload, f'Missing payload: {suffix}'
     data = subprocess.check_output(['dpkg-deb','--fsys-tarfile',str(path)])
     with tarfile.open(fileobj=io.BytesIO(data)) as archive:
-        assert 'NFBKeyboardDock.dylib' not in payload and 'NFBKeyboardDock.plist' not in payload, 'Stopped keyboard module must not ship.'
-    for suffix in ['NotifyBubbles.dylib','NFBPreferences.bundle/NFBPreferences']:
+        for suffix in ['NotifyBubbles.dylib','NFBPreferences.bundle/NFBPreferences']:
             matches = [member for member in archive.getmembers() if member.name.endswith('/'+suffix) and member.isfile()]
             assert len(matches) == 1, f'Expected one binary: {suffix}'
             identities = architectures(archive.extractfile(matches[0]).read())

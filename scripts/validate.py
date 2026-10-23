@@ -94,3 +94,7 @@ for path in ["Sources/NFBManager.m","Sources/NFBPrivacy.m","Sources/NFBPrivacy.h
 assert "FreezeDesktop" not in read("Preferences/Resources/Root.plist")
 assert "KeyboardBottomEnabled" not in read("Preferences/Resources/Root.plist")
 print("PASS: 0.48.52 baseline, desktop freeze removed and discontinued keyboard target excluded")
+
+for script in (root/"scripts").glob("*.py"):
+    compile(script.read_bytes(),str(script),"exec")
+print("PASS: every project Python script parses before build/package")
