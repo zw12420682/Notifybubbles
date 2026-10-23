@@ -30,3 +30,9 @@ static inline double NFBRevealOffset(double offset, double viewport, double cont
 static inline double NFBSplitRailTop(double windowTop, double windowHeight) {
     return windowTop + windowHeight * 0.05;
 }
+
+// During a split-window transition its reported right edge can briefly leave
+// less room than the padded icon strip. Keep the strip inside the screen.
+static inline double NFBContainedRailX(double preferred,double viewport,double width,double margin) {
+    return fmax(0,fmin(preferred,fmax(0,viewport-width-margin)));
+}

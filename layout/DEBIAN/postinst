@@ -18,7 +18,7 @@ dpkg-query -L local.notifybubbles 2>/dev/null | while IFS= read -r main; do
     esac
     [ -f "$main" ] || continue
     folder=${main%/*}
-    for name in NotifyBubblesKeyboard.dylib NotifyBubblesKeyboard.plist NotifyBubblesKeyboard.dylib.disabled NotifyBubblesKeyboard.plist.disabled; do
+    for name in NFBKeyboardDock.dylib NFBKeyboardDock.plist NotifyBubblesKeyboard.dylib NotifyBubblesKeyboard.plist NotifyBubblesKeyboard.dylib.disabled NotifyBubblesKeyboard.plist.disabled; do
         candidate="$folder/$name"
         if [ -L "$candidate" ]; then
             echo "[NotifyBubbles cleanup] Skipped symlink: $candidate"

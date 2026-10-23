@@ -162,39 +162,9 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
-			<string>分屏与截屏</string>
+			<string>截屏</string>
 			<key>footerText</key>
-			<string>冻屏仅在桌面背景且存在展开的竖屏窗口时生效；横竖屏并存时仍冻结，只有横屏、小窗或背景为全屏 App 时不冻结。模糊透明度越高，桌面越清晰；100% 完全透明但仍防误触。截屏隐藏全部气泡、角标、容器及清理按钮，不隐藏分屏 App，可能同时影响录屏。</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>label</key>
-			<string>分屏时冻结桌面</string>
-			<key>key</key>
-			<string>FreezeDesktop</string>
-			<key>default</key>
-			<false/>
-			<key>defaults</key>
-			<string>local.notifybubbles</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSSliderCell</string>
-			<key>label</key>
-			<string>桌面模糊透明度（%）</string>
-			<key>key</key>
-			<string>DesktopBlurTransparency</string>
-			<key>defaults</key>
-			<string>local.notifybubbles</string>
-			<key>default</key>
-			<integer>35</integer>
-			<key>min</key>
-			<integer>0</integer>
-			<key>max</key>
-			<integer>100</integer>
-			<key>showValue</key>
-			<true/>
+			<string>截屏隐藏全部气泡、角标、容器及清理按钮，不隐藏分屏 App，可能同时影响录屏。</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -277,68 +247,6 @@
 			<string>调试日志</string>
 			<key>key</key>
 			<string>DebugLogging</string>
-			<key>default</key>
-			<false/>
-			<key>defaults</key>
-			<string>local.notifybubbles</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSGroupCell</string>
-			<key>label</key>
-			<string>键盘底部</string>
-			<key>footerText</key>
-			<string>独立于悬浮气泡开关。高度单位为 pt，仅修改系统键盘竖屏底部留白；横屏保持系统高度。关闭自定义高度即恢复系统默认。修改后收起重开键盘；已运行应用必要时重新打开。第三方键盘需单独验证。</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>label</key>
-			<string>自定义底部留白高度</string>
-			<key>key</key>
-			<string>KeyboardBottomEnabled</string>
-			<key>default</key>
-			<false/>
-			<key>defaults</key>
-			<string>local.notifybubbles</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSSliderCell</string>
-			<key>label</key>
-			<string>底部留白高度（0–100 pt）</string>
-			<key>key</key>
-			<string>KeyboardBottomHeight</string>
-			<key>default</key>
-			<integer>34</integer>
-			<key>min</key>
-			<integer>0</integer>
-			<key>max</key>
-			<integer>100</integer>
-			<key>showValue</key>
-			<true/>
-			<key>defaults</key>
-			<string>local.notifybubbles</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>label</key>
-			<string>隐藏地球键</string>
-			<key>key</key>
-			<string>KeyboardHideGlobe</string>
-			<key>default</key>
-			<false/>
-			<key>defaults</key>
-			<string>local.notifybubbles</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>label</key>
-			<string>隐藏语音键</string>
-			<key>key</key>
-			<string>KeyboardHideVoice</string>
 			<key>default</key>
 			<false/>
 			<key>defaults</key>

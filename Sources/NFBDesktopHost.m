@@ -781,7 +781,6 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
     if (session) { NFBCloseDesktopSplit(); return YES; }
     NFBDesktopSession *next = [NFBDesktopSession new];
     @try {
-        NFBUpdateDesktopFreeze(NO, 0);
         UIView *desktop = NFBDesktopSource(anchor);
         if (!desktop) return NFBDesktopFail(@"没有找到已加载的系统桌面视图");
         NFBWindowState *state = NFBCurrentWindowState();

@@ -4,7 +4,6 @@
 #import <objc/message.h>
 #import "../Sources/NFBInterfaces.h"
 #import "../Sources/NFBIcon.h"
-#import "../Sources/NFBKeyboardSettingsBridge.h"
 
 @interface NFBFavoritesController : UITableViewController
 @property(nonatomic, copy) NSArray<NSDictionary *> *apps;
@@ -16,12 +15,11 @@
 @implementation NFBPreferences
 - (NSArray *)specifiers {
     if (!_specifiers) {
-        NFBKeyboardSettingsPublish();
         _specifiers = [self loadSpecifiersFromPlistName:@"Root" target:self];
         NSDictionary *symbols = @{@"Enabled": @"bell.badge.fill", @"ShowOnLock": @"lock.fill",
             @"ShowOnHome": @"house.fill", @"ShowInApps": @"app.fill", @"IconSize": @"arrow.up.left.and.arrow.down.right",
             @"IconOpacity": @"circle.lefthalf.filled", @"ClosePreviousSplit": @"rectangle.on.rectangle",
-            @"FreezeDesktop": @"snowflake", @"DesktopBlurTransparency": @"drop.halffull", @"HideInScreenshots": @"eye.slash.fill", @"DebugLogging": @"ladybug.fill", @"HotspotAutoClose": @"personalhotspot", @"HotspotIdleMinutes": @"timer"};
+            @"HideInScreenshots": @"eye.slash.fill", @"DebugLogging": @"ladybug.fill", @"HotspotAutoClose": @"personalhotspot", @"HotspotIdleMinutes": @"timer"};
         for (PSSpecifier *specifier in _specifiers) {
             NSString *key = [specifier propertyForKey:@"key"];
             NSString *symbol = key ? symbols[key] : nil;
@@ -46,7 +44,6 @@
     CFPreferencesSetAppValue((__bridge CFStringRef)[specifier propertyForKey:@"key"],
         (__bridge CFPropertyListRef)value, CFSTR("local.notifybubbles"));
     CFPreferencesAppSynchronize(CFSTR("local.notifybubbles"));
-    NFBKeyboardSettingsPublish();
     CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
         CFSTR("local.notifybubbles/preferences.changed"), NULL, NULL, YES);
 }

@@ -1,3 +1,4 @@
+#import "NFBRailScrolling.h"
 #import "NFBDesktopHost.h"
 #import "NFBHotspot.h"
 #import "NFBSystemDesktop.h"
@@ -164,8 +165,8 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic) NSUInteger exitEpoch;
 @property(nonatomic,strong) NSMutableDictionary<NSString *,NSNumber *> *retractTokens;
 @property(nonatomic) NSUInteger presentationEpoch;
-@property(nonatomic) BOOL closePreviousSplit, freezeDesktop, hideInScreenshots;
-@property(nonatomic) CGFloat desktopBlurTransparency, favoriteScrollRows;
+@property(nonatomic) BOOL closePreviousSplit, hideInScreenshots;
+@property(nonatomic) CGFloat favoriteScrollRows;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *generations;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *lastBadges;
 @property(nonatomic, strong) NFBRecord *pendingRecord;
@@ -257,9 +258,7 @@ static double NFBNumber(NSString *key, double fallback) {
     self.enabled = nextEnabled;
     NFBConfigureDebugLogging(NFBPreference(@"DebugLogging", NO));
     self.closePreviousSplit = NFBPreference(@"ClosePreviousSplit", YES);
-    self.freezeDesktop = NFBPreference(@"FreezeDesktop", NO);
     self.hideInScreenshots = NFBPreference(@"HideInScreenshots", NO);
-    self.desktopBlurTransparency = NFBNumber(@"DesktopBlurTransparency", 35);
     self.favoriteScrollRows = NFBNumber(@"FavoriteScrollRows", 0);
     NFBConfigureHotspotAutoClose(self.enabled && NFBPreference(@"HotspotAutoClose",NO),NFBNumber(@"HotspotIdleMinutes",5));
     NFBUpdateOpenEdge(self.enabled);
@@ -279,7 +278,6 @@ static double NFBNumber(NSString *key, double fallback) {
     self.favoriteApps = favoriteOrder.array;
     if (!self.enabled) {
         NFBCloseDesktopSplit();
-        NFBUpdateDesktopFreeze(NO, 0);
         NFBSetCaptureHidden(self.window.rootViewController.view, NO);
         [self.timer invalidate]; self.timer = nil; [self clear];
     } else { [self startTimer]; [self tick]; }
@@ -678,13 +676,6 @@ static double NFBNumber(NSString *key, double fallback) {
 }
 - (void)updatePrivacy {
     if (!self.enabled || [self isLocked]) NFBUpdateDesktopSplit(NO);
-    BOOL desktopVisible = NFBCurrentWindowState().home;
-    // Attachment lookup includes all expanded portrait windows, even behind a landscape window.
-    NSString *splitApp = NFBSplitAttachmentApp();
-    BOOL splitVisible = splitApp.length > 0;
-    NFBUpdateDesktopFreeze(self.enabled && self.freezeDesktop && !NFBDesktopSplitActive() &&
-        desktopVisible && ![self isLocked] && splitVisible && !NFBIsSystemDesktop(splitApp),
-        1.0 - self.desktopBlurTransparency / 100.0);
     NFBSetCaptureHidden(self.window.rootViewController.view, self.enabled && self.hideInScreenshots);
 }
 - (void)refresh {
@@ -865,7 +856,8 @@ static double NFBNumber(NSString *key, double fallback) {
         CGFloat y = MAX(safe.top, CGRectGetMinY(splitFrame));
         CGFloat bottom = MIN(CGRectGetHeight(bounds) - safe.bottom, CGRectGetMaxY(splitFrame));
         height = MAX(1, bottom - y);
-        CGFloat x = CGRectGetMaxX(splitFrame) + splitGap;
+        CGFloat x = NFBContainedRailX(CGRectGetMaxX(splitFrame)+splitGap,
+            CGRectGetWidth(bounds),railWidth,screenMargin);
         railFrame = CGRectMake(x, y, railWidth, height);
     }
     CGFloat clearCenterY = railFrame.origin.y - 8 - side / 2;
@@ -893,6 +885,11 @@ static double NFBNumber(NSString *key, double fallback) {
         railFrame = CGRectMake(railFrame.origin.x, y + favoriteHeight + gap, railWidth, height);
         clearCenterY = CGRectGetMaxY(railFrame) + 9 + side / 2;
     }
+    // A changing clipped viewport must not race independently animated child
+    // sizes and scroll bounds. Commit resize geometry together, then keep the
+    // normal animation timing for subsequent moves within a stable viewport.
+    if (!CGSizeEqualToSize(self.rail.bounds.size,railFrame.size) ||
+        !CGSizeEqualToSize(self.favoritesRail.bounds.size,favoritesFrame.size)) layoutDuration=0;
     [self layoutFavorites:favoritesFrame diameter:diameter active:active duration:layoutDuration];
     [self layoutDesktopAction:desktopActionFrame target:actionTarget duration:layoutDuration];
     BOOL hideEdgeIcons = edgeMode;
@@ -922,11 +919,14 @@ static double NFBNumber(NSString *key, double fallback) {
         CGFloat offset = attachmentChanged ? maxOffset - oldBottomOffset : self.rail.contentOffset.y;
         offset = MAX(0, MIN(maxOffset, offset));
         NSUInteger activeIndex = [railApps indexOfObject:active ?: @""];
-        if (activeIndex != NSNotFound && (attachmentChanged || orderChanged ||
-                ![self.lastRailActive isEqual:active] || keyboardUp != previousKeyboardUp || railSizeChanged))
+        BOOL revealActive=activeIndex != NSNotFound && (attachmentChanged || orderChanged ||
+                ![self.lastRailActive isEqual:active] || keyboardUp != previousKeyboardUp || railSizeChanged);
+        if (revealActive)
             offset = NFBRevealOffset(offset, height, contentHeight, NFBRowCenter(rowCount, activeIndex, step, side), side);
         self.lastRailActive = active;
-        if (!CGPointEqualToPoint(self.rail.contentOffset, CGPointMake(0, offset))) [UIView animateWithDuration:layoutDuration delay:0
+        if (revealActive) {
+            NFBSettleRailOffset(self.rail,offset);
+        } else if (!CGPointEqualToPoint(self.rail.contentOffset, CGPointMake(0, offset))) [UIView animateWithDuration:layoutDuration delay:0
             options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseOut
             animations:^{ self.rail.contentOffset = CGPointMake(0, offset); } completion:nil];
     }
@@ -1076,11 +1076,14 @@ static double NFBNumber(NSString *key, double fallback) {
     if (!self.favoriteDrag && !self.favoritesRail.dragging && !self.favoritesRail.decelerating && visible) {
         CGFloat offset = MAX(0, MIN(maxOffset, maxOffset - (wasHidden ? MAX(0, self.favoriteScrollRows) * step : oldBottomDistance)));
         NSUInteger activeIndex = [self.favoriteApps indexOfObject:active ?: @""];
-        if (activeIndex != NSNotFound && (wasHidden || resized || ![self.lastFavoritesActive isEqual:active]))
+        BOOL revealActive=activeIndex != NSNotFound && (wasHidden || resized || ![self.lastFavoritesActive isEqual:active]);
+        if (revealActive)
             offset = NFBRevealOffset(offset, frame.size.height, content,
                 NFBRowCenter(self.favoriteApps.count, activeIndex, step, side), side);
         self.lastFavoritesActive = active;
-        if (!CGPointEqualToPoint(self.favoritesRail.contentOffset, CGPointMake(0, offset))) [UIView animateWithDuration:duration delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{
+        if (revealActive) {
+            NFBSettleRailOffset(self.favoritesRail,offset);
+        } else if (!CGPointEqualToPoint(self.favoritesRail.contentOffset, CGPointMake(0, offset))) [UIView animateWithDuration:duration delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{
             self.favoritesRail.contentOffset = CGPointMake(0, offset);
         } completion:nil];
     }

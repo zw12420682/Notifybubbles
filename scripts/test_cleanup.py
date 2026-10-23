@@ -12,6 +12,7 @@ with tempfile.TemporaryDirectory(prefix='cleanup-test-', dir=root.parent) as tem
     folder.mkdir(parents=True)
     main = folder/'NotifyBubbles.dylib'; main.write_text('keep-main')
     retired = folder/'NotifyBubblesKeyboard.dylib'; retired.write_text('orphan')
+    stopped = folder/'NFBKeyboardDock.dylib'; stopped.write_text('stopped-keyboard')
     disabled = folder/'NotifyBubblesKeyboard.dylib.disabled'; disabled.write_text('orphan-disabled')
     protected = folder/'NotifyBubblesKeyboard.plist'; protected.write_text('another-package')
     unrelated = folder/'TrollOpenKeyboard.dylib'; unrelated.write_text('keep-trollopen')
@@ -36,6 +37,7 @@ with tempfile.TemporaryDirectory(prefix='cleanup-test-', dir=root.parent) as tem
     result = subprocess.run(args+['configure'],env=env,check=True,capture_output=True,text=True)
     if symlink_created: assert symlink.is_symlink() and symlink.read_text() == 'keep-other-root', 'Symlink or target altered'
     assert not retired.exists() and not disabled.exists(), result.stdout+result.stderr
+    assert not stopped.exists(), 'Stopped keyboard helper was not cleaned up'
     for path, value in [(main,'keep-main'),(protected,'another-package'),(unrelated,'keep-trollopen'),(other,'keep-other-root')]:
         assert path.read_text() == value, path
     subprocess.run(args+['configure'],env=env,check=True,capture_output=True,text=True)

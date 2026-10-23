@@ -183,6 +183,16 @@ int main(void) {
         Check(NFBRevealOffset(114, 233, 347, 31, 62) == 0, @"Scroll up to entire current top icon");
         Check(NFBRevealOffset(57, 233, 347, 145, 62) == 57, @"Visible active icon leaves scroll alone");
         Check(NFBRevealOffset(0, 100, 233, 202, 62) == 133, @"Keyboard-shortened viewport reveals current icon");
+        Check(NFBContainedRailX(330,390,62,4)==324,@"split rail stays fully on screen during a transient wide window");
+        Check(NFBContainedRailX(310,390,62,4)==310,@"split rail retains its normal gap when space is sufficient");
+        Check(NFBContainedRailX(-20,390,62,4)==0,@"split rail never starts outside the left screen edge");
+        for (NSUInteger row=0;row<7;row++) {
+            double side=51.5,step=46.5,viewport=115.25,content=6*step+side;
+            double center=NFBRowCenter(7,row,step,side);
+            double offset=NFBRevealOffset(123.75,viewport,content,center,side);
+            Check(center-side/2>=offset-0.0001 && center+side/2<=offset+viewport+0.0001,
+                @"fractional resized rail reveals the entire active row");
+        }
         Check(NFBSplitRailTop(200, 600) == 230 && NFBSplitRailTop(100, 1000) == 150, @"Five percent uses split height, not screen height");
         TestEdgeClose *edge = [TestEdgeClose new]; id tap = [NSObject new];
         Check(NFBDispatchRightEdgeTap(edge, tap) && edge.calls == 1 && edge.received == tap, @"Original tap callback invoked exactly once with recognizer");

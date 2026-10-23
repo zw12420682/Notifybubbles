@@ -1,3 +1,4 @@
+#import "NFBRailScrolling.h"
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
 #import "NFBDesktopHost.h"
@@ -80,7 +81,6 @@ BOOL NFBSplitTrollFrontmostApp(void) { submittedBundle=@"frontmost"; return open
 static NFBWindowState *state;
 NFBWindowState *NFBCurrentWindowState(void) { return state; }
 void NFBInvalidateWindowState(void) {}
-void NFBUpdateDesktopFreeze(__unused BOOL enabled, __unused CGFloat opacity) {}
 static void Check(BOOL valid, NSString *name) {
     if (!valid) [NSException raise:@"DesktopTestFailure" format:@"%@",name];
 }
@@ -145,6 +145,16 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
     [UIView setAnimationsEnabled:NO];
     NSString *result=@"PASS";
     @try {
+        UIScrollView *railFixture=[[UIScrollView alloc] initWithFrame:CGRectMake(0,0,62,120)];
+        railFixture.contentSize=CGSizeMake(62,300);
+        CABasicAnimation *oldScroll=[CABasicAnimation animationWithKeyPath:@"bounds"];
+        oldScroll.duration=2; [railFixture.layer addAnimation:oldScroll forKey:@"bounds"];
+        CABasicAnimation *fade=[CABasicAnimation animationWithKeyPath:@"opacity"];
+        fade.duration=2; [railFixture.layer addAnimation:fade forKey:@"opacity"];
+        Check(NFBSettleRailOffset(railFixture,180),@"automatic rail reveal settles immediately");
+        Check(railFixture.contentOffset.y==180 && ![railFixture.layer animationForKey:@"bounds"],@"obsolete scroll animation cannot override active reveal");
+        Check([railFixture.layer animationForKey:@"opacity"]!=nil,@"rail reveal preserves unrelated animation");
+        [railFixture.layer removeAllAnimations];
         state=[NFBWindowState new]; state.home=YES;
         UIViewController *root=self.window.rootViewController;
         SBHomeScreenViewController *home=[SBHomeScreenViewController new];
