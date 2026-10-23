@@ -59,6 +59,10 @@ jobs:
             -framework Foundation -I Sources Sources/NFBDebugLog.m Sources/NFBStateLedger.m Tests/StateLedgerTests.m \
             -o "$RUNNER_TEMP/test-state-ledger"
           "$RUNNER_TEMP/test-state-ledger"
+      - name: Test keyboard bottom policy
+        run: |
+          clang -std=c11 -Wall -Wextra -Werror Tests/KeyboardDockPolicyTests.c -o "$RUNNER_TEMP/test-keyboard-dock"
+          "$RUNNER_TEMP/test-keyboard-dock"
       - name: Install packaging tools
         run: brew install ldid xz dpkg
       - name: Install pinned RootHide Theos and iOS SDK
