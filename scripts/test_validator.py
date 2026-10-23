@@ -6,7 +6,7 @@ base=source.parent/'nfb-validator-cases'
 assert base.resolve().is_relative_to(source.parent)
 base.mkdir(parents=True,exist_ok=True)
 cases=['clean','overlay','without_archive','unknown','older_keyboard_badges','missing_source','retired_built','missing_header','duplicate',
-       'missing_test','missing_workflow_step','old_simulator','old_foundation','missing_keyboard','wrong_keyboard_filter','keyboard_default_on']
+       'missing_test','missing_workflow_step','old_simulator','old_foundation','missing_keyboard','wrong_keyboard_filter','keyboard_default_on','missing_keyboard_bridge','missing_keyboard_transport_test']
 for case in cases:
     with tempfile.TemporaryDirectory(prefix=case+'-',dir=base) as directory:
         project=Path(directory).resolve()
@@ -20,6 +20,8 @@ for case in cases:
         if case=='older_keyboard_badges':
             for name in ['NFBDarkKeyboard.m','NFBTrollBadges.m']:
                 (project/'Sources'/name).write_text('#import "UnusedMissingHeader.h"\n',encoding='utf-8')
+        if case=='missing_keyboard_bridge': (project/'Sources/NFBKeyboardSettingsBridge.h').unlink()
+        if case=='missing_keyboard_transport_test': (project/'Tests/KeyboardSettingsTransportTests.m').unlink()
         if case=='missing_keyboard': (project/'Sources/NFBKeyboardDock.m').unlink()
         if case=='wrong_keyboard_filter':
             p=project/'NFBKeyboardDock.plist'

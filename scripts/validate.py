@@ -100,3 +100,10 @@ keyboard=read("Sources/NFBKeyboardDock.m")
 assert "NSTimer" not in keyboard and "dispatch_after" not in keyboard
 assert "Sources/NFBKeyboardDock.m" not in inputs
 print("PASS: isolated keyboard helper, opt-in defaults, no keyboard polling and policy test configured")
+
+assert (root/"Tests/KeyboardSettingsTransportTests.m").is_file()
+assert "Tests/KeyboardSettingsTransportTests.m" in workflow
+assert "NFBKeyboardSettingsReceive" in keyboard and "NFBKeyboardSettingsPublish" in keyboard
+assert "NFBKeyboardSettingsPublish" in read("Preferences/NFBPreferences.m")
+assert "notify_register_dispatch" in keyboard
+print("PASS: keyboard state publisher, event subscriber and cross-process test configured")

@@ -3,6 +3,7 @@
 #import <objc/message.h>
 #import <substrate.h>
 #import "NFBKeyboardDockPolicy.h"
+#import "NFBKeyboardSettingsBridge.h"
 #include <string.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -48,6 +49,10 @@ static void DockLog(NSString *format,...) {
 
 static BOOL customHeight, hideGlobe, hideVoice;
 static double requestedHeight=34;
+static BOOL DockSettingsPublisher(void) {
+    NSString *bundle=NSBundle.mainBundle.bundleIdentifier;
+    return [bundle isEqualToString:@"com.apple.springboard"] || [bundle isEqualToString:@"com.apple.Preferences"];
+}
 static NSMapTable<UIView *,NSNumber *> *hiddenButtons;
 static id DockObject(id object, NSString *name) {
     SEL selector=NSSelectorFromString(name);
@@ -72,8 +77,17 @@ static void DockLoad(void) {
     requestedHeight=[height isKindOfClass:NSNumber.class] ? [height doubleValue] : 34;
     hideGlobe=[globe isKindOfClass:NSNumber.class] && [globe boolValue];
     hideVoice=[voice isKindOfClass:NSNumber.class] && [voice boolValue];
-    DockLog(@"config presence height=%d enabled=%d globe=%d voice=%d | decoded custom=%d height=%.2f globe=%d voice=%d threadMain=%d",
-        height!=nil,enabled!=nil,globe!=nil,voice!=nil,customHeight,requestedHeight,hideGlobe,hideVoice,NSThread.isMainThread);
+    BOOL publisher=DockSettingsPublisher();
+    BOOL published=publisher ? NFBKeyboardSettingsPublish() : NO;
+    NFBKeyboardSettings received={0,0,0,34};
+    BOOL shared=!publisher && NFBKeyboardSettingsReceive(&received);
+    if (shared) {
+        customHeight=received.enabled; requestedHeight=received.height;
+        hideGlobe=received.globe; hideVoice=received.voice;
+    }
+    DockLog(@"config source=%@ published=%d presence height=%d enabled=%d globe=%d voice=%d | decoded custom=%d height=%.2f globe=%d voice=%d threadMain=%d",
+        shared ? @"notify-state" : @"preferences",published,height!=nil,enabled!=nil,globe!=nil,voice!=nil,
+        customHeight,requestedHeight,hideGlobe,hideVoice,NSThread.isMainThread);
 }
 static void DockChanged(__unused CFNotificationCenterRef center,__unused void *observer,__unused CFStringRef name,__unused const void *object,__unused CFDictionaryRef info) {
     dispatch_async(dispatch_get_main_queue(), ^{ DockLoad(); });
@@ -124,10 +138,15 @@ static Method DockMethod(Class cls,SEL selector,const char *result,NSUInteger ar
 }
 __attribute__((constructor)) static void DockStart(void) {
     @autoreleasepool {
-        DockLog(@"module loaded version=0.48.54 idiom=%ld",(long)UIDevice.currentDevice.userInterfaceIdiom);
+        DockLog(@"module loaded version=0.48.55 idiom=%ld",(long)UIDevice.currentDevice.userInterfaceIdiom);
         // A separate UIKit filter; no manager, window scans or timers in apps.
         if (UIDevice.currentDevice.userInterfaceIdiom!=UIUserInterfaceIdiomPhone) return;
         hiddenButtons=[NSMapTable weakToStrongObjectsMapTable];
+        static int settingsObserver=-1;
+        uint32_t registration=notify_register_dispatch(NFB_KEYBOARD_SETTINGS_CHANNEL,&settingsObserver,dispatch_get_main_queue(),^(__unused int token) {
+            if (!DockSettingsPublisher()) DockLoad();
+        });
+        DockLog(@"settings notification registration=%u",registration);
         DockLoad();
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(),NULL,DockChanged,
             CFSTR("local.notifybubbles/preferences.changed"),NULL,CFNotificationSuspensionBehaviorCoalesce);
