@@ -5,14 +5,19 @@ INSTALL_TARGET_PROCESSES = SpringBoard
 
 include $(THEOS)/makefiles/common.mk
 
-# Only SpringBoard is injected; the app-side return helper is retired.
-TWEAK_NAME = NotifyBubbles
+# Main features stay SpringBoard-only. The isolated keyboard module targets UIKit.
+TWEAK_NAME = NotifyBubbles NFBKeyboardDock
 NotifyBubbles_FILES = Sources/Tweak.m Sources/NFBStore.m Sources/NFBManager.m Sources/NFBSwitcher.m Sources/NFBTrollOpen.m Sources/NFBWindowControls.m Sources/NFBNotificationPolicy.m Sources/NFBAppExit.m Sources/NFBKeyboard.m Sources/NFBPrivacy.m Sources/NFBOpenEdge.m Sources/NFBDebugLog.m Sources/NFBWindowState.m Sources/NFBOpenConsole.m Sources/NFBHotspot.m Sources/NFBDesktopHost.m Sources/NFBStateLedger.m Sources/NFBInterfaces.m
 NFB_PACKAGE_VERSION = $(shell sed -n 's/^Version: //p' control)
 NotifyBubbles_CFLAGS = -fobjc-arc -Wall -Wextra -DNFB_VERSION='@"$(NFB_PACKAGE_VERSION)"'
 NotifyBubbles_FRAMEWORKS = UIKit Foundation QuartzCore CoreGraphics UserNotifications
 NotifyBubbles_LIBRARIES = substrate
 
+
+NFBKeyboardDock_FILES = Sources/NFBKeyboardDock.m
+NFBKeyboardDock_CFLAGS = -fobjc-arc -Wall -Wextra
+NFBKeyboardDock_FRAMEWORKS = UIKit Foundation
+NFBKeyboardDock_LIBRARIES = substrate
 
 include $(THEOS_MAKE_PATH)/tweak.mk
 

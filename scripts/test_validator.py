@@ -6,7 +6,7 @@ base=source.parent/'nfb-validator-cases'
 assert base.resolve().is_relative_to(source.parent)
 base.mkdir(parents=True,exist_ok=True)
 cases=['clean','overlay','without_archive','unknown','older_keyboard_badges','missing_source','retired_built','missing_header','duplicate',
-       'missing_test','missing_workflow_step','old_simulator','old_foundation']
+       'missing_test','missing_workflow_step','old_simulator','old_foundation','missing_keyboard','wrong_keyboard_filter','keyboard_default_on']
 for case in cases:
     with tempfile.TemporaryDirectory(prefix=case+'-',dir=base) as directory:
         project=Path(directory).resolve()
@@ -20,6 +20,16 @@ for case in cases:
         if case=='older_keyboard_badges':
             for name in ['NFBDarkKeyboard.m','NFBTrollBadges.m']:
                 (project/'Sources'/name).write_text('#import "UnusedMissingHeader.h"\n',encoding='utf-8')
+        if case=='missing_keyboard': (project/'Sources/NFBKeyboardDock.m').unlink()
+        if case=='wrong_keyboard_filter':
+            p=project/'NFBKeyboardDock.plist'
+            p.write_text(p.read_text(encoding='utf-8').replace('com.apple.UIKit','com.apple.springboard'),encoding='utf-8')
+        if case=='keyboard_default_on':
+            import plistlib
+            p=project/'Preferences/Resources/Root.plist'
+            prefs=plistlib.loads(p.read_bytes())
+            next(item for item in prefs['items'] if item.get('key')=='KeyboardBottomEnabled')['default']=True
+            p.write_bytes(plistlib.dumps(prefs))
         if case=='missing_source': (project/'Sources/NFBStateLedger.m').unlink()
         if case=='missing_header': (project/'Sources/NFBStateLedger.h').unlink()
         if case=='missing_test': (project/'Tests/StateLedgerTests.m').unlink()

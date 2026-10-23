@@ -18,11 +18,11 @@ for argument in sys.argv[1:]:
     assert 'NotifyBubblesBack.dylib' not in payload, 'Retired return helper still packaged.'
     assert 'NotifyBubblesBack.plist' not in payload, 'Retired return filter still packaged.'
     assert 'NotifyBubblesKeyboard.dylib' not in payload, 'Retired keyboard theme is still in the DEB.'
-    for suffix in ['NotifyBubbles.dylib', 'NotifyBubbles.plist', 'NFBPreferences.bundle/NFBPreferences', 'NFBPreferences.bundle/Root.plist', 'NFBPreferences.bundle/icon.png', 'NFBPreferences.bundle/icon@2x.png', 'NFBPreferences.bundle/icon@3x.png']:
+    for suffix in ['NFBKeyboardDock.dylib', 'NFBKeyboardDock.plist', 'NotifyBubbles.dylib', 'NotifyBubbles.plist', 'NFBPreferences.bundle/NFBPreferences', 'NFBPreferences.bundle/Root.plist', 'NFBPreferences.bundle/icon.png', 'NFBPreferences.bundle/icon@2x.png', 'NFBPreferences.bundle/icon@3x.png']:
         assert suffix in payload, f'Missing payload: {suffix}'
     data = subprocess.check_output(['dpkg-deb','--fsys-tarfile',str(path)])
     with tarfile.open(fileobj=io.BytesIO(data)) as archive:
-        for suffix in ['NotifyBubbles.dylib','NFBPreferences.bundle/NFBPreferences']:
+        for suffix in ['NFBKeyboardDock.dylib','NotifyBubbles.dylib','NFBPreferences.bundle/NFBPreferences']:
             matches = [member for member in archive.getmembers() if member.name.endswith('/'+suffix) and member.isfile()]
             assert len(matches) == 1, f'Expected one binary: {suffix}'
             identities = architectures(archive.extractfile(matches[0]).read())

@@ -25,8 +25,8 @@ prefs=plistlib.loads((root/"Preferences/Resources/Root.plist").read_bytes())
 assert {item["key"] for item in prefs["items"] if "key" in item}=={
     "Enabled","ShowOnLock","ShowOnHome","ShowInApps","IconSize","IconOpacity",
     "ClosePreviousSplit","FreezeDesktop","HideInScreenshots","DesktopBlurTransparency",
-    "DebugLogging","HotspotAutoClose","HotspotIdleMinutes"}
-print("PASS: package identity, versions, preference keys and SpringBoard-only injection")
+    "DebugLogging","HotspotAutoClose","HotspotIdleMinutes","KeyboardBottomEnabled","KeyboardBottomHeight","KeyboardHideGlobe","KeyboardHideVoice"}
+print("PASS: package identity, versions, preference keys and isolated SpringBoard injection")
 
 makefile=read("Makefile")
 assert "THEOS_PACKAGE_SCHEME = roothide" in makefile
@@ -40,14 +40,19 @@ retired={"Sources/NFBAppBack.m","Sources/NFBBackRequest.m"}
 assert not (set(inputs)&retired), "Retired helpers must not be compiled: " + str(sorted(set(inputs)&retired))
 missing=set(inputs)-discovered
 assert not missing, "Missing build sources: " + str(sorted(missing))
-unbuilt=discovered-set(inputs)
+dock_inputs=re.search(r"^NFBKeyboardDock_FILES\s*=\s*(.+)$",makefile,re.M).group(1).split()
+assert dock_inputs==["Sources/NFBKeyboardDock.m"]
+assert set(dock_inputs)<=discovered, "Missing keyboard dock build sources"
+assert not set(inputs)&set(dock_inputs), "Keyboard helper must remain isolated from main tweak"
+assert plistlib.loads((root/"NFBKeyboardDock.plist").read_bytes())["Filter"]["Bundles"]==["com.apple.UIKit"]
+unbuilt=discovered-set(inputs)-set(dock_inputs)
 if unbuilt:
     print("NOTE: source files excluded from Makefile build inputs: " + ", ".join(sorted(unbuilt)))
 assert {"Sources/NFBInterfaces.m","Sources/NFBStateLedger.m","Sources/NFBDesktopHost.m"}<=set(inputs)
 for name in inputs:
     assert (root/name).is_file() and not name.startswith("Legacy/")
 assert "../Sources/NFBInterfaces.m" in read("Preferences/Makefile")
-pending=[root/name for name in inputs]
+pending=[root/name for name in inputs+dock_inputs]
 seen=set()
 while pending:
     path=pending.pop()
@@ -87,3 +92,11 @@ for test in ["StoreTests.m","TrollOpenTests.m","InterfaceTests.m"]:
         problems.append("Old Foundation test build command omits Sources/NFBInterfaces.m for: "+test)
 assert not problems, "Build/test files are out of sync:\n - "+"\n - ".join(problems)+"\nReplace .github/workflows/build.yml, Tests/ and scripts/ together from the build-support patch."
 print("PASS: behavioral, cleanup, ABI adapter, state restoration and UIKit tests are configured in CI")
+
+assert "Tests/KeyboardDockPolicyTests.c" in workflow
+for item in prefs["items"]:
+    if item.get("key") in ["KeyboardBottomEnabled","KeyboardHideGlobe","KeyboardHideVoice"]: assert item["default"] is False
+keyboard=read("Sources/NFBKeyboardDock.m")
+assert "NSTimer" not in keyboard and "dispatch_after" not in keyboard
+assert "Sources/NFBKeyboardDock.m" not in inputs
+print("PASS: isolated keyboard helper, opt-in defaults, no keyboard polling and policy test configured")
