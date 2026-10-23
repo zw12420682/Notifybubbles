@@ -32,7 +32,7 @@ static void DockLoad(void) {
     hideGlobe=[globe isKindOfClass:NSNumber.class] && [globe boolValue];
     hideVoice=[voice isKindOfClass:NSNumber.class] && [voice boolValue];
 }
-static void DockChanged(CFNotificationCenterRef center,void *observer,CFStringRef name,const void *object,CFDictionaryRef info) {
+static void DockChanged(__unused CFNotificationCenterRef center,__unused void *observer,__unused CFStringRef name,__unused const void *object,__unused CFDictionaryRef info) {
     dispatch_async(dispatch_get_main_queue(), ^{ DockLoad(); });
 }
 static UIEdgeInsets (*originalPadding)(id,SEL,NSInteger,id);
