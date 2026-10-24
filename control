@@ -1,0 +1,9 @@
+Package: local.notifybubbles
+Name: NotifyBubbles (Open 1.3.7 专用版)
+Version: 0.48.56
+Architecture: iphoneos-arm64
+Description: Notification bubbles and native desktop split integration for iOS 16, Open 1.3.7 and RootHide.
+Maintainer: NotifyBubbles
+Author: NotifyBubbles
+Section: Tweaks
+Depends: firmware (>= 16.0), firmware (<< 17.0), mobilesubstrate, preferenceloader

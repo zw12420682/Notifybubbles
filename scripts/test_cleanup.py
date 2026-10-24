@@ -1,0 +1,55 @@
+"""Exercise installer cleanup against an isolated fake package database."""
+from pathlib import Path
+import os, subprocess, tempfile, sys
+root = Path(__file__).resolve().parents[1]
+shell = sys.argv[1] if len(sys.argv) > 1 else '/bin/sh'
+def posix(p):
+    text = str(Path(p).resolve()).replace('\\', '/')
+    return '/' + text[0].lower() + text[2:] if len(text) > 1 and text[1] == ':' else text
+# Keep the fake bootstrap on a symlink-capable filesystem when one is available
+# (iSH/iOS mounts reject symlink creation under /var/minis but allow /tmp).
+def scratch_parent():
+    for candidate in (root.parent, Path(tempfile.gettempdir())):
+        try:
+            with tempfile.TemporaryDirectory(prefix='cleanup-probe-', dir=candidate) as probe:
+                Path(probe, 'probe').symlink_to(probe)
+            return candidate
+        except (OSError, NotImplementedError):
+            continue
+    return root.parent
+with tempfile.TemporaryDirectory(prefix='cleanup-test-', dir=scratch_parent()) as temp:
+    tmp = Path(temp)
+    folder = tmp / 'space dir/Library/MobileSubstrate/DynamicLibraries'
+    folder.mkdir(parents=True)
+    main = folder/'NotifyBubbles.dylib'; main.write_text('keep-main')
+    retired = folder/'NotifyBubblesKeyboard.dylib'; retired.write_text('orphan')
+    stopped = folder/'NFBKeyboardDock.dylib'; stopped.write_text('stopped-keyboard')
+    disabled = folder/'NotifyBubblesKeyboard.dylib.disabled'; disabled.write_text('orphan-disabled')
+    protected = folder/'NotifyBubblesKeyboard.plist'; protected.write_text('another-package')
+    unrelated = folder/'TrollOpenKeyboard.dylib'; unrelated.write_text('keep-trollopen')
+    other = tmp/'other-bootstrap/NotifyBubblesKeyboard.dylib'; other.parent.mkdir(); other.write_text('keep-other-root')
+    symlink = folder/'NotifyBubblesKeyboard.plist.disabled'
+    symlink_created = True
+    try:
+        symlink.symlink_to(other)
+    except OSError as error:
+        if os.name != "nt" or getattr(error,"winerror",None) != 1314: raise
+        symlink_created = False
+        print("SKIP: symlink case requires Windows symlink privilege; mandatory in macOS CI")
+    bindir = tmp/'bin'; bindir.mkdir()
+    mock = bindir/'dpkg-query'
+    mock.write_text("#!/bin/sh\ncase \"$1\" in\n-L) printf '%s\\n' \"$NFB_TEST_MAIN\" ;;\n-S) case \"$2\" in *.plist) printf 'other.package: %s\\n' \"$2\" ;; *) exit 1 ;; esac ;;\nesac\n", encoding='utf-8', newline='\n')
+    mock.chmod(0o755)
+    env = os.environ.copy(); env['NFB_TEST_MAIN'] = posix(main)
+    command = 'PATH="$1:/usr/bin:/bin:$PATH"; export PATH; sh "$2" "$3"'
+    args = [shell, '-c', command, 'test', posix(bindir), posix(root/'layout/DEBIAN/postinst')]
+    subprocess.run(args+['abort-upgrade'],env=env,check=True,capture_output=True,text=True)
+    assert retired.exists(), 'Non-configure invocation must not delete'
+    result = subprocess.run(args+['configure'],env=env,check=True,capture_output=True,text=True)
+    if symlink_created: assert symlink.is_symlink() and symlink.read_text() == 'keep-other-root', 'Symlink or target altered'
+    assert not retired.exists() and not disabled.exists(), result.stdout+result.stderr
+    assert not stopped.exists(), 'Stopped keyboard helper was not cleaned up'
+    for path, value in [(main,'keep-main'),(protected,'another-package'),(unrelated,'keep-trollopen'),(other,'keep-other-root')]:
+        assert path.read_text() == value, path
+    subprocess.run(args+['configure'],env=env,check=True,capture_output=True,text=True)
+print('PASS: orphan cleanup, disabled file, foreign ownership, unrelated files, bootstrap scope and repeated install')

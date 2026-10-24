@@ -1,0 +1,166 @@
+name: Build DEB (rootless + roothide)
+
+# Builds two flavours of the same tweak from one source tree:
+#   rootless -> /var/jb payload, DEB Architecture: iphoneos-arm64
+#               (Dopamine/palera1n rootless, any /var/jb bootstrap)
+#   roothide -> bootstrap-root payload, DEB Architecture: iphoneos-arm64e
+#               (Dopamine RootHide)
+#
+# Toolchain note: roothide/theos is a superset of upstream theos. It ships the
+# regular `rootless` scheme/package script as well as `roothide`, so a single
+# pinned roothide/theos checkout builds BOTH variants and no second Theos tree
+# (or conditional install) is needed. If you ever switch to official theos,
+# note that only the rootless variant would remain buildable there.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+    paths-ignore: ['**.md']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}-${{ matrix.scheme }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    # Portable checks + Objective-C unit tests; independent of the package scheme.
+    runs-on: macos-15-intel
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate project files
+        run: python3 scripts/validate.py
+      - name: Test validation for overlay source updates
+        run: python3 scripts/test_validator.py
+      - name: Test retired keyboard cleanup
+        run: python3 scripts/test_cleanup.py
+      - name: Test scheme switching without a toolchain
+        run: python3 scripts/test_scheme.py
+      - name: Run notification state tests
+        run: |
+          xcrun --sdk macosx clang -fobjc-arc -fmodules -Wall -Wextra -Werror \
+            -framework Foundation -I Sources Sources/NFBInterfaces.m Sources/NFBStore.m Tests/StoreTests.m \
+            -o "$RUNNER_TEMP/test-store"
+          "$RUNNER_TEMP/test-store"
+      - name: Test TrollOpen adapter contracts
+        run: |
+          xcrun --sdk macosx clang -fobjc-arc -fmodules -Wall -Wextra -Werror \
+            -DNFB_PORTABLE_ADAPTER_TEST -framework Foundation -I Sources Sources/NFBInterfaces.m Sources/NFBDebugLog.m Sources/NFBTrollOpen.m Tests/TrollOpenTests.m \
+            -o "$RUNNER_TEMP/test-trollopen"
+          for mode in missing wrongReturn wrongFlag throws valid desktop frontMissing frontWrongReturn frontWrongArgs frontThrows frontValid floatMissing floatWrongReturn floatMini floatVisible; do
+            "$RUNNER_TEMP/test-trollopen" "$mode"
+          done
+      - name: Test transition policy and private interfaces
+        run: |
+          clang -std=c11 -Wall -Wextra -Werror -I Sources Tests/TransitionTests.c -o "$RUNNER_TEMP/test-transition"
+          "$RUNNER_TEMP/test-transition"
+          xcrun --sdk macosx clang -fobjc-arc -fmodules -Wall -Wextra -Werror \
+            -framework Foundation -I Sources Sources/NFBInterfaces.m Sources/NFBDebugLog.m Tests/InterfaceTests.m -o "$RUNNER_TEMP/test-interface"
+          "$RUNNER_TEMP/test-interface"
+          python3 scripts/test_package_parser.py
+      - name: Test desktop view transfer and restoration in iOS simulator
+        run: python3 scripts/test_desktop_simulator.py
+      - name: Test independent state restoration
+        run: |
+          xcrun --sdk macosx clang -fobjc-arc -fmodules -Wall -Wextra -Werror \
+            -framework Foundation -I Sources Sources/NFBDebugLog.m Sources/NFBStateLedger.m Tests/StateLedgerTests.m \
+            -o "$RUNNER_TEMP/test-state-ledger"
+          "$RUNNER_TEMP/test-state-ledger"
+
+  build:
+    needs: test
+    runs-on: macos-15-intel
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - scheme: rootless
+            artifact: NotifyBubbles-rootless
+            arch: iphoneos-arm64
+          - scheme: roothide
+            artifact: NotifyBubbles-roothide
+            arch: iphoneos-arm64e
+    name: Package ${{ matrix.scheme }} (${{ matrix.arch }})
+    env:
+      THEOS: ${{ github.workspace }}/.theos-toolchain
+      # Pinned roothide/theos commit: builds both rootless and roothide schemes.
+      THEOS_REF: 88506b2c22e9e07dd4ed055f23c9e398a117a2c7
+      SDKS_REF: 0222fd5413cf4b9af096f37b4621afa2688572f7
+      THEOS_PACKAGE_SCHEME: ${{ matrix.scheme }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.THEOS }}
+          key: theos-${{ env.THEOS_REF }}-v1
+      - name: Install packaging tools
+        run: brew install ldid xz dpkg
+      - name: Install pinned RootHide Theos and iOS SDK
+        run: |
+          set -euo pipefail
+          if [ ! -d "$THEOS/.git" ]; then
+            git init "$THEOS"
+            git -C "$THEOS" remote add origin https://github.com/roothide/theos.git
+            git -C "$THEOS" fetch --depth 1 origin "$THEOS_REF"
+            git -C "$THEOS" checkout --detach FETCH_HEAD
+            git -C "$THEOS" submodule update --init --recursive --depth 1
+          fi
+          git init "$RUNNER_TEMP/ios-sdks"
+          git -C "$RUNNER_TEMP/ios-sdks" remote add origin https://github.com/theos/sdks.git
+          git -C "$RUNNER_TEMP/ios-sdks" fetch --depth 1 origin "$SDKS_REF"
+          git -C "$RUNNER_TEMP/ios-sdks" checkout --detach FETCH_HEAD
+          mkdir -p "$THEOS/sdks"
+          cp -R "$RUNNER_TEMP/ios-sdks/iPhoneOS16.5.sdk" "$THEOS/sdks/"
+          test -d "$THEOS/sdks/iPhoneOS16.5.sdk"
+          xcodebuild -version
+      - name: Build ${{ matrix.scheme }} package
+        run: |
+          set -euo pipefail
+          chmod 755 layout/DEBIAN/postinst
+          make clean >/dev/null 2>&1 || true
+          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME="${{ matrix.scheme }}" -j2 2>&1 | tee "build-${{ matrix.scheme }}.log"
+      - name: Verify DEB architecture, scheme prefix and payload
+        run: |
+          set -euo pipefail
+          ls -l packages 2>/dev/null || true
+          python3 scripts/check_package.py --scheme "${{ matrix.scheme }}" packages/*.deb
+          shasum -a 256 packages/*.deb > "packages/SHA256SUMS-${{ matrix.scheme }}.txt"
+      - name: Upload ${{ matrix.scheme }} DEB
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            packages/*.deb
+            packages/SHA256SUMS-${{ matrix.scheme }}.txt
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload ${{ matrix.scheme }} build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}-build-log
+          path: build-${{ matrix.scheme }}.log
+          if-no-files-found: ignore
+
+  release-notes:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Summarise produced packages
+        run: |
+          {
+            echo '## NotifyBubbles 0.48.56 — 双方案构建完成'
+            echo ''
+            echo '| 方案 | Artifact | DEB Architecture | 安装位置 |'
+            echo '| --- | --- | --- | --- |'
+            echo '| rootless | NotifyBubbles-rootless | iphoneos-arm64 | `/var/jb/...` |'
+            echo '| roothide | NotifyBubbles-roothide | iphoneos-arm64e | RootHide bootstrap 根 |'
+            echo ''
+            echo '按设备实际情况安装其中一个，不要同时安装两个。'
+          } >> "$GITHUB_STEP_SUMMARY"
