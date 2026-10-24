@@ -35,7 +35,7 @@ jobs:
     runs-on: macos-15-intel
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Validate project files
         run: python3 scripts/validate.py
       - name: Test validation for overlay source updates
@@ -101,8 +101,8 @@ jobs:
       SDKS_REF: 0222fd5413cf4b9af096f37b4621afa2688572f7
       THEOS_PACKAGE_SCHEME: ${{ matrix.scheme }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/cache@v4
+      - uses: actions/checkout@v5
+      - uses: actions/cache@v5
         with:
           path: ${{ env.THEOS }}
           key: theos-${{ env.THEOS_REF }}-v1
@@ -139,7 +139,7 @@ jobs:
           python3 scripts/check_package.py --scheme "${{ matrix.scheme }}" packages/*.deb
           shasum -a 256 packages/*.deb > "packages/SHA256SUMS-${{ matrix.scheme }}.txt"
       - name: Upload ${{ matrix.scheme }} DEB
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.artifact }}
           path: |
@@ -149,7 +149,7 @@ jobs:
           retention-days: 30
       - name: Upload ${{ matrix.scheme }} build log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.artifact }}-build-log
           path: build-${{ matrix.scheme }}.log

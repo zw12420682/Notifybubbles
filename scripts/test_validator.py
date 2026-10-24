@@ -4,7 +4,10 @@ import shutil, subprocess, sys, tempfile
 source=Path(__file__).resolve().parents[1]
 # Fixtures must never be created inside the project (validate.py walks the tree,
 # the copies would recurse into themselves). Use a real temporary directory.
-base=Path(tempfile.mkdtemp(prefix='nfb-validator-cases-'))
+base=Path(tempfile.mkdtemp(prefix='nfb-validator-cases-')).resolve()
+# macOS makeTemporaryDirectory() hands out /var/folders/... while .resolve()
+# canonicalises it to /private/var/folders/...; the project path is resolved
+# below, so base has to be resolved too or the containment check fails on CI.
 cases=['clean','overlay','without_archive','unknown','older_keyboard_badges','missing_source','retired_built','missing_header','duplicate',
        'missing_test','missing_workflow_step','old_simulator','old_foundation']
 for case in cases:
