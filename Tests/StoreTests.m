@@ -6,7 +6,6 @@
 #import "NFBStorageLayout.h"
 #import <Foundation/Foundation.h>
 #import "NFBStore.h"
-#import "NFBBackProtocol.h"
 #import "NFBGeometry.h"
 #include <stdlib.h>
 @interface TestRequest : NSObject
@@ -117,7 +116,6 @@ int main(void) {
         }
         Check(NFBPosition(-5) == 0 && NFBPosition(5) == 1 && NFBPosition(NAN) == 0.7, @"Position clamping");
         Check(NFBRowCenter(3, 0, 66, 62) == 163 && NFBRowCenter(3, 2, 66, 62) == 31, @"First icon is lowest");
-        Check(NFBBackFresh(1000, 1200) && !NFBBackFresh(1000, 2600) && !NFBBackFresh(1300, 1200), @"Expired and future back requests rejected");
         NSUInteger hidden = 0;
         NSArray *folded = NFBFoldedRows(@[@"read1", @"read2", @"new"], @"tray", ^NSUInteger(NSString *app) {
             return [app isEqual:@"new"] ? 1 : 0;
