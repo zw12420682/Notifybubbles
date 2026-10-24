@@ -21,8 +21,12 @@ on:
 permissions:
   contents: read
 
+# Workflow-level concurrency cannot reference `matrix` (no matrix exists at this
+# scope and GitHub rejects the file at parse time). Group per ref only; the
+# build job adds its own scheme-scoped group so the two variants do not cancel
+# each other.
 concurrency:
-  group: build-${{ github.ref }}-${{ matrix.scheme }}
+  group: build-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -86,6 +90,10 @@ jobs:
             artifact: NotifyBubbles-roothide
             arch: iphoneos-arm64e
     name: Package ${{ matrix.scheme }} (${{ matrix.arch }})
+    # Scheme-scoped so a new push cancels only the same variant.
+    concurrency:
+      group: build-${{ github.ref }}-${{ matrix.scheme }}
+      cancel-in-progress: true
     env:
       THEOS: ${{ github.workspace }}/.theos-toolchain
       # Pinned roothide/theos commit: builds both rootless and roothide schemes.
