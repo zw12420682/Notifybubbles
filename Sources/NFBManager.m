@@ -194,6 +194,7 @@ static double NFBNumber(NSString *key, double fallback) {
 // picked up in ~one frame rather than on the next 0.5s poll.
 @property(nonatomic, strong) NSTimer *floatingWatch;
 @property(nonatomic) CGRect observedSplitFrame;
+@property(nonatomic) CGRect lastSplitFrame;
 @property(nonatomic) BOOL splitRailActive;
 @property(nonatomic) CGFloat splitRailDiameter;
 @property(nonatomic, strong) UIVisualEffectView *railMaterial;
@@ -496,6 +497,9 @@ static double NFBNumber(NSString *key, double fallback) {
     [self updatePrivacy];
     NFBUpdateOpenEdge(self.enabled);
     NSString *now = NFBSplitAttachmentApp();
+    // syncFloatingWatch only keeps this timer alive while an attachment is
+    // reported, so there is no idle rate to save here: arriving without one
+    // means it was just dismissed, and halving the rate would only delay that.
     NSString *currentApp = NFBTrollVisibleApp();
     // Orientation can change while app identity and window frame stay the same.
     NSString *switchApp = [self.retracting containsObject:currentApp ?: @""] ? nil : currentApp;
@@ -585,12 +589,18 @@ static double NFBNumber(NSString *key, double fallback) {
 - (void)ensureWindow {
     if (self.window) return;
     UIWindowScene *scene = nil;
+    UIWindowScene *fallback = nil;
     for (UIScene *candidate in UIApplication.sharedApplication.connectedScenes) {
-        if ([candidate isKindOfClass:UIWindowScene.class] &&
-            candidate.activationState == UISceneActivationStateForegroundActive) {
-            scene = (UIWindowScene *)candidate; break;
-        }
+        if (![candidate isKindOfClass:UIWindowScene.class]) continue;
+        UIWindowScene *candidateScene = (UIWindowScene *)candidate;
+        if (candidateScene.activationState == UISceneActivationStateForegroundActive) { scene = candidateScene; break; }
+        // A split switch can leave the previously active scene in an inactive
+        // state for a moment; binding to a stale scene misplaces every later
+        // convertRect:. Keep any foreground-capable scene as a fallback.
+        if (!fallback && candidateScene.activationState == UISceneActivationStateForegroundInactive)
+            fallback = candidateScene;
     }
+    if (!scene) scene = fallback;
     self.window = scene ? [[NFBWindow alloc] initWithWindowScene:scene] :
         [[NFBWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
     self.window.backgroundColor = UIColor.clearColor;
@@ -670,7 +680,11 @@ static double NFBNumber(NSString *key, double fallback) {
             self.imageRetryAfter[button.appID]=@(CACurrentMediaTime()+2);
         }
     }
-    UIImage *resolved=[image isKindOfClass:UIImage.class] ? image : [UIImage systemImageNamed:@"bell.fill"];
+    // Cache the SF Symbol fallback: systemImageNamed: hits the symbol database on
+    // every call, and this path runs for apps whose icon lookup failed.
+    static UIImage *cachedBell;
+    if (!cachedBell) cachedBell = [UIImage systemImageNamed:@"bell.fill"];
+    UIImage *resolved=[image isKindOfClass:UIImage.class] ? image : cachedBell;
     // Refreshing counts/window state does not require redisplaying an unchanged icon.
     if (button.imageView.image != resolved) button.imageView.image = resolved;
 }
@@ -792,6 +806,17 @@ static double NFBNumber(NSString *key, double fallback) {
     UIEdgeInsets safe = root.safeAreaInsets;
     CGFloat top = MAX(safe.top, 48) + 30;
     CGRect splitFrame = floatingApp.length ? NFBSplitFrameInView(root) : CGRectNull;
+    // During Open's window rebuild the frame is momentarily unavailable while the
+    // attachment is still reported. Reuse the last good frame for geometry and for
+    // the icon-suppression decision so a rebuild cannot flash the edge icon or
+    // collapse the rail; only a genuinely gone attachment clears it.
+    if (!floatingApp.length) {
+        self.lastSplitFrame = CGRectNull; self.observedSplitFrame = CGRectNull;
+    } else if (!CGRectIsNull(splitFrame) && !CGRectIsEmpty(splitFrame) && isfinite(CGRectGetMaxX(splitFrame))) {
+        self.lastSplitFrame = splitFrame;
+    } else if (!CGRectIsNull(self.lastSplitFrame) && !CGRectIsEmpty(self.lastSplitFrame)) {
+        splitFrame = self.lastSplitFrame;
+    }
     BOOL attached = floatingApp.length && !CGRectIsNull(splitFrame) && !CGRectIsEmpty(splitFrame);
     // Position gates both our presentation and Open's edge suppression.
     BOOL validSplit = !CGRectIsNull(splitFrame) && !CGRectIsEmpty(splitFrame);
@@ -821,9 +846,15 @@ static double NFBNumber(NSString *key, double fallback) {
     // Only horizontal space constrains icon size, not app count or keyboard height.
     const CGFloat splitGap = 4;
     const CGFloat screenMargin = 4;
-    if (attached) {
+    // CGRectNull carries INFINITY in origin (and -INFINITY in size), so any
+    // arithmetic on it poisons the result: CGRectGetMaxX(CGRectNull) is -INF and
+    // MAX/MIN then clamp the rail to 1pt. `attached` alone is not enough — during
+    // Open's window rebuild the frame is briefly null while the attachment is
+    // still reported. Only touch the frame when it is genuinely usable.
+    BOOL usableSplit = !CGRectIsNull(splitFrame) && !CGRectIsEmpty(splitFrame) && isfinite(CGRectGetMaxX(splitFrame));
+    if (attached && usableSplit) {
         CGFloat room = CGRectGetWidth(bounds) - CGRectGetMaxX(splitFrame) - splitGap - screenMargin;
-        diameter = MIN(diameter, MAX(1, room - 14));
+        if (isfinite(room)) diameter = MIN(diameter, MAX(1, room - 14));
     }
     NSTimeInterval layoutDuration = UIAccessibilityIsReduceMotionEnabled() ? 0 : (attachmentChanged ? 0.35 : (attached ? 0.16 : NFBMotion));
     CGFloat side = diameter + 14;
@@ -852,13 +883,15 @@ static double NFBNumber(NSString *key, double fallback) {
     CGFloat railY = anchor + (step - side/2) + padding - height;
     railY = MAX(top, MIN(bounds.size.height - MAX(safe.bottom, 20) - 20 - height, railY));
     CGRect railFrame = CGRectMake(bounds.size.width - railWidth, railY, railWidth, height);
-    if (attached) {
+    if (attached && usableSplit) {
         CGFloat y = MAX(safe.top, CGRectGetMinY(splitFrame));
         CGFloat bottom = MIN(CGRectGetHeight(bounds) - safe.bottom, CGRectGetMaxY(splitFrame));
-        height = MAX(1, bottom - y);
+        // A collapsed or inverted span means Open is mid-rebuild; keep the plain
+        // rail geometry rather than committing a 1pt strip that then sticks.
+        if (isfinite(y) && isfinite(bottom) && bottom - y >= side) height = MAX(1, bottom - y);
         CGFloat x = NFBContainedRailX(CGRectGetMaxX(splitFrame)+splitGap,
             CGRectGetWidth(bounds),railWidth,screenMargin);
-        railFrame = CGRectMake(x, y, railWidth, height);
+        if (isfinite(x)) railFrame = CGRectMake(x, y, railWidth, height);
     }
     CGFloat clearCenterY = railFrame.origin.y - 8 - side / 2;
     CGRect favoritesFrame = CGRectZero;
@@ -868,9 +901,11 @@ static double NFBNumber(NSString *key, double fallback) {
     if (containerMode) {
         CGFloat ceiling = MAX(safe.top, 12);
         CGFloat floor = CGRectGetHeight(bounds) - MAX(safe.bottom, 12);
-        if (attached) floor = MIN(floor, CGRectGetMaxY(splitFrame) - CGRectGetHeight(splitFrame) * 0.05);
+        if (attached && usableSplit) {
+            floor = MIN(floor, CGRectGetMaxY(splitFrame) - CGRectGetHeight(splitFrame) * 0.05);
+        }
         if (keyboardUp) floor = MIN(floor, NFBKeyboardTopInView(root) - 12 - step);
-        CGFloat desiredTop = attached ? NFBSplitRailTop(CGRectGetMinY(splitFrame), CGRectGetHeight(splitFrame)) : railFrame.origin.y;
+        CGFloat desiredTop = (attached && usableSplit) ? NFBSplitRailTop(CGRectGetMinY(splitFrame), CGRectGetHeight(splitFrame)) : railFrame.origin.y;
         CGFloat y = MAX(ceiling, MIN(desiredTop, floor - side - 9));
         // The action occupies its own row above both rails, never inside scrolling content.
         if (actionTarget && !CGRectIsNull(actionWindowFrame) && floor - y >= 2 * side + 18) {

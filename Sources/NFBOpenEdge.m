@@ -16,6 +16,7 @@
 // minimized-app list, notification records or private gesture action pointers.
 static BOOL enabledByOwner;
 static BOOL splitIconsVisible;
+static CFTimeInterval splitIconsUpdatedAt;
 static BOOL installed;
 static BOOL lastSuppressed;
 static BOOL lastFullscreen;
@@ -135,7 +136,24 @@ static void hideTray(id owner, SEL cmd, BOOL animated) {
 // Reconcile after transitions, retaining the native eligibility/settings decision.
 static NSUInteger restoreGeneration;
 static void reconcile(void) {
-    if (!installed || suppressed()) return;
+    if (!installed) return;
+    // Suppressed means Open's icon should be hidden, not that its views need no
+    // attention: a window rebuild during suppression can leave the button half
+    // applied. Verify the hidden state instead of skipping reconciliation.
+    if (suppressed()) {
+        for (id owner in owners.allObjects) {
+            SEL trayGetter = NSSelectorFromString(@"trayBackdrop");
+            NSMethodSignature *traySig = NFBSignature(owner, trayGetter);
+            if (!traySig || traySig.numberOfArguments != 2 || traySig.methodReturnType[0] != '@') continue;
+            id tray = ((id (*)(id, SEL))objc_msgSend)(owner, trayGetter);
+            if (!tray) continue;
+            applyingPresentation = YES;
+            @try {
+                originalHideTray(owner, NSSelectorFromString(@"hideTrayAnimated:"), NO);
+            } @finally { applyingPresentation = NO; }
+        }
+        return;
+    }
     for (id owner in owners.allObjects) {
         refresh(owner, NSSelectorFromString(@"refreshUI"));
         BOOL allowed = originalShouldShow(owner, NSSelectorFromString(@"shouldShowEdgeIcon"));
@@ -295,8 +313,22 @@ void NFBUpdateOpenEdge(BOOL enabled) {
 }
 // NotifyBubbles tracks when its split bubbles are actually on screen; the edge
 // icon is hidden for exactly that window and restored for every other state.
+// The cached value is only a de-duplication hint: if Open rebuilds its window
+// while we are suppressed, an intermediate refresh can leave the icon showing
+// and a repeated identical call would otherwise be skipped forever. Re-apply
+// unconditionally once the hint has had time to go stale, and always let a
+// transition to "visible" through immediately so the icon can never stick.
 void NFBUpdateOpenEdgeSplitIconsVisible(BOOL visible) {
-    if (!NSThread.isMainThread || splitIconsVisible == visible) return;
+    if (!NSThread.isMainThread) return;
+    CFTimeInterval now = CACurrentMediaTime();
+    BOOL stale = now - splitIconsUpdatedAt > 2.0;
+    if (splitIconsVisible == visible && !stale) {
+        if (!visible) return;
+        // Same target value, but the hint may predate a window rebuild.
+        if (now - splitIconsUpdatedAt < 0.25) return;
+    }
     splitIconsVisible = visible;
+    splitIconsUpdatedAt = now;
     applySuppression();
 }
+
