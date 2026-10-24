@@ -88,9 +88,12 @@ with tempfile.TemporaryDirectory(prefix='nfb-scheme-') as directory:
                    THEOS_LAYOUT_DIR=str(work / 'layout'),
                    **({} if scheme is None else {'THEOS_PACKAGE_SCHEME': scheme}))
         # Expand make variables in the recipe the way make would, then run it.
-        expanded = subprocess.run([make, '-s', '-C', str(work), '--eval',
-                                   'before-package::\n\t' + '\n\t'.join('@:' if not l.strip() else l for l in lines),
-                                   '-n', 'before-package'],
+        # --eval is GNU-make 4.0+ only and Apple's /usr/bin/make is 3.81, so the
+        # recipe is handed over through an injected makefile instead.
+        (work / 'scheme-recipe.mk').write_text(
+            'before-package::\n\t' + '\n\t'.join('@:' if not l.strip() else l for l in lines) + '\n')
+        expanded = subprocess.run([make, '-s', '-C', str(work), '-f', 'Makefile',
+                                   '-f', 'scheme-recipe.mk', '-n', 'before-package'],
                                   env=env, capture_output=True, text=True)
         assert expanded.returncode == 0, expanded.stdout + expanded.stderr
         script = '\n'.join(line for line in expanded.stdout.splitlines()
