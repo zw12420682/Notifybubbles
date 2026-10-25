@@ -69,5 +69,3 @@ before-package::
 	 mv "$$staged.nfb" "$$staged"
 	@echo "NotifyBubbles: THEOS_PACKAGE_SCHEME=$(THEOS_PACKAGE_SCHEME), Architecture=$$(sed -n 's/^Architecture: //p' "$(THEOS_STAGING_DIR)/DEBIAN/control")"
 	install -m 755 "$(THEOS_LAYOUT_DIR)/DEBIAN/postinst" "$(THEOS_STAGING_DIR)/DEBIAN/postinst"
-
-# Rebuild trigger for the 0.48.56 rollback.
