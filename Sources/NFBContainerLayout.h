@@ -2,6 +2,9 @@
 #include <math.h>
 typedef struct { double favorites; double regular; double gap; } NFBContainerHeights;
 static inline NFBContainerHeights NFBFitContainers(double available, double side, double step, NSUInteger favorites, NSUInteger regular) {
+    // A NaN here reaches UIView.frame and makes UIKit throw "CALayer bounds
+    // contains NaN", which kills SpringBoard. Refuse the layout instead.
+    if (!isfinite(available) || !isfinite(side) || !isfinite(step)) return (NFBContainerHeights){0, 0, 0};
     double room = fmax(0, available);
     double a = favorites ? ((favorites - 1) * step + side) : 0;
     double b = regular ? fmin(2 * step + side, (regular - 1) * step + side) : 0;

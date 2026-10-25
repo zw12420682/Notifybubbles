@@ -180,7 +180,21 @@ UIView *NFBDesktopSplitHitTest(UIWindow *window, CGPoint point, UIEvent *event, 
     CGPoint local = [active.panel convertPoint:point fromView:window];
     if (![active.panel pointInside:local withEvent:event]) return nil;
     if (active.refreshScroll) return active.panel;
-    if (event) [active activateDesktop];
+    // Activating the desktop swaps the key window and BFS-scans the whole desktop
+    // subtree. Doing that inside hit-test changes the responder chain mid-dispatch
+    // and stalls the first touch of every session, so hand it to the next runloop
+    // turn: the hit below already routes the current touch correctly.
+    if (event) {
+        static NSUInteger scheduledActivation;
+        if (!scheduledActivation) {
+            scheduledActivation++;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                scheduledActivation = 0;
+                NFBDesktopSession *current = session;
+                if (current && !current.restoring && current.window == window) [current activateDesktop];
+            });
+        }
+    }
     UIView *hit = [active.panel hitTest:local withEvent:event];
     UIView *originalHit=hit;
     hit=NFBDesktopRepairWrapperHit(hit,window,point,event);
@@ -238,9 +252,16 @@ static void NFBInstallDesktopFolderAnimationHook(void) {
 static Class desktopHitClass;
 static UIView *(*originalDesktopHitTest)(id, SEL, CGPoint, UIEvent *);
 static UIView *NFBDesktopNativeHitTest(id object, SEL selector, CGPoint point, UIEvent *event) {
+    // Touch path: an exception escaping here unwinds through UIKit's event
+    // dispatch and kills SpringBoard. Always fall back to the native result.
     BOOL handled = NO;
-    UIView *hit = NFBDesktopSplitHitTest(object, point, event, &handled);
-    return handled ? hit : originalDesktopHitTest(object, selector, point, event);
+    @try {
+        UIView *hit = NFBDesktopSplitHitTest(object, point, event, &handled);
+        if (handled) return hit;
+    } @catch (NSException *error) {
+        NFBErrorLog(@"desktop hit test failed: %@", error);
+    }
+    return originalDesktopHitTest(object, selector, point, event);
 }
 static BOOL NFBInstallDesktopHitHook(UIWindow *window) {
     Class cls = object_getClass(window);
@@ -656,6 +677,16 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
     return YES;
 }
 - (void)check {
+    if (session != self || self.restoring) return;
+    // 10 Hz timer. Every other private-API path in this file is wrapped; this one
+    // was not, so a single throw here terminated SpringBoard.
+    @try { [self checkBody]; }
+    @catch (NSException *error) {
+        NFBErrorLog(@"desktop split check failed: %@", error);
+        failurePending = YES; NFBCloseDesktopSplit();
+    }
+}
+- (void)checkBody {
     if (session != self || self.restoring) return;
     if (NFBDesktopLocked()) {
         NFBCloseDesktopSplit(); return;
