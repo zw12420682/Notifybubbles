@@ -971,7 +971,13 @@ static NSString *NFBFrontmostAppID(void) {
     NSTimeInterval layoutDuration = UIAccessibilityIsReduceMotionEnabled() ? 0 : (attachmentChanged ? 0.35 : (attached ? 0.16 : NFBMotion));
     CGFloat side = diameter + 14;
     CGFloat step = diameter + 9;
-    CGFloat available = MAX(side, bounds.size.height - top - MAX(safe.bottom, 20) - 20);
+    // The keyboard occupies real screen estate: without subtracting it here the
+    // anchor was still computed against the full height, so the rail landed
+    // behind the keyboard and the container pass below squeezed it to almost
+    // nothing (one visible bubble, and a sub-point material strip).
+    CGFloat keyboardTop = keyboardUp ? NFBKeyboardTopInView(root) : CGFLOAT_MAX;
+    CGFloat usableBottom = MIN(bounds.size.height - MAX(safe.bottom, 20) - 20, keyboardTop - 12);
+    CGFloat available = MAX(side, usableBottom - top);
     // Reserve space for badge/shadow and the shake's negative excursion.
     // Compact rows have step < side, so their bottom otherwise clips by 6pt.
     CGFloat padding = 12;
@@ -1025,6 +1031,16 @@ static NSString *NFBFrontmostAppID(void) {
             y += side + 9;
         }
         CGFloat room = MAX(0, floor - y - side - 9);
+        // Never hand the rail less than two icon rows when it needs them. With the
+        // keyboard up the floor sits right below the anchor, so `room` collapsed to
+        // one row (or none) and the rail showed a single bubble. Expand upward
+        // towards the ceiling first; scrolling covers the rest when it cannot.
+        NSUInteger wantedRows = MIN(rowCount, (NSUInteger)2);
+        CGFloat minRoom = wantedRows ? (wantedRows - 1) * step + side : 0;
+        if (room < minRoom) {
+            CGFloat shift = MIN(minRoom - room, MAX(0, y - ceiling));
+            if (shift > 0) { y -= shift; room += shift; }
+        }
         NFBContainerHeights fit = NFBFitContainers(room, side, step, self.favoriteApps.count, rowCount);
         CGFloat favoriteHeight = fit.favorites, gap = fit.gap;
         height = fit.regular;
@@ -1053,7 +1069,8 @@ static NSString *NFBFrontmostAppID(void) {
     CGRect materialFrame = edgeMode ? CGRectInset(railFrame, 5, 0) : railFrame;
     self.rail.alwaysBounceVertical = contentHeight > height;
     self.rail.showsVerticalScrollIndicator = NO;
-    if (!CGRectEqualToRect(self.rail.frame, railFrame) || self.railMaterial.alpha != (rowCount && height > 0 ? 0.55 : 0)) {
+    BOOL railVisible = rowCount > 0 && height >= side;
+    if (!CGRectEqualToRect(self.rail.frame, railFrame) || self.railMaterial.alpha != (railVisible ? 0.55 : 0)) {
         if (CGRectIsEmpty(self.rail.frame)) self.rail.frame = railFrame;
         [UIView animateWithDuration:layoutDuration delay:0
             options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseInOut
@@ -1062,7 +1079,7 @@ static NSString *NFBFrontmostAppID(void) {
                 self.rail.layer.cornerRadius = MIN(14, railWidth / 4);
                 self.railMaterial.layer.cornerRadius = MIN(14, railWidth / 4);
                 self.railMaterial.frame = materialFrame;
-                self.railMaterial.alpha = rowCount && height > 0 ? 0.55 : 0;
+                self.railMaterial.alpha = railVisible ? 0.55 : 0;
             } completion:nil];
     }
     self.rail.contentSize = CGSizeMake(railWidth, contentHeight);
@@ -1213,13 +1230,15 @@ static NSString *NFBFrontmostAppID(void) {
         [root addSubview:self.favoritesMaterial];
         [root addSubview:self.favoritesRail];
     }
-    BOOL visible = !self.edgeMode && self.favoriteApps.count && frame.size.height > 0;
+    CGFloat side = diameter + 14, step = diameter + 9;
+    // A sub-icon height is not usable: the blur would still paint at 0.55 alpha
+    // and show as a thin grey strip beside the bubbles.
+    BOOL visible = !self.edgeMode && self.favoriteApps.count && frame.size.height >= side;
     if (!visible && self.favoritesRail.userInteractionEnabled) {
         [self saveFavoritePosition];
         [self finishFavoriteDrag];
     }
     self.favoritesRail.userInteractionEnabled = visible;
-    CGFloat side = diameter + 14, step = diameter + 9;
     CGFloat oldBottomDistance = MAX(0, self.favoritesRail.contentSize.height - self.favoritesRail.bounds.size.height - self.favoritesRail.contentOffset.y);
     BOOL wasHidden = self.favoritesRail.alpha < 0.01 || CGRectIsEmpty(self.favoritesRail.frame);
     BOOL resized = !CGSizeEqualToSize(self.favoritesRail.bounds.size, frame.size);
