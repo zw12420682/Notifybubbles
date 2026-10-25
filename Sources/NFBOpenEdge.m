@@ -40,7 +40,15 @@ static BOOL suppressed(void) {
     // Hide Open's edge icon only while NotifyBubbles' split bubbles are on screen.
     // Expansion means the native tray (delete/collapse/app icons), not the
     // horizontal position of a single edge button.
-    return NSThread.isMainThread && NFBEdgeShouldHide(enabledByOwner, splitIconsVisible, enabledByOwner && NFBKeyboardVisible());
+    //
+    // The keyboard is deliberately NOT part of this decision. It used to be, so
+    // raising the keyboard produced an extra "hide" transition that the manager
+    // never asked for; when the keyboard went away NFBUpdateOpenEdgeSplitIconsVisible
+    // was then called with the *same* value it already had and deduped away, so
+    // nothing re-applied and the icon stayed gone until a keyboard/split cycle.
+    // The keyboard already ends suppression on its own: it makes the manager hide
+    // its window, which drives the visibility flag below to NO.
+    return NSThread.isMainThread && NFBEdgeShouldHide(enabledByOwner, splitIconsVisible, NO);
 }
 static NSString *candidateSceneKey;
 static NSUInteger candidateRevision;
@@ -345,5 +353,27 @@ void NFBUpdateOpenEdgeSplitIconsVisible(BOOL visible) {
     splitIconsVisible = visible;
     splitIconsUpdatedAt = now;
     applySuppression();
+}
+// Restoring the icon is two steps, not one transition: un-suppress (which makes
+// applySuppression unhide the button and start its own verify passes) and then a
+// short re-apply to catch a refresh that lands while the button is still
+// animating. Managers that only touch this flag every few hundred milliseconds
+// would otherwise leave the icon hidden until something else moved it.
+void NFBUpdateOpenEdgeSplitIconsVisibleDeferred(BOOL visible) {
+    if (!NSThread.isMainThread) { dispatch_async(dispatch_get_main_queue(), ^{ NFBUpdateOpenEdgeSplitIconsVisibleDeferred(visible); }); return; }
+    NFBUpdateOpenEdgeSplitIconsVisible(visible);
+    if (!visible) return;
+    static NSUInteger deferredRevision;
+    NSUInteger revision = ++deferredRevision;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (revision != deferredRevision || suppressed()) return;
+        for (id owner in owners.allObjects) @try {
+            UIView *button = NFBGet(owner, @"edgeButton");
+            if (![button isKindOfClass:UIView.class] || NFBGet(owner, @"trayBackdrop")) continue;
+            if ((button.hidden || button.alpha < 0.01) &&
+                originalShouldShow(owner, NSSelectorFromString(@"shouldShowEdgeIcon")))
+                originalShowEdge(owner, NSSelectorFromString(@"showEdgeButtonAnimated:"), YES);
+        } @catch (NSException *error) { NFBErrorLog(@"Open edge deferred restore failed: %@", error); }
+    });
 }
 
