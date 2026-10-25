@@ -1041,13 +1041,23 @@ static NSString *NFBFrontmostAppID(void) {
             CGFloat shift = MIN(minRoom - room, MAX(0, y - ceiling));
             if (shift > 0) { y -= shift; room += shift; }
         }
-        NFBContainerHeights fit = NFBFitContainers(room, side, step, self.favoriteApps.count, rowCount);
+        // With the keyboard up the space above it is far too small to split between
+        // favorites and the notification rail: both collapsed to about one icon and
+        // the favorite strip could still paint its blur (the grey line). Give the
+        // keyboard the full room for notifications and drop favorites until the
+        // keyboard is gone; scrolling already handles overflow.
+        NSUInteger favoriteCount = keyboardUp ? 0 : self.favoriteApps.count;
+        NFBContainerHeights fit = NFBFitContainers(room, side, step, favoriteCount, rowCount);
         CGFloat favoriteHeight = fit.favorites, gap = fit.gap;
         height = fit.regular;
         favoritesFrame = CGRectMake(railFrame.origin.x, y, railWidth, favoriteHeight);
         railFrame = CGRectMake(railFrame.origin.x, y + favoriteHeight + gap, railWidth, height);
         clearCenterY = CGRectGetMaxY(railFrame) + 9 + side / 2;
     }
+    NFBDebugLog(@"layout: kb=%d edge=%d attach=%d rows=%lu fav=%lu side=%.0f step=%.0f avail=%.0f railH=%.0f railY=%.0f split=%@",
+        keyboardUp, edgeMode, attached, (unsigned long)rowCount, (unsigned long)self.favoriteApps.count,
+        side, step, available, height, railFrame.origin.y,
+        CGRectIsNull(splitFrame) ? @"null" : NSStringFromCGRect(splitFrame));
     // A changing clipped viewport must not race independently animated child
     // sizes and scroll bounds. Commit resize geometry together, then keep the
     // normal animation timing for subsequent moves within a stable viewport.
