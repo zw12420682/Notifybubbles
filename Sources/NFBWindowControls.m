@@ -83,13 +83,16 @@ static UIView *floatingInTree(UIView *view, Class floatingClass) {
 }
 static UIView *frontmostPortraitWindow(void) {
     if (!NSThread.isMainThread) return nil;
-    static NFBWindowState *sample;
+    // Identity-based invalidation never hit (the snapshot is rebuilt every
+    // runloop turn), so the recursive window-tree scan below ran on every poll.
+    // Hold the answer briefly instead; explicit user actions still invalidate.
     static __weak UIView *portrait;
     static BOOL portraitRead;
-    NFBWindowState *now = NFBCurrentWindowState();
-    if (sample != now) { sample = now; portraitRead = NO; portrait = nil; }
+    static CFTimeInterval readAt;
+    CFTimeInterval now = CACurrentMediaTime();
+    if (portraitRead && now - readAt > 0.2) { portraitRead = NO; portrait = nil; }
     if (portraitRead) return portrait;
-    portraitRead = YES;
+    portraitRead = YES; readAt = now;
     @try {
         Class floatingClass = NSClassFromString(@"FloatingAppWindow");
         if (!floatingClass) return nil;
