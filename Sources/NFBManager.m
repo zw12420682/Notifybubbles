@@ -963,10 +963,15 @@ static double NFBNumber(NSString *key, double fallback) {
     // A changing clipped viewport must not race independently animated child
     // sizes and scroll bounds. Commit resize geometry together, then keep the
     // normal animation timing for subsequent moves within a stable viewport.
-    if (!CGSizeEqualToSize(self.rail.bounds.size,railFrame.size) ||
-        !CGSizeEqualToSize(self.favoritesRail.bounds.size,favoritesFrame.size)) layoutDuration=0;
-    [self layoutFavorites:favoritesFrame diameter:diameter active:active duration:layoutDuration];
-    [self layoutDesktopAction:desktopActionFrame target:actionTarget duration:layoutDuration];
+    // A changing clipped viewport must not race independently animated children,
+    // but zeroing the duration for the whole pass turned every bubble into an
+    // instant jump on each split/fullscreen toggle. Commit the new size first and
+    // let the children keep a normal, short duration.
+    BOOL viewportResized = !CGSizeEqualToSize(self.rail.bounds.size, railFrame.size) ||
+        !CGSizeEqualToSize(self.favoritesRail.bounds.size, favoritesFrame.size);
+    CGFloat childDuration = viewportResized ? 0 : layoutDuration;
+    [self layoutFavorites:favoritesFrame diameter:diameter active:active duration:childDuration];
+    [self layoutDesktopAction:desktopActionFrame target:actionTarget duration:childDuration];
     BOOL hideEdgeIcons = edgeMode;
     self.rail.hidden = hideEdgeIcons;
     self.railMaterial.hidden = hideEdgeIcons;
@@ -974,7 +979,6 @@ static double NFBNumber(NSString *key, double fallback) {
     // Narrow only the visible edge material. Retain the padded hit/clip area
     // so icon edges, shadows and the external unread badges stay intact.
     CGRect materialFrame = edgeMode ? CGRectInset(railFrame, 5, 0) : railFrame;
-    self.rail.layer.cornerRadius = MIN(14, railWidth / 4);
     self.rail.alwaysBounceVertical = contentHeight > height;
     self.rail.showsVerticalScrollIndicator = NO;
     if (!CGRectEqualToRect(self.rail.frame, railFrame) || self.railMaterial.alpha != (rowCount && height > 0 ? 0.55 : 0)) {
@@ -983,6 +987,7 @@ static double NFBNumber(NSString *key, double fallback) {
             options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseInOut
             animations:^{
                 self.rail.frame = railFrame;
+                self.rail.layer.cornerRadius = MIN(14, railWidth / 4);
                 self.railMaterial.layer.cornerRadius = MIN(14, railWidth / 4);
                 self.railMaterial.frame = materialFrame;
                 self.railMaterial.alpha = rowCount && height > 0 ? 0.55 : 0;
@@ -1059,8 +1064,10 @@ static double NFBNumber(NSString *key, double fallback) {
         }
         // A bubble we already started retracting must not be re-expanded by the
         // stale "window still visible" reading taken mid-transition.
+        // edgeMode hides the rail and every bubble; animating them is pure cost and
+        // leaves the model values jumping when they come back.
         [button updateActiveMark:(!isClearAll && [active isEqualToString:appID])
-            diameter:diameter duration:layoutDuration];
+            diameter:diameter duration:(hideEdgeIcons ? 0 : layoutDuration)];
         CGAffineTransform target = CGAffineTransformIdentity;
         CGRect targetBounds = CGRectMake(0, 0, side, side);
         // Keep the same bottom-first app ordering on desktop and in split view.
@@ -1088,19 +1095,31 @@ static double NFBNumber(NSString *key, double fallback) {
             !CGPointEqualToPoint(button.center, targetCenter) ||
             !CGAffineTransformEqualToTransform(button.transform, target) ||
             fabs(button.alpha - alpha) > 0.001;
-        if (changed) {
+        void (^apply)(void) = ^{
+            // Bounds/center remain valid even while the view is transformed.
+            button.bounds = targetBounds;
+            button.center = targetCenter;
+            button.imageView.frame = CGRectMake(7, 7, diameter, diameter);
+            button.imageView.layer.cornerRadius = corner;
+            button.transform = target;
+            button.alpha = alpha;
+        };
+        if (changed && hideEdgeIcons) {
+            // Nothing is visible; commit the model values without submitting an
+            // animation that the compositor still has to commit.
+            apply();
+        } else if (changed && isClearAll) {
+            // The clear-all bubble lives on the root view while its position is
+            // derived from the rail's target frame. Matching the rail's curve and
+            // duration keeps the two from visibly separating mid-transition.
+            [UIView animateWithDuration:layoutDuration delay:0
+                options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseInOut
+                animations:apply completion:nil];
+        } else if (changed) {
             [UIView animateWithDuration:layoutDuration
                 delay:0 usingSpringWithDamping:1.0 initialSpringVelocity:0
                 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
-                animations:^{
-                    // Bounds/center remain valid even while the view is transformed.
-                    button.bounds = targetBounds;
-                    button.center = targetCenter;
-                    button.imageView.frame = CGRectMake(7, 7, diameter, diameter);
-                    button.imageView.layer.cornerRadius = corner;
-                    button.transform = target;
-                    button.alpha = alpha;
-                } completion:nil];
+                animations:apply completion:nil];
         }
     }];
 }
