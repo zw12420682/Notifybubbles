@@ -18,6 +18,11 @@ int main(void) {
     for (int split = 0; split < 2; split++)
     for (int keyboard = 0; keyboard < 2; keyboard++)
         assert(NFBEdgeShouldHide(enabled,split,keyboard) == (enabled && (split || keyboard)));
+    /* Production passes keyboard=NO to NFBEdgeShouldHide: a raised keyboard hides
+       the split bubbles instead, so typing then stopping must un-suppress. */
+    for (int enabled = 0; enabled < 2; enabled++)
+    for (int split = 0; split < 2; split++)
+        assert(NFBEdgeShouldHide(enabled,split,false) == (enabled && split));
     assert(NFBRestoreAfterKeyboard(true,true,false,true));
     assert(!NFBRestoreAfterKeyboard(true,true,false,false)); /* scene changed while typing */
     assert(!NFBRestoreAfterKeyboard(true,true,true,true)); /* split bubbles still visible */

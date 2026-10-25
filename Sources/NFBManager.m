@@ -948,7 +948,11 @@ static NSString *NFBFrontmostAppID(void) {
     // screen. A fullscreen app, the desktop, landscape/mini-only, or a split
     // parked away from the corner restore native visibility; the adapter separately
     // keeps the fullscreen tray closed and other eligible states expanded.
-    NFBUpdateOpenEdgeSplitIconsVisible(floatingApp.length > 0 && !hideForPosition);
+    // The restore path runs deferred so a keyboard-driven hide-then-show cannot
+    // leave Open's icon collapsed once the bubbles are back.
+    BOOL splitIconsOnScreen = floatingApp.length > 0 && !hideForPosition;
+    if (splitIconsOnScreen) NFBUpdateOpenEdgeSplitIconsVisible(YES);
+    else NFBUpdateOpenEdgeSplitIconsVisibleDeferred(NO);
 
     BOOL containerMode = !edgeMode;
     BOOL attachmentChanged = attached != self.splitRailActive;
