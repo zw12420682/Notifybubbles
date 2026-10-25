@@ -146,6 +146,7 @@ static double NFBNumber(NSString *key, double fallback) {
 - (void)favoriteHeld:(UILongPressGestureRecognizer *)gesture;
 - (void)moveFavorite;
 - (void)finishFavoriteDrag;
+- (void)favoriteTapped:(UITapGestureRecognizer *)gesture;
 - (void)saveFavoritePosition;
 @property(nonatomic, copy) NSString *lastRailActive;
 @property(nonatomic, copy) NSString *lastFavoritesActive;
@@ -167,6 +168,7 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic) NSUInteger presentationEpoch;
 @property(nonatomic) BOOL closePreviousSplit, hideInScreenshots;
 @property(nonatomic) CGFloat favoriteScrollRows;
+@property(nonatomic) BOOL favoriteDragConsumed;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *generations;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *lastBadges;
 @property(nonatomic, strong) NFBRecord *pendingRecord;
@@ -183,6 +185,7 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic) BOOL showHome;
 @property(nonatomic) BOOL showApps;
 @property(nonatomic) NSTimeInterval lastGestureAt;
+@property(nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *gestureTimes;
 // Until when the folded (no-unread) bubbles stay spread out after a tap. When
 // in the past, they fold back into a thin stack at the bottom edge.
 // Apps whose bubble is already retracting because we asked TrollOpen to end the
@@ -208,8 +211,10 @@ static double NFBNumber(NSString *key, double fallback) {
 - (void)floatingWatchFired;
 - (void)floatingWatchBody;
 - (BOOL)acceptGesture;
+- (BOOL)acceptGestureForKey:(NSString *)key;
 - (void)burstBubble:(NFBBubble *)button;
 - (BOOL)executeRecord:(NFBRecord *)record;
+- (BOOL)executeRecord:(NFBRecord *)record authentication:(BOOL)authentication;
 - (void)tick;
 - (void)tickBody;
 - (void)startTimer;
@@ -243,6 +248,7 @@ static double NFBNumber(NSString *key, double fallback) {
         _closingApps = [NSMutableSet set];
         _generations = [NSMutableDictionary dictionary];
         _lastBadges = [NSMutableDictionary dictionary];
+        _gestureTimes = [NSMutableDictionary dictionary];
         _retractTokens=[NSMutableDictionary dictionary];
         __weak NFBManager *weakSelf = self;
         NFBKeyboardInstall(^{ [weakSelf refresh]; });
@@ -313,6 +319,13 @@ static double NFBNumber(NSString *key, double fallback) {
     NSString *appID = NFBString(NFBGet(request, @"sectionIdentifier"));
     NSString *notificationID = NFBString(NFBGet(request, @"notificationIdentifier"));
     if (appID && notificationID) [self.store removeApp:appID notification:notificationID revision:(NFBRevisionForRequest(request) ?: @"undated")];
+    // Release a parked locked-screen tap for this app, otherwise tapped: keeps
+    // early-returning on it for the whole pending timeout.
+    if (self.pendingRecord && [self.pendingRecord.appID isEqual:appID] &&
+        (!notificationID || !self.pendingRecord.notificationID ||
+         [self.pendingRecord.notificationID isEqual:notificationID])) {
+        self.pendingRecord = nil;
+    }
     [self refresh];
 }
 - (void)removeSection:(NSString *)section {
@@ -361,7 +374,7 @@ static double NFBNumber(NSString *key, double fallback) {
     }];
 }
 - (void)clearAllTapped:(UITapGestureRecognizer *)gesture {
-    if (gesture.state != UIGestureRecognizerStateEnded || self.edgeMode || [self isLocked] || ![self acceptGesture]) return;
+    if (gesture.state != UIGestureRecognizerStateEnded || self.edgeMode || [self isLocked] || ![self acceptGestureForKey:@"closeSplit"]) return;
     NFBCloseDesktopSplit();
     if (!NFBCloseCurrentSplit()) [self showOpenNotice:@"未能读取 TrollOpen 右侧区域的单击接口"];
     else NFBOpenEdgeAfterClose();
@@ -372,7 +385,7 @@ static double NFBNumber(NSString *key, double fallback) {
     UIView *target = self.desktopActionTouchTarget;
     self.desktopActionTouchTarget = nil;
     if (!target || target != self.desktopActionTarget || target != NFBDesktopActionWindow()) { [self refresh]; return; }
-    if (![self acceptGesture]) return;
+    if (![self acceptGestureForKey:@"desktopAction"]) return;
     if (!NFBShowDesktopInSplit(target)) [self showOpenNotice:NFBDesktopSplitError()];
     [self refresh];
 }
@@ -381,7 +394,7 @@ static double NFBNumber(NSString *key, double fallback) {
     UIView *target = self.desktopActionTouchTarget;
     self.desktopActionTouchTarget = nil;
     if (!target || target != self.desktopActionTarget || target != NFBDesktopActionWindow()) { [self refresh]; return; }
-    if (![self acceptGesture]) return;
+    if (![self acceptGestureForKey:@"desktopConsole"]) return;
     NFBCloseDesktopSplit();
     if (!NFBOpenNativeConsole()) [self showOpenNotice:@"Open 控制台入口不可用，请确认使用适配的定制版 1.3.7"];
     [self refresh];
@@ -430,7 +443,7 @@ static double NFBNumber(NSString *key, double fallback) {
     } completion:nil];
 }
 - (void)clearAllHeld:(UILongPressGestureRecognizer *)gesture {
-    if (gesture.state != UIGestureRecognizerStateBegan || [self isLocked] || ![self acceptGesture]) return;
+    if (gesture.state != UIGestureRecognizerStateBegan || [self isLocked] || ![self acceptGestureForKey:@"clearAllHold"]) return;
     [self clearBackground];
 }
 // Combined close/clear action: a blue close glyph, no badge,
@@ -1153,7 +1166,9 @@ static double NFBNumber(NSString *key, double fallback) {
         NFBBubble *button = self.favoriteButtons[app];
         if (!button) {
             button = [[NFBBubble alloc] initWithFrame:CGRectMake(0, 0, side, side)]; button.appID = app;
-            [button addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(singleTapped:)]];
+            UITapGestureRecognizer *favoriteTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(favoriteTapped:)];
+            if (self.favoriteHold) [favoriteTap requireGestureRecognizerToFail:self.favoriteHold];
+            [button addGestureRecognizer:favoriteTap];
             self.favoriteButtons[app] = button; [self.favoritesRail addSubview:button];
         }
         [self updateBubble:button record:[self.store latestForApp:app]];
@@ -1185,6 +1200,13 @@ static double NFBNumber(NSString *key, double fallback) {
 - (void)finishFavoriteDrag {
     [self.favoriteDragTimer invalidate]; self.favoriteDragTimer = nil;
     if (!self.favoriteDrag) return;
+    if (self.favoriteDragConsumed) {
+        // Any tap from this gesture is delivered before the next runloop turn.
+        __weak typeof(self) weakSelf = self;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            weakSelf.favoriteDragConsumed = NO;
+        });
+    }
     self.favoriteDrag.layer.zPosition = 0;
     self.favoriteDrag = nil;
     self.favoritesRail.scrollEnabled = YES;
@@ -1206,6 +1228,7 @@ static double NFBNumber(NSString *key, double fallback) {
         __weak typeof(self) weakSelf = self;
         self.favoriteDragTimer = [NSTimer scheduledTimerWithTimeInterval:1.0/30.0 repeats:YES block:^(__unused NSTimer *timer) { [weakSelf moveFavorite]; }];
     } else if (gesture.state == UIGestureRecognizerStateChanged) {
+        if (self.favoriteDrag) self.favoriteDragConsumed = YES;
         [self moveFavorite];
     } else {
         [self finishFavoriteDrag]; [self refresh];
@@ -1244,10 +1267,17 @@ static double NFBNumber(NSString *key, double fallback) {
 }
 // One action per gesture. Without this, a bounce in the finger or a leftover
 // second tap of a retired double-tap would fire close/exit twice in a row.
+// Cooldown is per target, not global: only a repeat on the SAME target is
+// suppressed. Keyed by appID / action identifier.
 - (BOOL)acceptGesture {
+    return [self acceptGestureForKey:@"global"];
+}
+- (BOOL)acceptGestureForKey:(NSString *)key {
     NSTimeInterval now = CACurrentMediaTime();
-    if (now - self.lastGestureAt < NFBGestureCooldown) return NO;
-    self.lastGestureAt = now;
+    NSNumber *previous = self.gestureTimes[key];
+    if (previous && now - previous.doubleValue < NFBGestureCooldown) return NO;
+    if (self.gestureTimes.count >= 64) [self.gestureTimes removeAllObjects];
+    self.gestureTimes[key] = @(now);
     return YES;
 }
 // A bubble belongs to the app currently occupying the TrollOpen floating window.
@@ -1265,7 +1295,7 @@ static double NFBNumber(NSString *key, double fallback) {
 }
 - (void)closeBubble:(NFBBubble *)button {
     if (self.buttons[button.appID] != button) return;
-    if (![self acceptGesture]) return;
+    if (![self acceptGestureForKey:button.appID ?: @"close"]) return;
     NSString *app = button.appID;
     NSUInteger exitVersion = [self.generations[app] unsignedIntegerValue];
     NSUInteger exitEpoch = self.exitEpoch;
@@ -1294,7 +1324,10 @@ static double NFBNumber(NSString *key, double fallback) {
         if (NFBExitStillCurrent(exitVersion, [self.generations[app] unsignedIntegerValue], self.enabled && self.exitEpoch == exitEpoch, becameActive, NO)) NFBTerminateApp(app);
         [self refresh];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            if ([self.generations[app] unsignedIntegerValue]==exitVersion) [self.closingApps removeObject:app];
+            // Always clear: a notification arriving inside this window bumps the
+            // generation, and the old guard then left the app in closingApps with
+            // no bubble able to come back for it.
+            [self.closingApps removeObject:app];
         });
     });
 }
@@ -1360,10 +1393,20 @@ static double NFBNumber(NSString *key, double fallback) {
     NFBBubble *button = (NFBBubble *)gesture.view;
     [self tapped:button];
 }
+// Favorites also live on the rail that hosts the long-press drag. Behind
+// requireGestureRecognizerToFail: this flag is the second line of defence
+// against a reorder releasing into a tap.
+- (void)favoriteTapped:(UITapGestureRecognizer *)gesture {
+    if (gesture.state != UIGestureRecognizerStateEnded) return;
+    if (self.favoriteDragConsumed) { self.favoriteDragConsumed = NO; return; }
+    NFBBubble *button = (NFBBubble *)gesture.view;
+    if (self.favoriteDrag || !button) return;
+    [self tapped:button];
+}
 - (void)tapped:(NFBBubble *)button {
     if (button.opening || (self.buttons[button.appID] != button && self.favoriteButtons[button.appID] != button)) return;
     if (self.pendingRecord && [self.pendingRecord.appID isEqual:button.appID]) return;
-    if (![self acceptGesture]) return;
+    if (![self acceptGestureForKey:button.appID ?: @"tap"]) return;
     NFBCloseDesktopSplit();
     self.generations[button.appID] = @([self.generations[button.appID] unsignedIntegerValue] + 1);
     [self.closingApps removeObject:button.appID];
@@ -1373,9 +1416,12 @@ static double NFBNumber(NSString *key, double fallback) {
     // Dispatch in this same event, never in the animation completion.
     if (record) {
         BOOL locked = [self isLocked];
-        if ([self executeRecord:record]) {
-            if (locked) { self.pendingRecord = record; self.pendingUntil = CACurrentMediaTime() + 20; }
-            else [self.store consumeRecord:record];
+        if ([self executeRecord:record authentication:locked]) {
+            // Park until tick sees the app frontmost. Consuming here meant a
+            // cancelled authentication (or a slow hand-off) silently dropped the
+            // notification: the bubble vanished and nothing opened.
+            self.pendingRecord = record;
+            self.pendingUntil = CACurrentMediaTime() + (locked ? 8 : 3);
         }
     } else [self openApp:button.appID];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ button.opening = NO; });
@@ -1434,6 +1480,9 @@ static double NFBNumber(NSString *key, double fallback) {
         [self showOpenNotice:@"TrollOpen 分屏接口不可用，请确认已安装适配的 1.3.7 隐根版并重启桌面"];
 }
 - (BOOL)executeRecord:(NFBRecord *)record {
+    return [self executeRecord:record authentication:YES];
+}
+- (BOOL)executeRecord:(NFBRecord *)record authentication:(BOOL)authentication {
     id action = NFBGet(record.request, @"defaultAction");
     id delegate = NFBGet(record.destination, @"delegate");
     SEL selector = @selector(destination:executeAction:forNotificationRequest:requestAuthentication:withParameters:completion:);
@@ -1454,7 +1503,7 @@ static double NFBNumber(NSString *key, double fallback) {
     }
     @try {
         [delegate destination:record.destination executeAction:action forNotificationRequest:record.request
-            requestAuthentication:YES withParameters:@{} completion:^{}];
+            requestAuthentication:authentication withParameters:@{} completion:^{}];
         return YES;
     } @catch (__unused NSException *error) {
         NSLog(@"[NotifyBubbles] Notification action failed; bubbles retained.");
