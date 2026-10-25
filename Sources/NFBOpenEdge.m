@@ -140,38 +140,49 @@ static void reconcile(void) {
     // Suppressed means Open's icon should be hidden, not that its views need no
     // attention: a window rebuild during suppression can leave the button half
     // applied. Verify the hidden state instead of skipping reconciliation.
+    // Every call below is an objc_msgSend into a private Open object, and this
+    // runs from a dispatch_after. One throwing owner must not abort the whole
+    // restore pass or escape into the runloop, so each owner is isolated.
     if (suppressed()) {
         for (id owner in owners.allObjects) {
-            SEL trayGetter = NSSelectorFromString(@"trayBackdrop");
-            NSMethodSignature *traySig = NFBSignature(owner, trayGetter);
-            if (!traySig || traySig.numberOfArguments != 2 || traySig.methodReturnType[0] != '@') continue;
-            id tray = ((id (*)(id, SEL))objc_msgSend)(owner, trayGetter);
-            if (!tray) continue;
-            applyingPresentation = YES;
             @try {
-                originalHideTray(owner, NSSelectorFromString(@"hideTrayAnimated:"), NO);
-            } @finally { applyingPresentation = NO; }
+                SEL trayGetter = NSSelectorFromString(@"trayBackdrop");
+                NSMethodSignature *traySig = NFBSignature(owner, trayGetter);
+                if (!traySig || traySig.numberOfArguments != 2 || traySig.methodReturnType[0] != '@') continue;
+                id tray = ((id (*)(id, SEL))objc_msgSend)(owner, trayGetter);
+                if (!tray) continue;
+                applyingPresentation = YES;
+                @try {
+                    originalHideTray(owner, NSSelectorFromString(@"hideTrayAnimated:"), NO);
+                } @finally { applyingPresentation = NO; }
+            } @catch (NSException *error) {
+                NFBErrorLog(@"Open edge suppress reconcile failed: %@", error);
+            }
         }
         return;
     }
     for (id owner in owners.allObjects) {
-        refresh(owner, NSSelectorFromString(@"refreshUI"));
-        BOOL allowed = originalShouldShow(owner, NSSelectorFromString(@"shouldShowEdgeIcon"));
-        SEL getter = NSSelectorFromString(@"edgeButton");
-        NSMethodSignature *sig = NFBSignature(owner, getter);
-        if (!sig || sig.numberOfArguments != 2 || sig.methodReturnType[0] != '@') continue;
-        UIView *button = ((id (*)(id, SEL))objc_msgSend)(owner, getter);
-        if (![button isKindOfClass:UIView.class]) continue;
-        // Do not expose the button behind an intentionally open tray.
-        SEL trayGetter = NSSelectorFromString(@"trayBackdrop");
-        NSMethodSignature *traySig = NFBSignature(owner, trayGetter);
-        if (!traySig || traySig.numberOfArguments != 2 || traySig.methodReturnType[0] != '@') continue;
-        id tray = ((id (*)(id, SEL))objc_msgSend)(owner, trayGetter);
-        if (allowed && !tray && (button.hidden || button.alpha < 0.01))
-            originalShowEdge(owner, NSSelectorFromString(@"showEdgeButtonAnimated:"), NO);
-        applyPresentation(owner, NO);
-        NFBDebugLog(@"Open edge restore: eligible=%d hidden=%d alpha=%.2f owners=%lu",
-            allowed, button.hidden, button.alpha, (unsigned long)owners.count);
+        @try {
+            refresh(owner, NSSelectorFromString(@"refreshUI"));
+            BOOL allowed = originalShouldShow(owner, NSSelectorFromString(@"shouldShowEdgeIcon"));
+            SEL getter = NSSelectorFromString(@"edgeButton");
+            NSMethodSignature *sig = NFBSignature(owner, getter);
+            if (!sig || sig.numberOfArguments != 2 || sig.methodReturnType[0] != '@') continue;
+            UIView *button = ((id (*)(id, SEL))objc_msgSend)(owner, getter);
+            if (![button isKindOfClass:UIView.class]) continue;
+            // Do not expose the button behind an intentionally open tray.
+            SEL trayGetter = NSSelectorFromString(@"trayBackdrop");
+            NSMethodSignature *traySig = NFBSignature(owner, trayGetter);
+            if (!traySig || traySig.numberOfArguments != 2 || traySig.methodReturnType[0] != '@') continue;
+            id tray = ((id (*)(id, SEL))objc_msgSend)(owner, trayGetter);
+            if (allowed && !tray && (button.hidden || button.alpha < 0.01))
+                originalShowEdge(owner, NSSelectorFromString(@"showEdgeButtonAnimated:"), NO);
+            applyPresentation(owner, NO);
+            NFBDebugLog(@"Open edge restore: eligible=%d hidden=%d alpha=%.2f owners=%lu",
+                allowed, button.hidden, button.alpha, (unsigned long)owners.count);
+        } @catch (NSException *error) {
+            NFBErrorLog(@"Open edge reconcile owner failed: %@", error);
+        }
     }
 }
 static void scheduleRestore(NSUInteger generation, NSUInteger attempt) {

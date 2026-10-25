@@ -206,10 +206,12 @@ static double NFBNumber(NSString *key, double fallback) {
 - (void)beginRetracting:(NSString *)app;
 - (void)syncFloatingWatch:(NSString *)floating;
 - (void)floatingWatchFired;
+- (void)floatingWatchBody;
 - (BOOL)acceptGesture;
 - (void)burstBubble:(NFBBubble *)button;
 - (BOOL)executeRecord:(NFBRecord *)record;
 - (void)tick;
+- (void)tickBody;
 - (void)startTimer;
 - (void)closeAppsInOrder:(NSArray<NSString *> *)apps;
 - (void)openApp:(NSString *)app;
@@ -494,6 +496,16 @@ static double NFBNumber(NSString *key, double fallback) {
     [NSRunLoop.mainRunLoop addTimer:self.floatingWatch forMode:NSRunLoopCommonModes];
 }
 - (void)floatingWatchFired {
+    // 20 Hz entry point on the SpringBoard main thread: one uncaught exception
+    // from any private call below takes the whole process down.
+    @try { [self floatingWatchBody]; }
+    @catch (NSException *error) {
+        NFBErrorLog(@"floating watch failed: %@", error);
+        if (self.floatingWatch) { [self.floatingWatch invalidate]; self.floatingWatch = nil; }
+        self.watchedFloating = nil;
+    }
+}
+- (void)floatingWatchBody {
     [self updatePrivacy];
     NFBUpdateOpenEdge(self.enabled);
     NSString *now = NFBSplitAttachmentApp();
@@ -521,6 +533,12 @@ static double NFBNumber(NSString *key, double fallback) {
 
 - (void)tick {
     if (!self.enabled) return;
+    // Same reasoning as floatingWatchFired: private SpringBoard calls here must
+    // never propagate out into the runloop.
+    @try { [self tickBody]; }
+    @catch (NSException *error) { NFBErrorLog(@"tick failed: %@", error); }
+}
+- (void)tickBody {
     NSString *desktopFailure = NFBConsumeDesktopSplitFailure();
     if (desktopFailure.length) [self showOpenNotice:desktopFailure];
     if (self.pendingRecord) {

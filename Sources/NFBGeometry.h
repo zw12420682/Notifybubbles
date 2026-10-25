@@ -12,6 +12,9 @@ static inline double NFBRetraction(double diameter) { return diameter / 2 + 7; }
 
 static inline double NFBPosition(double value) { return isfinite(value) ? fmax(0, fmin(1, value)) : 0.7; }
 static inline double NFBRowCenter(unsigned long count, unsigned long index, double step, double side) {
+    // count-1-index underflows for an empty list or an out-of-range index and
+    // yields ~1.8e19 as a coordinate.
+    if (!count || index >= count || !isfinite(step) || !isfinite(side)) return 0;
     return (count - 1 - index) * step + side / 2;
 }
 
@@ -34,5 +37,6 @@ static inline double NFBSplitRailTop(double windowTop, double windowHeight) {
 // During a split-window transition its reported right edge can briefly leave
 // less room than the padded icon strip. Keep the strip inside the screen.
 static inline double NFBContainedRailX(double preferred,double viewport,double width,double margin) {
+    if (!isfinite(preferred) || !isfinite(viewport) || !isfinite(width) || !isfinite(margin)) return 0;
     return fmax(0,fmin(preferred,fmax(0,viewport-width-margin)));
 }
