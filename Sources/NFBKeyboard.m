@@ -134,7 +134,14 @@ void NFBKeyboardInstall(void (^onChange)(void)) {
             NFBKeyboardUpdateFrame(value);
             NFBKeyboardSet(YES);
         };
-        void (^hide)(NSNotification *) = ^(__unused NSNotification *note) {
+        // Clearing the "visible" flag on WillHide slid the bubbles back down while
+        // the keyboard was still on its way out, overlapping both animations. Only
+        // DidHide ends keyboard mode; WillHide just records the target frame.
+        void (^hideWill)(NSNotification *) = ^(NSNotification *note) {
+            NSValue *value = note.userInfo[UIKeyboardFrameEndUserInfoKey];
+            if (value) NFBKeyboardUpdateFrame(value);
+        };
+        void (^hideDid)(NSNotification *) = ^(__unused NSNotification *note) {
             NFBKeyboardUpdateFrame([NSValue valueWithCGRect:CGRectZero]); NFBKeyboardSet(NO);
         };
         [center addObserverForName:UIKeyboardWillChangeFrameNotification object:nil queue:main usingBlock:^(NSNotification *note) {
@@ -143,8 +150,8 @@ void NFBKeyboardInstall(void (^onChange)(void)) {
         }];
         [center addObserverForName:UIKeyboardWillShowNotification object:nil queue:main usingBlock:show];
         [center addObserverForName:UIKeyboardDidShowNotification object:nil queue:main usingBlock:show];
-        [center addObserverForName:UIKeyboardWillHideNotification object:nil queue:main usingBlock:hide];
-        [center addObserverForName:UIKeyboardDidHideNotification object:nil queue:main usingBlock:hide];
+        [center addObserverForName:UIKeyboardWillHideNotification object:nil queue:main usingBlock:hideWill];
+        [center addObserverForName:UIKeyboardDidHideNotification object:nil queue:main usingBlock:hideDid];
         NFBDebugLog(@"keyboard: observers installed");
     });
 }

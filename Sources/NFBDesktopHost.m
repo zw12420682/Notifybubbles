@@ -844,6 +844,10 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
         UIView *panel = [[UIView alloc] initWithFrame:CGRectZero];
         panel.backgroundColor = UIColor.secondarySystemBackgroundColor;
         panel.layer.cornerRadius = 14; panel.clipsToBounds = YES;
+        // Start hidden when the open animation is enabled, otherwise the fully
+        // assembled pane is visible for a frame before the scale-in begins.
+        BOOL animateOpen = NFBDesktopAnimationsEnabled();
+        if (animateOpen) { panel.alpha = 0; panel.transform = CGAffineTransformMakeScale(0.94,0.94); }
         next.panel = panel; [window addSubview:panel];
         // Clear so the wallpaper - from the desktop subtree or borrowed below -
         // shows through instead of a flat system background.
@@ -917,13 +921,14 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
         // wakeups by up to 10 ms without increasing polling frequency.
         next.timer.tolerance = 0.01;
         [NSRunLoop.mainRunLoop addTimer:next.timer forMode:NSRunLoopCommonModes];
-        if (NFBDesktopAnimationsEnabled()) {
-            panel.alpha = 0; panel.transform = CGAffineTransformMakeScale(0.94,0.94);
+        // effect must be committed before the animation: it is not animatable, and
+        // assigning it inside the block made the blur appear in one frame.
+        next.backgroundFrost.effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial];
+        if (animateOpen) {
             [UIView animateWithDuration:0.26 delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{
                 panel.alpha = 1; panel.transform = CGAffineTransformIdentity;
-                next.backgroundFrost.effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial];
             } completion:nil];
-        } else next.backgroundFrost.effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial];
+        }
         NFBDebugLog(@"desktop native host: view=%@ window=%@ root=%@ sameScene=%d pane=%@",
             NSStringFromClass(desktop.class), NSStringFromClass(window.class),
             NSStringFromClass(window.rootViewController.class), desktop.window==window,
