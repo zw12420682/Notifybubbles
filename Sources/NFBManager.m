@@ -909,6 +909,15 @@ static NSString *NFBFrontmostAppID(void) {
         return;
     }
     if (![self shouldShow]) { NFBUpdateOpenEdgeSplitIconsVisible(NO); self.window.hidden = YES; return; }
+    // A keyboard owns the space the bubble column would occupy, and a half-shown
+    // strip (its blur showing, icons collapsed) reads as a glitch. Hide the whole
+    // column while typing and let the next refresh bring it back once the
+    // keyboard is gone.
+    if (keyboardUp) {
+        NFBUpdateOpenEdgeSplitIconsVisible(NO);
+        self.window.hidden = YES;
+        return;
+    }
     [self ensureWindow];
     NFBSetCaptureHidden(self.window.rootViewController.view, self.hideInScreenshots);
     self.window.hidden = NO;
@@ -1041,13 +1050,7 @@ static NSString *NFBFrontmostAppID(void) {
             CGFloat shift = MIN(minRoom - room, MAX(0, y - ceiling));
             if (shift > 0) { y -= shift; room += shift; }
         }
-        // With the keyboard up the space above it is far too small to split between
-        // favorites and the notification rail: both collapsed to about one icon and
-        // the favorite strip could still paint its blur (the grey line). Give the
-        // keyboard the full room for notifications and drop favorites until the
-        // keyboard is gone; scrolling already handles overflow.
-        NSUInteger favoriteCount = keyboardUp ? 0 : self.favoriteApps.count;
-        NFBContainerHeights fit = NFBFitContainers(room, side, step, favoriteCount, rowCount);
+        NFBContainerHeights fit = NFBFitContainers(room, side, step, self.favoriteApps.count, rowCount);
         CGFloat favoriteHeight = fit.favorites, gap = fit.gap;
         height = fit.regular;
         favoritesFrame = CGRectMake(railFrame.origin.x, y, railWidth, favoriteHeight);
