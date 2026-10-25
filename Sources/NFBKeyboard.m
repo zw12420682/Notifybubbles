@@ -3,6 +3,7 @@
 #import "NFBPrivate.h"
 #import "NFBDebugLog.h"
 #import <UIKit/UIKit.h>
+#import <QuartzCore/QuartzCore.h>
 
 // Set from the notifications, which only cover keyboards SpringBoard hosts.
 static BOOL NFBKeyboardNotified = NO;
@@ -88,11 +89,15 @@ static BOOL NFBKeyboardSystemUp(void) {
 
 BOOL NFBKeyboardVisible(void) {
     BOOL notified = NFBKeyboardNotified;
-    static NFBWindowState *sample;
+    // The window snapshot is a fresh object every runloop turn, so an identity
+    // check here always missed and both probes (a full scene/window walk) ran on
+    // every 20 Hz poll. Keyboard membership cannot change that fast.
     static BOOL window, system;
-    NFBWindowState *current = NFBCurrentWindowState();
-    if (!current || sample != current) {
-        sample = current;
+    static CFTimeInterval probedAt;
+    static BOOL probed;
+    CFTimeInterval now = CACurrentMediaTime();
+    if (!probed || now - probedAt > 0.2) {
+        probed = YES; probedAt = now;
         window = NFBKeyboardWindowUp();
         system = NFBKeyboardSystemUp();
     }
