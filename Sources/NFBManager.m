@@ -815,6 +815,15 @@ static double NFBNumber(NSString *key, double fallback) {
         return;
     }
     if (![self shouldShow]) { NFBUpdateOpenEdgeSplitIconsVisible(NO); self.window.hidden = YES; return; }
+    // A keyboard owns the space this column would occupy. Letting it stay on
+    // screen left the material strip painted in the top-right corner while the
+    // icons themselves collapsed, which reads as a stray shadow. Hide the whole
+    // column while typing; the keyboard observer triggers a refresh on hide, so
+    // it comes back by itself.
+    if (keyboardUp) {
+        self.window.hidden = YES;
+        return;
+    }
     [self ensureWindow];
     NFBSetCaptureHidden(self.window.rootViewController.view, self.hideInScreenshots);
     self.window.hidden = NO;
