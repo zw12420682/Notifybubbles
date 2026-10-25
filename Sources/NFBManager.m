@@ -193,6 +193,8 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic) NSUInteger presentationEpoch;
 @property(nonatomic) BOOL closePreviousSplit, hideInScreenshots;
 @property(nonatomic) BOOL refreshScheduled;
+@property(nonatomic) BOOL columnSliding;
+@property(nonatomic) BOOL columnTargetOffscreen;
 @property(nonatomic) BOOL preferenceFlushPending;
 @property(nonatomic, strong) UILabel *noticeLabel;
 @property(nonatomic) NSUInteger noticeToken;
@@ -234,6 +236,7 @@ static double NFBNumber(NSString *key, double fallback) {
 // Previous keyboard state, so refresh can spot the up/down edges.
 @property(nonatomic) BOOL keyboardUp;
 - (void)refresh;
+- (void)setColumnOffscreen:(BOOL)offscreen;
 - (void)setNeedsRefresh;
 - (void)updatePrivacy;
 - (void)beginRetracting:(NSString *)app;
@@ -802,6 +805,55 @@ static NSString *NFBFrontmostAppID(void) {
     badge.adjustsFontSizeToFitWidth = YES;
     badge.minimumScaleFactor = 0.6;
 }
+// The column is a window, so `hidden` cannot be animated (it switches the render
+// tree off between frames). Translate the root view instead and only flip
+// `hidden` once the slide has finished.
+- (void)setColumnOffscreen:(BOOL)offscreen {
+    UIView *root = self.window ? self.window.rootViewController.view : nil;
+    if (!root) { self.window.hidden = offscreen; return; }
+    if (offscreen && self.window.hidden) return;
+    if (!offscreen && !self.window.hidden && CGAffineTransformIsIdentity(root.transform)) return;
+    BOOL animated = !UIAccessibilityIsReduceMotionEnabled();
+    CGFloat width = CGRectGetWidth(root.bounds);
+    if (!(width > 0)) width = CGRectGetWidth(UIScreen.mainScreen.bounds);
+    CGAffineTransform away = CGAffineTransformMakeTranslation(width, 0);
+    if (!animated) {
+        root.transform = CGAffineTransformIdentity;
+        self.window.hidden = offscreen;
+        self.columnSliding = NO;
+        return;
+    }
+    self.columnSliding = YES;
+    self.columnTargetOffscreen = offscreen;
+    if (offscreen) {
+        [UIView animateWithDuration:0.24 delay:0
+            options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseIn
+            animations:^{ root.transform = away; }
+            completion:^(__unused BOOL done) {
+                // Only commit the hide if the column is still meant to be away;
+                // a keyboard that came back mid-slide must keep it on screen.
+                if (self.columnTargetOffscreen) {
+                    root.transform = CGAffineTransformIdentity;
+                    self.window.hidden = YES;
+                    self.columnSliding = NO;
+                }
+            }];
+    } else {
+        self.window.hidden = NO;
+        // Start from the right edge only when the column was actually parked
+        // there; reversing mid-slide continues from the current position instead
+        // of snapping back.
+        if (CGAffineTransformIsIdentity(root.transform)) root.transform = away;
+        [UIView animateWithDuration:0.28 delay:0.04
+            options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseOut
+            animations:^{ root.transform = CGAffineTransformIdentity; }
+            completion:^(__unused BOOL done) {
+                self.window.hidden = NO;
+                self.columnSliding = NO;
+            }];
+    }
+}
+
 - (void)refresh {
     NSAssert(NSThread.isMainThread, @"UI must be on main thread");
     [self updatePrivacy];
@@ -913,16 +965,15 @@ static NSString *NFBFrontmostAppID(void) {
     if (![self shouldShow]) { NFBUpdateOpenEdgeSplitIconsVisible(NO); self.window.hidden = YES; return; }
     // A keyboard owns the space this column would occupy. Letting it stay on
     // screen left the material strip painted in the top-right corner while the
-    // icons themselves collapsed, which reads as a stray shadow. Hide the whole
-    // column while typing; the keyboard observer triggers a refresh on hide, so
-    // it comes back by itself.
+    // icons themselves collapsed, which reads as a stray shadow, so the column
+    // slides out while typing and slides back when the keyboard goes away.
     if (keyboardUp) {
-        self.window.hidden = YES;
+        [self setColumnOffscreen:YES];
         return;
     }
     [self ensureWindow];
     NFBSetCaptureHidden(self.window.rootViewController.view, self.hideInScreenshots);
-    self.window.hidden = NO;
+    [self setColumnOffscreen:NO];
     UIView *root = self.window.rootViewController.view;
     CGFloat oldBottomOffset = MAX(0, self.rail.contentSize.height - self.rail.bounds.size.height) - self.rail.contentOffset.y;
     CGRect bounds = root.bounds;
