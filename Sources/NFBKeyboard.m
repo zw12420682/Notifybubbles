@@ -7,6 +7,8 @@
 
 // Set from the notifications, which only cover keyboards SpringBoard hosts.
 static BOOL NFBKeyboardNotified = NO;
+// Timestamp of the last WillHide, used to override the probe grace window.
+static CFTimeInterval NFBKeyboardHiddenSince;
 static CGRect NFBKeyboardScreenFrame;
 CGFloat NFBKeyboardTopInView(UIView *root) {
     if (!NFBKeyboardVisible()) return CGRectGetHeight(root.bounds);
@@ -88,6 +90,9 @@ static BOOL NFBKeyboardSystemUp(void) {
 }
 
 BOOL NFBKeyboardVisible(void) {
+    // A collapse that has just been announced wins over the throttled probes,
+    // which still see the keyboard window while it animates out.
+    if (NFBKeyboardHiddenSince > 0 && CACurrentMediaTime() - NFBKeyboardHiddenSince < 0.45) return NO;
     BOOL notified = NFBKeyboardNotified;
     // The window snapshot is a fresh object every runloop turn, so an identity
     // check here always missed and both probes (a full scene/window walk) ran on
@@ -137,6 +142,7 @@ void NFBKeyboardInstall(void (^onChange)(void)) {
         void (^show)(NSNotification *) = ^(NSNotification *note) {
             NSValue *value = note.userInfo[UIKeyboardFrameEndUserInfoKey];
             NFBKeyboardUpdateFrame(value);
+            NFBKeyboardHiddenSince = 0;
             NFBKeyboardSet(YES);
         };
         // Clearing the "visible" flag on WillHide slid the bubbles back down while
@@ -145,6 +151,13 @@ void NFBKeyboardInstall(void (^onChange)(void)) {
         void (^hideWill)(NSNotification *) = ^(NSNotification *note) {
             NSValue *value = note.userInfo[UIKeyboardFrameEndUserInfoKey];
             if (value) NFBKeyboardUpdateFrame(value);
+            // Collapse starts here, not at DidHide: the bubbles should slide back
+            // in while the keyboard is still on its way down. The window/scene
+            // probes can keep reporting a keyboard for a few hundred ms after
+            // WillHide, so suppress them for one animation's worth of time.
+            NFBKeyboardHiddenSince = CACurrentMediaTime();
+            NFBKeyboardNotified = NO;
+            if (NFBKeyboardChange) NFBKeyboardChange();
         };
         void (^hideDid)(NSNotification *) = ^(__unused NSNotification *note) {
             NFBKeyboardUpdateFrame([NSValue valueWithCGRect:CGRectZero]); NFBKeyboardSet(NO);
