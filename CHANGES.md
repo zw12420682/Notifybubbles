@@ -1,4 +1,4 @@
-# 0.48.69 — 非分屏列：收纳键贴右沿、复用分屏列几何
+# 0.48.70 — 非分屏列：收纳键贴右沿、复用分屏列几何（0.48.69 的重发；代码未变）
 
 ## 根因（已在源码中确认，不是推测）
 
@@ -67,3 +67,11 @@
 - 收纳键半隐位置在真机右缘的观感（尤其有 Home Indicator 时）。
 - 展开自动收纳 5s 与点击 app 打开之间的实际节奏。
 - 分屏中桌面按钮图标/间距未改动，需要截图对照确认「分屏原功能大小间距不动」。
+
+## 版本说明
+
+0.48.69 的 CI 在 test 作业的「iOS simulator desktop transfer」步骤失败
+（`FAIL: automatic page roundtrip restores exact original page ... expected={402, 0}`）。
+该步骤只编译 `Tests/DesktopHostTests.m` + `Sources/NFBDesktopHost.m`（sha256
+fcadc159… 与 0.48.68 完全一致），与本次布局改动无关，属模拟器时序类偶发；但当前
+GITHUB_TOKEN 无 actions:write 权限，无法重跑，因此以 0.48.70 重新触发 CI。
