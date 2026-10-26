@@ -139,14 +139,14 @@ static BOOL NFBTrollSignature(id target, SEL selector, BOOL hasFlag) {
 // against either edition.
 Class NFBTrollFloatingWindowClass(void) {
     static Class resolved;
-    static BOOL looked;
-    if (looked) return resolved;
-    looked = YES;
+    if (resolved) return resolved;
     const char *names[] = {"TOJBClass012", "FloatingAppWindow"};
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
         Class candidate = NSClassFromString([NSString stringWithUTF8String:names[i]]);
         if (candidate) { resolved = candidate; break; }
     }
+    // Deliberately not caching a miss: SpringBoard may ask before TrollOpen's
+    // dylib is loaded, and a cached nil would disable split support for good.
     return resolved;
 }
 
@@ -161,12 +161,14 @@ BOOL NFBOpenTrollApp(NSString *bundleID) {
     // point there and exists in 1.3.7 as well.
     SEL fingerprint = NSSelectorFromString(@"toj_showWithBundleID:skipOnlineLimitClose:");
     SEL open = NSSelectorFromString(@"showWithBundleID:");
-    BOOL hasToj = NFBTrollSignature(target, fingerprint, YES);
     BOOL hasPlain = NFBTrollSignature(target, open, NO);
+    BOOL hasToj = NFBTrollSignature(target, fingerprint, YES);
     @try {
-        if (!hasToj && !hasPlain) return NO;
-        if (hasToj) ((void (*)(id, SEL, id, BOOL))objc_msgSend)(target, fingerprint, bundleID, NO);
-        else ((void (*)(id, SEL, id))objc_msgSend)(target, open, bundleID);
+        if (!hasPlain && !hasToj) return NO;
+        // Prefer the documented wrapper (1.3.7). 2.0.1 dropped it and only keeps
+        // the internal entry point, which is the same call the wrapper forwards to.
+        if (hasPlain) ((void (*)(id, SEL, id))objc_msgSend)(target, open, bundleID);
+        else ((void (*)(id, SEL, id, BOOL))objc_msgSend)(target, fingerprint, bundleID, NO);
 #ifndef NFB_PORTABLE_ADAPTER_TEST
         NFBInvalidateWindowState();
 #endif

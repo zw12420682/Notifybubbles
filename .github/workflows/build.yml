@@ -55,7 +55,7 @@ jobs:
           xcrun --sdk macosx clang -fobjc-arc -fmodules -Wall -Wextra -Werror \
             -DNFB_PORTABLE_ADAPTER_TEST -framework Foundation -I Sources Sources/NFBInterfaces.m Sources/NFBDebugLog.m Sources/NFBTrollOpen.m Tests/TrollOpenTests.m \
             -o "$RUNNER_TEMP/test-trollopen"
-          for mode in missing wrongReturn wrongFlag throws valid desktop frontMissing frontWrongReturn frontWrongArgs frontThrows frontValid floatMissing floatWrongReturn floatMini floatVisible; do
+          for mode in missing wrongReturn wrongFlag throws valid desktop innerOnly frontMissing frontWrongReturn frontWrongArgs frontThrows frontValid floatMissing floatWrongReturn floatMini floatVisible; do
             "$RUNNER_TEMP/test-trollopen" "$mode"
           done
       - name: Test transition policy and private interfaces
