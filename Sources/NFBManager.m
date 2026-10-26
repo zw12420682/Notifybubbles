@@ -156,7 +156,7 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, weak) UIView *observedActionTarget;
 @property(nonatomic) CGRect observedActionFrame;
 - (void)desktopActionTapped:(UITapGestureRecognizer *)gesture;
-- (void)layoutDesktopAction:(CGRect)frame target:(UIView *)target duration:(NSTimeInterval)duration;
+- (void)layoutDesktopAction:(CGRect)frame target:(UIView *)target split:(BOOL)splitNow toggleFrame:(CGRect)toggleFrame duration:(NSTimeInterval)duration;
 
 @property(nonatomic, strong) NFBRail *favoritesRail;
 @property(nonatomic, strong) UIVisualEffectView *favoritesMaterial;
@@ -236,7 +236,14 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic) CGRect observedSplitFrame;
 @property(nonatomic) CGRect lastSplitFrame;
 @property(nonatomic) BOOL splitRailActive;
+// Last genuine split column geometry. The fullscreen column reuses both so its
+// icons keep the split size and top edge even after the split is gone.
 @property(nonatomic) CGFloat splitRailDiameter;
+@property(nonatomic) CGFloat splitRailTop;
+@property(nonatomic) CGFloat splitRailScreenWidth;
+@property(nonatomic) BOOL splitRailMeasured;
+@property(nonatomic) BOOL splitLayout;
+- (void)touchColumn;
 @property(nonatomic, strong) UIVisualEffectView *railMaterial;
 @property(nonatomic, copy) NSString *watchedFloating;
 // Previous keyboard state, so refresh can spot the up/down edges.
@@ -473,11 +480,15 @@ static NSString *NFBFrontmostAppID(void) {
     if (!NFBOpenNativeConsole()) [self showOpenNotice:@"Open 控制台入口不可用，请确认使用适配的定制版 1.3.7"];
     [self refresh];
 }
-- (void)layoutDesktopAction:(CGRect)frame target:(UIView *)target duration:(NSTimeInterval)duration {
+- (void)layoutDesktopAction:(CGRect)frame target:(UIView *)target split:(BOOL)splitNow toggleFrame:(CGRect)toggleFrame duration:(NSTimeInterval)duration {
     // This slot does double duty: in a split it is the desktop button, outside one
     // it is the collapse/expand control for the column. Same position, same size,
     // so the two never compete for space.
-    BOOL toggleMode = !target && (frame.size.width > 0);
+    // Explicit state, not a guess from the target: while Open rebuilds its window
+    // the split has no target for a moment, and inferring from `!target` turned
+    // the desktop button into a collapse control mid-split.
+    BOOL toggleMode = !splitNow && !CGRectIsNull(toggleFrame) && toggleFrame.size.width > 0;
+    if (toggleMode) frame = toggleFrame;
     BOOL visible = ((target && !CGRectIsNull(frame) && !CGRectIsEmpty(frame)) || toggleMode) && self.enabled;
     self.desktopActionTarget = (target && !toggleMode) ? target : nil;
     if (!self.desktopActionButton && !visible) return;
@@ -527,9 +538,11 @@ static NSString *NFBFrontmostAppID(void) {
     button.gestureRecognizers.firstObject.enabled = YES;
     for (UIGestureRecognizer *recognizer in button.gestureRecognizers)
         if (recognizer == self.desktopActionHold) recognizer.enabled = !toggleMode;
-    // Parked: nothing else is on screen, so the control alone stays half off the
-    // right edge at half opacity.
-    CGFloat targetAlpha = visible ? (self.desktopActionParked ? 0.5 : 1) : 0;
+    // Parked: nothing else is on screen so the hidden column keeps only the
+    // control, half off the right edge (origin.x = width - 7 - diameter/2) at half
+    // opacity. An expanded column never parks, even with nothing to show.
+    BOOL fade = NFBToggleShouldFade(self.desktopActionParked, toggleMode);
+    CGFloat targetAlpha = visible ? (fade ? 0.5 : 1) : 0;
     button.userInteractionEnabled = visible;
     if (visible && button.alpha < 0.01) button.frame = frame;
     [self.window.rootViewController.view bringSubviewToFront:button];
@@ -558,6 +571,15 @@ static NSString *NFBFrontmostAppID(void) {
     button.imageView.image = [UIImage systemImageNamed:@"xmark"];
     button.imageView.tintColor = UIColor.systemBlueColor;
     button.imageView.backgroundColor = UIColor.secondarySystemBackgroundColor;
+    button.accessibilityTraits = UIAccessibilityTraitButton;
+    if (!self.splitLayout) {
+        // Fullscreen: the X only empties the notification queue. Its gestures are
+        // unchanged (tap clears, long press clears the background), so only the
+        // spoken description follows the new meaning.
+        button.accessibilityLabel = @"清空通知";
+        button.accessibilityHint = @"单击清空通知列表，长按清理后台";
+        return;
+    }
     button.accessibilityLabel = @"关闭分屏 / 清理后台";
     button.accessibilityHint = @"单击执行 TrollOpen 右侧区域关闭，长按清理后台";
 }
@@ -642,7 +664,7 @@ static NSString *NFBFrontmostAppID(void) {
     CGRect frame = NFBSplitFrameInView(self.window.rootViewController.view);
     BOOL sameFrame = CGRectEqualToRect(frame, self.observedSplitFrame) ||
         (CGRectIsNull(frame) && CGRectIsNull(self.observedSplitFrame));
-    UIView *actionTarget = NFBDesktopActionWindow();
+    UIView *actionTarget = splitNow ? NFBDesktopActionWindow() : nil;
     CGRect actionFrame = NFBWindowFrameInView(actionTarget, self.window.rootViewController.view);
     BOOL sameActionFrame = CGRectEqualToRect(actionFrame, self.observedActionFrame) ||
         (CGRectIsNull(actionFrame) && CGRectIsNull(self.observedActionFrame));
@@ -662,7 +684,9 @@ static NSString *NFBFrontmostAppID(void) {
     @catch (NSException *error) { NFBErrorLog(@"tick failed: %@", error); }
 }
 - (void)tickBody {
-    if (self.edgeExpanded && CACurrentMediaTime() - self.lastInteractionAt > 5.0) {
+    // Auto-fold applies to the expanded fullscreen column only; a split column is
+    // driven by the floating window and must never time out.
+    if (self.edgeExpanded && !self.splitLayout && CACurrentMediaTime() - self.lastInteractionAt > 5.0) {
         self.edgeExpanded = NO;
         [self refresh];
         return;
@@ -879,6 +903,10 @@ static NSString *NFBFrontmostAppID(void) {
 - (void)scheduleAutoCollapse {
     self.lastInteractionAt = CACurrentMediaTime();
 }
+// Every genuine touch on the column restarts the five-second countdown.
+- (void)touchColumn {
+    if (self.edgeExpanded) self.lastInteractionAt = CACurrentMediaTime();
+}
 - (void)resetAutoCollapseTimer {
     if (self.edgeExpanded) self.lastInteractionAt = CACurrentMediaTime();
 }
@@ -982,7 +1010,6 @@ static NSString *NFBFrontmostAppID(void) {
     // notifications) and expanded (everything, auto-collapses after 5s).
     BOOL split = floatingApp.length > 0;
     BOOL collapsed = !split && !self.edgeExpanded;
-    BOOL edgeMode = collapsed;
     NSString *active = NFBTrollVisibleApp() ?: floatingApp ?: (home ? nil : NFBCurrentWindowState().frontApp);
     if (NFBIsSystemDesktop(active)) active = nil;
     // Recency decides membership, never a forced jump of an existing icon.
@@ -995,7 +1022,6 @@ static NSString *NFBFrontmostAppID(void) {
     }
     self.lastActiveApp = active;
     if (floatingApp.length) NFBInspectTrollEdges();
-    self.edgeMode = edgeMode;
     NSMutableOrderedSet *history = [NSMutableOrderedSet orderedSetWithArray:self.recentUsedApps];
     [history addObjectsFromArray:self.lastSwitcher ?: @[]];
     // Apps that actually have queued notifications.
@@ -1003,27 +1029,29 @@ static NSString *NFBFrontmostAppID(void) {
     for (NSString *app in apps)
         if ([self.store countForApp:app] > 0 && ![self.closingApps containsObject:app]) [notified addObject:app];
     self.notifiedCount = notified.count;
-    NSArray<NSString *> *railApps;
+    // Unread apps first (including unread favorites, which stay in the main
+    // column even though the favorites rail is hidden), then the split's recent
+    // background apps.
+    NSMutableOrderedSet<NSString *> *columnApps = [NSMutableOrderedSet orderedSetWithArray:notified];
     if (split) {
         // Membership, not merely viewport height, is limited to three recent apps.
         NSMutableArray<NSString *> *background = [NSMutableArray array];
         for (NSString *app in apps)
             if ([self.lastSwitcher containsObject:app] || [app isEqual:active]) [background addObject:app];
-        railApps = NFBRecentBackgroundThree(background, history.array, self.favoriteApps);
-    } else if (collapsed) {
-        railApps = notified;
-    } else {
+        [columnApps addObjectsFromArray:NFBRecentBackgroundThree(background, history.array, self.favoriteApps)];
+    } else if (!collapsed) {
         // Expanded: everything, so nothing is hidden behind the collapsed state.
-        NSMutableOrderedSet *all = [NSMutableOrderedSet orderedSetWithArray:notified];
         NSMutableArray<NSString *> *background = [NSMutableArray array];
         for (NSString *app in apps)
             if ([self.lastSwitcher containsObject:app] || [app isEqual:active]) [background addObject:app];
-        [all addObjectsFromArray:NFBRecentBackgroundThree(background, history.array, self.favoriteApps)];
-        railApps = all.array;
+        [columnApps addObjectsFromArray:NFBRecentBackgroundThree(background, history.array, self.favoriteApps)];
     }
+    NSArray<NSString *> *railApps = columnApps.array;
     NSMutableArray<NSString *> *displayApps = [railApps mutableCopy];
     // The clear button only makes sense with something to clear (or a split to close).
-    BOOL showClearAll = split || notified.count > 0;
+    // With no queued notification outside a split it is hidden entirely, so only
+    // the unread apps and the collapse control remain.
+    BOOL showClearAll = split || (self.edgeExpanded && notified.count > 0);
     if (showClearAll) [displayApps addObject:NFBClearAllID];
     self.showClearAll = showClearAll;
     BOOL orderChanged = ![self.lastLayoutApps isEqualToArray:displayApps];
@@ -1107,116 +1135,58 @@ static NSString *NFBFrontmostAppID(void) {
     // keeps the fullscreen tray closed and other eligible states expanded.
     NFBUpdateOpenEdgeSplitIconsVisible(floatingApp.length > 0 && !hideForPosition);
 
-    BOOL containerMode = YES;
     BOOL attachmentChanged = attached != self.splitRailActive;
     self.splitRailActive = attached;
-    CGFloat diameter = self.iconSize;
-    // Reserve a real gap outside the split window; never change its scale.
-    // Only horizontal space constrains icon size, not app count or keyboard height.
-    const CGFloat splitGap = 4;
-    const CGFloat screenMargin = 4;
-    // CGRectNull carries INFINITY in origin (and -INFINITY in size), so any
-    // arithmetic on it poisons the result: CGRectGetMaxX(CGRectNull) is -INF and
-    // MAX/MIN then clamp the rail to 1pt. `attached` alone is not enough — during
-    // Open's window rebuild the frame is briefly null while the attachment is
-    // still reported. Only touch the frame when it is genuinely usable.
-    BOOL usableSplit = !CGRectIsNull(splitFrame) && !CGRectIsEmpty(splitFrame) && isfinite(CGRectGetMaxX(splitFrame));
-    if (attached && usableSplit) {
-        CGFloat room = CGRectGetWidth(bounds) - CGRectGetMaxX(splitFrame) - splitGap - screenMargin;
-        if (isfinite(room)) diameter = MIN(diameter, MAX(1, room - 14));
+    // One geometry source for both modes. `split` here is the resolved, real split
+    // state, never a guess from the desktop target (nil while Open rebuilds).
+    BOOL splitNow = floatingApp.length > 0 && usableSplit;
+    self.splitLayout = splitNow;
+    NSUInteger notified = self.notifiedCount;
+    // The hidden column has nothing to clear when no notification is queued, so
+    // it keeps only the unread apps and the collapse control: no X, no favorites.
+    BOOL collapseThisPass = !splitNow && !self.edgeExpanded;
+    if (collapseThisPass && notified == 0) railApps = @[];
+    NSUInteger rowCount = railApps.count;
+    BOOL wantFavorites = splitNow || self.edgeExpanded;
+    // The collapsed column only lists apps with unread notifications, plus the
+    // clear action when there is actually something to clear.
+    BOOL hideFavorites = !wantFavorites;
+    BOOL collapse = !splitNow && !self.edgeExpanded;
+    CGRect splitA = CGRectIsNull(splitFrame) ? CGRectZero : splitFrame;
+    if (!isfinite(splitA.origin.x) || !isfinite(splitA.origin.y) ||
+        !isfinite(splitA.size.width) || !isfinite(splitA.size.height)) splitA = CGRectZero;
+    BOOL splitUsable = splitNow && isfinite(CGRectGetMaxX(splitA)) && isfinite(CGRectGetMaxY(splitA));
+    NFBRailPlan plan = NFBPlanRail(bounds.size.width, bounds.size.height, safe, top, self.iconSize,
+        NFBFloatingPosition, splitNow, splitA, splitUsable, self.verticalPosition, collapse,
+        hideFavorites ? 0 : self.favoriteApps.count, (unsigned long)rowCount, (unsigned long)notified,
+        (double)self.splitRailTop, (double)self.splitRailDiameter, (double)self.splitRailScreenWidth,
+        self.splitRailMeasured);
+    if (splitNow && CGRectGetHeight(plan.rail) >= plan.diameter + 14) {
+        // A genuinely laid-out split column is the reference the fullscreen column
+        // reuses: same top edge and the diameter its actual space allowed.
+        self.splitRailTop = plan.rowsTop;
+        self.splitRailDiameter = plan.diameter;
+        self.splitRailScreenWidth = bounds.size.width;
+        self.splitRailMeasured = YES;
     }
-    NSTimeInterval layoutDuration = UIAccessibilityIsReduceMotionEnabled() ? 0 : (attachmentChanged ? 0.35 : (attached ? 0.16 : NFBMotion));
+    CGFloat diameter = plan.diameter;
     CGFloat side = diameter + 14;
     CGFloat step = diameter + 9;
-    CGFloat available = MAX(side, bounds.size.height - top - MAX(safe.bottom, 20) - 20);
-    // Reserve space for badge/shadow and the shake's negative excursion.
-    // Compact rows have step < side, so their bottom otherwise clips by 6pt.
-    CGFloat padding = 12;
+    CGFloat height = CGRectGetHeight(plan.rail);
+    CGRect railFrame = plan.rail;
+    CGRect favoritesFrame = plan.favoritesVisible ? plan.favorites : CGRectZero;
+    CGFloat clearCenterY = plan.clearCenterY;
     CGFloat railWidth = side;
-    NSUInteger rowCount = railApps.count;
+    NSTimeInterval layoutDuration = UIAccessibilityIsReduceMotionEnabled() ? 0 : (attachmentChanged ? 0.35 : (splitNow ? 0.16 : NFBMotion));
+    BOOL edgeMode = collapse;
+    self.edgeMode = edgeMode;
+    rowCount = railApps.count;
     CGFloat contentHeight = rowCount ? (rowCount - 1) * step + side : 0;
-    CGFloat height = MIN(available, contentHeight);
-    // Keyboard placement keeps the row clear while typing. The row
-    // shifts to NFBKeyboardPosition in both split view and fullscreen. Otherwise,
-    // while an app is in the split view the row shifts down to clear the floating
-    // window (NFBFloatingPosition), then returns to the user's slider setting.
-    CGFloat position = keyboardUp ? NFBKeyboardPosition : (floatingApp.length > 0 ? NFBFloatingPosition : self.verticalPosition);
-    // Anchor the FIRST bubble (index 0, the lowest one) to a fixed screen Y so it
-    // never moves: each new bubble stacks upward on top of it. The first bubble's
-    // center sits (step - side/2) above the rail's bottom edge, so fixing the
-    // rail's bottom edge fixes the first bubble. Anchoring the top edge instead
-    // would make the row grow both up and down as bubbles arrive (spreading from
-    // the middle), which is not what we want.
-    CGFloat anchor = top + available * position;
-    // Use the actual screen edge, not safeArea.right, for exactly half exposure.
-    CGFloat railY = anchor + (step - side/2) + padding - height;
-    railY = MAX(top, MIN(bounds.size.height - MAX(safe.bottom, 20) - 20 - height, railY));
-    CGRect railFrame = CGRectMake(bounds.size.width - railWidth, railY, railWidth, height);
-    if (attached && usableSplit) {
-        CGFloat y = MAX(safe.top, CGRectGetMinY(splitFrame));
-        CGFloat bottom = MIN(CGRectGetHeight(bounds) - safe.bottom, CGRectGetMaxY(splitFrame));
-        // A collapsed or inverted span means Open is mid-rebuild; keep the plain
-        // rail geometry rather than committing a 1pt strip that then sticks.
-        if (isfinite(y) && isfinite(bottom) && bottom - y >= side) height = MAX(1, bottom - y);
-        CGFloat x = NFBContainedRailX(CGRectGetMaxX(splitFrame)+splitGap,
-            CGRectGetWidth(bounds),railWidth,screenMargin);
-        if (isfinite(x)) railFrame = CGRectMake(x, y, railWidth, height);
-    }
-    CGFloat clearCenterY = railFrame.origin.y - 8 - side / 2;
-    CGRect favoritesFrame = CGRectZero;
-    UIView *actionTarget = NFBDesktopActionWindow();
-    // The slot decision no longer needs the window frame: outside a split it is
-    // reserved for the collapse control regardless of where the desktop is.
-    CGRect actionWindowFrame __attribute__((unused)) = CGRectNull;
-    if (actionTarget) actionWindowFrame = NFBWindowFrameInView(actionTarget, root);
-    CGRect desktopActionFrame = CGRectNull;
-    if (containerMode) {
-        CGFloat ceiling = MAX(safe.top, 12);
-        CGFloat floor = CGRectGetHeight(bounds) - MAX(safe.bottom, 12);
-        if (attached && usableSplit) {
-            floor = MIN(floor, CGRectGetMaxY(splitFrame) - CGRectGetHeight(splitFrame) * 0.05);
-        }
-        if (keyboardUp) floor = MIN(floor, NFBKeyboardTopInView(root) - 12 - step);
-        CGFloat desiredTop = (attached && usableSplit) ? NFBSplitRailTop(CGRectGetMinY(splitFrame), CGRectGetHeight(splitFrame)) : railFrame.origin.y;
-        CGFloat y = MAX(ceiling, MIN(desiredTop, floor - side - 9));
-        // The action occupies its own row above both rails, never inside scrolling content.
-        // Outside a split the same slot becomes the collapse control, so it is
-        // reserved even though there is no desktop target to activate.
-        // Outside a split this slot is the collapse control, which must sit exactly
-        // where the desktop button sits in a split: first row of the column. It is
-        // therefore always reserved there, regardless of the desktop target.
-        BOOL toggleSlot = !floatingApp.length;
-        BOOL needsSlot = actionTarget || toggleSlot;
-        BOOL roomForSlot = floor - y >= (toggleSlot ? (side + 9) : (2 * side + 18));
-        if (needsSlot && roomForSlot) {
-            desktopActionFrame = CGRectMake(railFrame.origin.x, y, side, side);
-            y += side + 9;
-        }
-        if (toggleSlot && CGRectIsEmpty(desktopActionFrame)) {
-            // No room above the rails: fall back to the column's own top row so the
-            // control still shares the desktop button's position.
-            CGFloat slotY = MAX(ceiling, MIN(railFrame.origin.y, floor - side));
-            desktopActionFrame = CGRectMake(railFrame.origin.x, slotY, side, side);
-        }
-        // Nothing else on screen: the control keeps its slot (the desktop button's
-        // row) and simply slides half past the right edge at half opacity.
-        BOOL parked = !floatingApp.length && self.notifiedCount == 0;
-        self.desktopActionParked = parked;
-        if (parked) {
-            if (CGRectIsEmpty(desktopActionFrame)) desktopActionFrame = CGRectMake(railFrame.origin.x, y, side, side);
-            // Shift right by half of the visible icon so the left half stays on screen.
-            CGPoint origin = desktopActionFrame.origin;
-            desktopActionFrame.origin.x = CGRectGetWidth(bounds) - diameter / 2 - 7;
-            if (!isfinite(desktopActionFrame.origin.x)) desktopActionFrame.origin = origin;
-        }
-        CGFloat room = MAX(0, floor - y - side - 9);
-        NFBContainerHeights fit = NFBFitContainers(room, side, step, self.favoriteApps.count, rowCount);
-        CGFloat favoriteHeight = fit.favorites, gap = fit.gap;
-        height = fit.regular;
-        favoritesFrame = CGRectMake(railFrame.origin.x, y, railWidth, favoriteHeight);
-        railFrame = CGRectMake(railFrame.origin.x, y + favoriteHeight + gap, railWidth, height);
-        clearCenterY = CGRectGetMaxY(railFrame) + 9 + side / 2;
-    }
+    UIView *actionTarget = splitNow ? NFBDesktopActionWindow() : nil;
+    CGRect desktopActionFrame = splitNow ? plan.toggle : CGRectNull;
+    CGRect toggleFrame = plan.toggleVisible ? plan.toggle : CGRectNull;
+    BOOL parked = plan.parked && !self.edgeExpanded;
+    self.desktopActionParked = parked;
     // A changing clipped viewport must not race independently animated child
     // sizes and scroll bounds. Commit resize geometry together, then keep the
     // normal animation timing for subsequent moves within a stable viewport.
@@ -1232,7 +1202,8 @@ static NSString *NFBFrontmostAppID(void) {
         !CGSizeEqualToSize(self.favoritesRail.bounds.size, favoritesFrame.size);
     CGFloat childDuration = viewportResized ? (UIAccessibilityIsReduceMotionEnabled() ? 0 : 0.22) : layoutDuration;
     [self layoutFavorites:favoritesFrame diameter:diameter active:active duration:childDuration];
-    [self layoutDesktopAction:desktopActionFrame target:actionTarget duration:childDuration];
+    [self layoutDesktopAction:desktopActionFrame target:actionTarget split:splitNow
+                  toggleFrame:toggleFrame duration:childDuration];
     BOOL hideEdgeIcons = NO;
     self.rail.hidden = rowCount == 0;
     self.railMaterial.hidden = rowCount == 0;
@@ -1704,13 +1675,22 @@ static NSString *NFBFrontmostAppID(void) {
 - (void)appHeld:(UILongPressGestureRecognizer *)gesture {
     if (gesture.state==UIGestureRecognizerStateBegan) [self closeBubble:(NFBBubble *)gesture.view];
 }
+// Programmatic scrolling (revealing the active row, settling the offset) does not
+// count as user activity; only a finger on the list does.
+- (void)scrollViewWillBeginDragging:(UIScrollView *)scrollView {
+    if (scrollView == self.rail || scrollView == self.favoritesRail) [self touchColumn];
+}
 - (void)scrollViewDidScroll:(UIScrollView *)scrollView {
-    if (scrollView == self.rail || scrollView == self.favoritesRail) [self resetAutoCollapseTimer];
+    if (scrollView != self.rail && scrollView != self.favoritesRail) return;
+    // A layout-driven offset change is not an interaction; a moving finger is.
+    if (scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating) [self touchColumn];
 }
 - (void)scrollViewDidEndDragging:(UIScrollView *)scrollView willDecelerate:(BOOL)decelerate {
+    if (scrollView == self.rail || scrollView == self.favoritesRail) [self touchColumn];
     if (scrollView == self.favoritesRail && !decelerate) [self saveFavoritePosition];
 }
 - (void)scrollViewDidEndDecelerating:(UIScrollView *)scrollView {
+    if (scrollView == self.rail || scrollView == self.favoritesRail) [self touchColumn];
     if (scrollView == self.favoritesRail) [self saveFavoritePosition];
 }
 - (void)singleTapped:(UITapGestureRecognizer *)gesture {
@@ -1731,7 +1711,9 @@ static NSString *NFBFrontmostAppID(void) {
 }
 - (void)tapped:(NFBBubble *)button {
     if (button.opening || (self.buttons[button.appID] != button && self.favoriteButtons[button.appID] != button)) return;
-    if (!NFBTrollVisibleApp().length) self.edgeExpanded = NO;
+    // Remember the user just used the column: the app switch starts a fresh
+    // countdown instead of folding the list on the very next tick.
+    [self touchColumn];
     if (self.pendingRecord && [self.pendingRecord.appID isEqual:button.appID]) return;
     if (![self acceptGestureForKey:button.appID ?: @"tap"]) return;
     NFBCloseDesktopSplit();

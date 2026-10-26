@@ -75,6 +75,14 @@ jobs:
             -o "$RUNNER_TEMP/test-state-ledger"
           "$RUNNER_TEMP/test-state-ledger"
 
+      - name: Test rail layout wiring without a toolchain
+        run: python3 scripts/test_rail_layout.py
+      - name: Test column geometry (split, fullscreen, collapsed, empty)
+        run: |
+          xcrun --sdk macosx clang -fobjc-arc -fmodules -Wall -Wextra -Werror \
+            -framework Foundation -I Sources Tests/RailLayoutTests.m -o "$RUNNER_TEMP/test-rail-layout"
+          "$RUNNER_TEMP/test-rail-layout"
+
   build:
     needs: test
     runs-on: macos-15-intel

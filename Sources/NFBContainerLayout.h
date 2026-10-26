@@ -1,7 +1,11 @@
-#import <Foundation/Foundation.h>
+#pragma once
 #include <math.h>
+#include <stddef.h>
+#ifndef NFBRailLayoutPort
+#import <Foundation/Foundation.h>
+#endif
 typedef struct { double favorites; double regular; double gap; } NFBContainerHeights;
-static inline NFBContainerHeights NFBFitContainers(double available, double side, double step, NSUInteger favorites, NSUInteger regular) {
+static inline NFBContainerHeights NFBFitContainers(double available, double side, double step, unsigned long favorites, unsigned long regular) {
     // A NaN here propagates to UIView.frame and makes UIKit throw "CALayer bounds
     // contains NaN", which kills SpringBoard. Refuse the layout instead.
     if (!isfinite(available) || !isfinite(side) || !isfinite(step)) return (NFBContainerHeights){0, 0, 0};

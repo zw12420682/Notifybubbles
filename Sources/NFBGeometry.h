@@ -40,3 +40,48 @@ static inline double NFBContainedRailX(double preferred,double viewport,double w
     if (!isfinite(preferred) || !isfinite(viewport) || !isfinite(width) || !isfinite(margin)) return 0;
     return fmax(0,fmin(preferred,fmax(0,viewport-width-margin)));
 }
+
+// The collapsed column always reuses the exact geometry of the split column:
+// same top edge as the first (desktop button) row and same icon diameter. The
+// desktop action sits on the rail's first row, so its top is simply the rail's
+// top; replaying the fullscreen position slider there made the control (and the
+// parked column) land near the bottom right instead.
+static inline double NFBCollapsedRailTop(double splitRailTop) {
+    return isfinite(splitRailTop) ? splitRailTop : NAN;
+}
+
+// Diameter measured from an actually laid-out split column. A pre-layout
+// measurement (transient zero size while windows rebuild) is not usable.
+static inline bool NFBSplitMetricsValid(double diameter, double span,
+        double screenWidth, double sourceScreenWidth) {
+    if (!isfinite(diameter) || !isfinite(span) || !isfinite(screenWidth) || !isfinite(sourceScreenWidth)) return false;
+    if (diameter < 16) return false;
+    if (span > 0 && span < diameter) return false;
+    // A rotated or resized screen changes the space right of the split window.
+    if (fabs(screenWidth - sourceScreenWidth) > 1) return false;
+    return screenWidth > 0;
+}
+
+// Collapsed non-split geometry. Only the horizontal placement changes: the
+// column hugs the right screen edge. The top must be finite and fully on screen.
+static inline double NFBCollapsedRailFrameX(double screenWidth, double railWidth, double margin) {
+    if (!isfinite(screenWidth) || !isfinite(railWidth) || !isfinite(margin)) return 0;
+    return fmax(0, screenWidth - railWidth - margin);
+}
+
+// Half-hidden toggle: the image's center belongs exactly on the screen edge, so
+// button.origin.x = screenWidth - 7 - diameter/2 (the icon is inset by 7pt).
+static inline double NFBParkedToggleX(double screenWidth, double diameter) {
+    if (!isfinite(screenWidth) || !isfinite(diameter)) return 0;
+    return screenWidth - 7 - diameter / 2;
+}
+
+// Only the hidden (collapsed, not split) column parks without notifications.
+static inline bool NFBShouldParkToggle(bool collapsed, bool split, unsigned long notifiedCount) {
+    return collapsed && !split && notifiedCount == 0;
+}
+
+// An expanded column never parks, even when it has nothing to show.
+static inline bool NFBToggleShouldFade(bool parked, bool collapsed) {
+    return parked && collapsed;
+}
