@@ -1,3 +1,30 @@
+# 0.48.80 — 全量静态审计（一次改完所有编译错误）
+
+上一轮起 CI 已全部通过（run 40354195666 / 0.48.79）。本次不再“一次只修一个报错”，
+而是对 `Sources/NFBManager.m`（1856 行）连同 `NFBRailLayout.h`、`NFBGeometry.h`、
+`NFBContainerLayout.h` 及其引用的全部头文件做了一遍穷举式静态审计，确认没有遗留的
+编译期错误或 `-Werror` 级告警。
+
+## 审计项与结论
+
+| 检查 | 方法 | 结论 |
+| --- | --- | --- |
+| 变量先声明后使用 | 逐函数阅读 78 个方法体 | 无（usableSplit / splitNow / currentApp / floatingApp / switchApp 均在同一作用域内先声明） |
+| 同作用域重复声明 | 按花括号维护作用域栈扫描全部局部声明 | 无（含 `notified` / `railApps` / `background` 的重复定义历史） |
+| 类型可见性 | 每个用到 CGRect/UIEdgeInsets/NFBRailPlan/NFBRecord 的文件核对 import | 无缺失 |
+| 未使用的静态变量 / 函数 / 常量 | 全仓 `static` 定义与引用计数比对 | 无（`lastGestureAt` 属性虽只写不读，但属 property，不触发 `-Wunused-*`；已确认） |
+| `@selector` 目标存在 | 14 处 @selector 与声明的分类方法逐一比对 | 全部存在且已在 NFBManager.h / 类扩展中声明 |
+| 类扩展声明 ⊂ 实现 | 类扩展中 60 个方法声明对比 `@implementation` | 无“声明未实现”（`-Wincomplete-implementation`） |
+| C 函数签名匹配 | `NFBPlanRail` 的 18 个实参逐个对照 | 数量、顺序、类型（四个 `unsigned long`、三个 `bool`、`NFBRailInsets`）全部一致 |
+| 非 void 方法返回 | 扫描所有非 void 方法体 | 无 `-Wreturn-type` 风险 |
+
+## 验证
+
+- `clang -DNFB_RAIL_PORT=1 -include shim.h Tests/RailLayoutTests.m` →
+  `PASS: column geometry (split -> fullscreen expanded -> collapsed -> empty)`
+- `scripts/validate.py` / `test_rail_layout.py` / `test_scheme.py` / `test_validator.py` / `test_cleanup.py` 全部 PASS
+- UIKit 相关行为（外观、动画、TrollOpen 调用）只能真机验证，见 README 说明。
+
 # 0.48.73 — 几何测试对头文件依赖的二次修正
 
 0.48.72 的 CI（run 40338953175 / job 121628021451）仍有同一类编译失败：
