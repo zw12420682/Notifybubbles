@@ -133,18 +133,40 @@ static BOOL NFBTrollSignature(id target, SEL selector, BOOL hasFlag) {
     return YES;
 }
 
+// TrollOpen 2.0.1 renamed every class to TOJBClassNNN; the floating window is
+// TOJBClass012 (the type of `floatingWindow`/`activeWindow` in the 2.0.1
+// binary). 1.3.7 exposes it as FloatingAppWindow. Try both so one build works
+// against either edition.
+Class NFBTrollFloatingWindowClass(void) {
+    static Class resolved;
+    static BOOL looked;
+    if (looked) return resolved;
+    looked = YES;
+    const char *names[] = {"TOJBClass012", "FloatingAppWindow"};
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
+        Class candidate = NSClassFromString([NSString stringWithUTF8String:names[i]]);
+        if (candidate) { resolved = candidate; break; }
+    }
+    return resolved;
+}
+
 BOOL NFBOpenTrollApp(NSString *bundleID) {
     if (NFBIsSystemDesktop(bundleID)) return NO;
     if (!NSThread.isMainThread || ![bundleID isKindOfClass:NSString.class] || !bundleID.length) return NO;
     // Verified against the supplied RootHide 1.3.7 binary's Objective-C metadata.
     // Its normal wrapper forwards to toj_showWithBundleID:skipOnlineLimitClose:
     // with NO. Call the wrapper, preserving TrollOpen's own behavior and checks.
-    Class target = NSClassFromString(@"FloatingAppWindow");
-    SEL open = NSSelectorFromString(@"showWithBundleID:");
+    Class target = NFBTrollFloatingWindowClass();
+    // 2.0.1 no longer has showWithBundleID:; the toj_ variant is the only entry
+    // point there and exists in 1.3.7 as well.
     SEL fingerprint = NSSelectorFromString(@"toj_showWithBundleID:skipOnlineLimitClose:");
+    SEL open = NSSelectorFromString(@"showWithBundleID:");
+    BOOL hasToj = NFBTrollSignature(target, fingerprint, YES);
+    BOOL hasPlain = NFBTrollSignature(target, open, NO);
     @try {
-        if (!NFBTrollSignature(target, open, NO) || !NFBTrollSignature(target, fingerprint, YES)) return NO;
-        ((void (*)(id, SEL, id))objc_msgSend)(target, open, bundleID);
+        if (!hasToj && !hasPlain) return NO;
+        if (hasToj) ((void (*)(id, SEL, id, BOOL))objc_msgSend)(target, fingerprint, bundleID, NO);
+        else ((void (*)(id, SEL, id))objc_msgSend)(target, open, bundleID);
 #ifndef NFB_PORTABLE_ADAPTER_TEST
         NFBInvalidateWindowState();
 #endif

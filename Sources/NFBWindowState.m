@@ -1,5 +1,6 @@
 #import "NFBWindowState.h"
 #import "NFBPrivate.h"
+#import "NFBTrollOpen.h"
 @implementation NFBWindowState
 @end
 static NFBWindowState *snapshot;
@@ -20,7 +21,7 @@ NFBWindowState *NFBCurrentWindowState(void) {
     if ([floating isKindOfClass:UIView.class] && ![(UIView *)floating isHidden] && [(UIView *)floating alpha] > 0.01) {
         state.floatingWindow = floating;
     } else {
-        Class cls = NSClassFromString(@"FloatingAppWindow");
+        Class cls = NFBTrollFloatingWindowClass();
         for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
             if (![scene isKindOfClass:UIWindowScene.class]) continue;
             for (UIWindow *window in ((UIWindowScene *)scene).windows)

@@ -303,7 +303,7 @@ static NSArray<UIWindow *> *NFBDesktopWindows(void) {
     return windows.array;
 }
 static BOOL NFBDesktopContainsFloating(UIView *view) {
-    Class floating = NSClassFromString(@"FloatingAppWindow");
+    Class floating = NFBTrollFloatingWindowClass();
     if (floating && [view isKindOfClass:floating]) return YES;
     for (UIView *child in view.subviews) if (NFBDesktopContainsFloating(child)) return YES;
     return NO;

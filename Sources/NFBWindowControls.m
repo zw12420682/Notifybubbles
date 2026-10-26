@@ -94,7 +94,7 @@ static UIView *frontmostPortraitWindow(void) {
     if (portraitRead) return portrait;
     portraitRead = YES; readAt = now;
     @try {
-        Class floatingClass = NSClassFromString(@"FloatingAppWindow");
+        Class floatingClass = NFBTrollFloatingWindowClass();
         if (!floatingClass) return nil;
         NSMutableOrderedSet<UIWindow *> *windows = [NSMutableOrderedSet orderedSet];
         for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
@@ -231,12 +231,15 @@ void NFBObserveSplitPlacement(NSString *app) {
                 NSMethodSignature *sig = NFBSignature(window, scale);
                 if (sig.numberOfArguments != 3 || strcmp(sig.methodReturnType, @encode(void)) ||
                     strcmp([sig getArgumentTypeAtIndex:2], @encode(double))) return;
+                // 2.0.1 renamed/replaced this entry point, so downgrade to a plain
+                // layout pass instead of dropping the whole placement.
                 SEL sync = NSSelectorFromString(@"syncContainerFrameToVisualScalePreservingCenter:");
                 NSMethodSignature *syncSig = NFBSignature(window, sync);
-                if (syncSig.numberOfArguments != 3 || strcmp(syncSig.methodReturnType, @encode(void)) ||
-                    strcmp([syncSig getArgumentTypeAtIndex:2], @encode(BOOL))) return;
+                BOOL canSync = syncSig && syncSig.numberOfArguments == 3 &&
+                    strcmp(syncSig.methodReturnType, @encode(void)) == 0 &&
+                    strcmp([syncSig getArgumentTypeAtIndex:2], @encode(BOOL)) == 0;
                 ((void (*)(id, SEL, double))objc_msgSend)(window, scale, 0.86);
-                ((void (*)(id, SEL, BOOL))objc_msgSend)(window, sync, YES);
+                if (canSync) ((void (*)(id, SEL, BOOL))objc_msgSend)(window, sync, YES);
                 [window setNeedsLayout]; [window layoutIfNeeded];
                 UIView *parent = window.superview;
                 CGRect area = parent ? [parent convertRect:parent.window.bounds fromView:parent.window]
