@@ -238,7 +238,7 @@ static double NFBNumber(NSString *key, double fallback) {
 // Previous keyboard state, so refresh can spot the up/down edges.
 @property(nonatomic) BOOL keyboardUp;
 - (void)refresh;
-- (void)layoutEdgeIconInBounds:(CGRect)bounds safe:(UIEdgeInsets)safe top:(CGFloat)top available:(CGFloat)available railFrame:(CGRect)railFrame side:(CGFloat)side diameter:(CGFloat)diameter containerMode:(BOOL)containerMode duration:(NSTimeInterval)duration;
+- (void)layoutEdgeIconInBounds:(CGRect)bounds safe:(UIEdgeInsets)safe top:(CGFloat)top available:(CGFloat)available railFrame:(CGRect)railFrame side:(CGFloat)side diameter:(CGFloat)diameter split:(BOOL)split duration:(NSTimeInterval)duration;
 - (void)edgeIconTapped:(id)sender;
 - (void)setColumnOffscreen:(BOOL)offscreen;
 - (void)setNeedsRefresh;
