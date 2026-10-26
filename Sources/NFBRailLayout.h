@@ -4,9 +4,7 @@
 #include <string.h>
 #ifndef NFBRailLayoutPort
 #import <Foundation/Foundation.h>
-#import <UIKit/UIKit.h>
 #endif
-#include <string.h>
 #include "NFBContainerLayout.h"
 #include "NFBGeometry.h"
 	

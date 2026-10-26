@@ -1,4 +1,4 @@
-# NotifyBubbles 0.48.70 · 双方案源码工程（rootless + roothide）
+# NotifyBubbles 0.48.71 · 双方案源码工程（rootless + roothide）
 
 iOS 16 越狱插件源码，一套代码同时出 **rootless** 和 **roothide** 两个包：
 
@@ -27,7 +27,7 @@ export THEOS=$HOME/theos
 ```sh
 make clean
 make package FINALPACKAGE=1
-# 产物：packages/local.notifybubbles_0.48.70_iphoneos-arm64.deb
+# 产物：packages/local.notifybubbles_0.48.71_iphoneos-arm64.deb
 ```
 
 ### roothide
@@ -37,7 +37,7 @@ make clean
 make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=roothide
 # 或者
 THEOS_PACKAGE_SCHEME=roothide make package FINALPACKAGE=1
-# 产物：packages/local.notifybubbles_0.48.70_iphoneos-arm64e.deb
+# 产物：packages/local.notifybubbles_0.48.71_iphoneos-arm64e.deb
 ```
 
 要点：
@@ -106,14 +106,14 @@ python3 scripts/test_validator.py
 
 1. 用 Sileo / Zebra 安装 `NotifyBubbles-rootless` 的 `.deb`，或命令行：
    ```sh
-   /var/jb/usr/bin/dpkg -i local.notifybubbles_0.48.70_iphoneos-arm64.deb
+   /var/jb/usr/bin/dpkg -i local.notifybubbles_0.48.71_iphoneos-arm64.deb
    ```
 2. 文件实际落在 `/var/jb/Library/MobileSubstrate/DynamicLibraries/NotifyBubbles.dylib`。
 3. 注销（respring）SpringBoard。
 
 ### roothide（Dopamine RootHide）
 
-1. 装 `NotifyBubbles-rootless` 以外的那个包：`local.notifybubbles_0.48.70_iphoneos-arm64e.deb`。
+1. 装 `NotifyBubbles-rootless` 以外的那个包：`local.notifybubbles_0.48.71_iphoneos-arm64e.deb`。
    RootHide 的包管理器（Sileo/Zebra）默认即可识别 `iphoneos-arm64e`。
 2. 文件落在 RootHide 引导器自己的根（jitless 前缀），**不要**手动拷进 `/var/jb`。
 3. RootHide 需要给 SpringBoard 放行：打开 **RootHide Manager → Apps → 找到「设置」/ SpringBoard**，

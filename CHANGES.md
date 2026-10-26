@@ -1,4 +1,4 @@
-# 0.48.70 — 非分屏列：收纳键贴右沿、复用分屏列几何（0.48.69 的重发；代码未变）
+# 0.48.71 — 非分屏列：收纳键贴右沿、复用分屏列几何
 
 ## 根因（已在源码中确认，不是推测）
 
@@ -75,3 +75,13 @@
 该步骤只编译 `Tests/DesktopHostTests.m` + `Sources/NFBDesktopHost.m`（sha256
 fcadc159… 与 0.48.68 完全一致），与本次布局改动无关，属模拟器时序类偶发；但当前
 GITHUB_TOKEN 无 actions:write 权限，无法重跑，因此以 0.48.70 重新触发 CI。
+
+## 0.48.70 的 CI 修正
+
+- 0.48.69 在模拟器桌面测试偶发失败（与本改动无关的 DesktopHost 未变），0.48.70 重跑时
+  在新增的「Test column geometry」步骤失败：
+  `NFBRailLayout.h:7: fatal error: 'UIKit/UIKit.h' file not found`
+  —— 该测试用 `-framework Foundation` 编译，而头文件还导入了 UIKit。改为只导入
+  Foundation（UIKit 类型经由 Foundation 转出，SpringBoard 端不受影响）。
+- 验证：本容器用 clang 与桩头文件 `-fsyntax-only -Wall -Wextra -Werror` 通过；同一测试
+  源文件以 `-DNFB_RAIL_PORT=1` 用纯 C 端口编译运行通过；故意改坏一条断言即失败（负向对照）。
