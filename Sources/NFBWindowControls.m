@@ -278,19 +278,43 @@ BOOL NFBCloseCurrentSplit(void) {
         if (![window isKindOfClass:UIView.class] || !visibleView(window) ||
             boolStateOf(window, @"miniWindowModeEnabled") != 0 ||
             boolStateOf(window, @"isClosingWithKeepAliveAnimation") == 1) return NO;
-        SEL getter = NSSelectorFromString(@"rightTouchRegion");
-        NSMethodSignature *sig = NFBSignature(window, getter);
-        if (sig.numberOfArguments != 2 || sig.methodReturnType[0] != '@') return NO;
-        id region = ((id (*)(id, SEL))objc_msgSend)(window, getter);
-        if (![region isKindOfClass:UIView.class] || ![region isDescendantOfView:window]) {
-            NFBErrorLog(@"orange-close: rightTouchRegion unavailable");
-            return NO;
+        // 1.3.7: reproduce the native right-region single tap, which is the exact
+        // path the user's finger would take.
+        SEL tapAction = NSSelectorFromString(@"handleBottomSingleTap:");
+        if ([window respondsToSelector:tapAction]) {
+            SEL getter = NSSelectorFromString(@"rightTouchRegion");
+            NSMethodSignature *sig = NFBSignature(window, getter);
+            if (sig.numberOfArguments == 2 && sig.methodReturnType[0] == '@') {
+                id region = ((id (*)(id, SEL))objc_msgSend)(window, getter);
+                if ([region isKindOfClass:UIView.class] && [region isDescendantOfView:window]) {
+                    NFBRightEdgeTap *tap = [NFBRightEdgeTap new]; tap.edgeRegion = region;
+                    if (NFBDispatchRightEdgeTap(window, tap)) {
+                        NFBInvalidateWindowState();
+                        NFBDebugLog(@"orange-close: right-region tap app=%@", appOfWindow(window));
+                        return YES;
+                    }
+                }
+            }
+            NFBErrorLog(@"orange-close: right-region tap failed");
         }
-        NFBRightEdgeTap *tap = [NFBRightEdgeTap new]; tap.edgeRegion = region;
-        BOOL sent = NFBDispatchRightEdgeTap(window, tap);
-        if (sent) NFBInvalidateWindowState();
-        NFBDebugLog(@"orange-close: original right-region tap dispatched=%d app=%@", sent, appOfWindow(window));
-        return sent;
+        // 2.0.1 removed handleBottomSingleTap:; close through the direct entry
+        // point instead. It lives on the bridge metaclass, with an instance-method
+        // fallback for builds that carry it on the window.
+        SEL close = NSSelectorFromString(@"closeCurrentFloatingWindow");
+        Class bridge = NSClassFromString(@"TOJBBarGestureBridge");
+        id targets[] = {bridge, window};
+        for (NSUInteger i = 0; i < 2; i++) {
+            id target = targets[i];
+            if (!target || ![target respondsToSelector:close]) continue;
+            NSMethodSignature *sig = NFBSignature(target, close);
+            if (!sig || sig.numberOfArguments != 2 || strcmp(sig.methodReturnType, @encode(void)) != 0) continue;
+            ((void (*)(id, SEL))objc_msgSend)(target, close);
+            NFBInvalidateWindowState();
+            NFBDebugLog(@"orange-close: closeCurrentFloatingWindow on %@", i ? @"window" : @"bridge");
+            return YES;
+        }
+        NFBErrorLog(@"orange-close: no close entry point on this TrollOpen build");
+        return NO;
     } @catch (NSException *exception) { NFBDebugLog(@"orange-close: %@", exception); return NO; }
 }
 
