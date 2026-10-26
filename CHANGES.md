@@ -1,3 +1,24 @@
+# 0.48.73 — 几何测试对头文件依赖的二次修正
+
+0.48.72 的 CI（run 40338953175 / job 121628021451）仍有同一类编译失败：
+
+```
+Sources/NFBRailLayout.h:15:5: error: unknown type name 'CGRect'
+Sources/NFBRailLayout.h:36:9: error: unknown type name 'UIEdgeInsets'
+```
+
+原因：该 runner 的 macOS SDK 下，`-framework Foundation` 不会让 `CGRect` 可见
+（Foundation 不再保证转出 CoreGraphics 几何类型），而测试文件依赖了这一点。
+0.48.72 已去掉 UIKit，但仍假设 Foundation 会带出 CoreGraphics。
+
+修正：测试在 `NSBRailLayoutPort` 分支内显式 `#include <CoreGraphics/CoreGraphics.h>`，
+几何类型是纯结构体、不创建任何视图，CoreGraphics 是独立 framework，可安全链接。
+`NSBRailSafe` → `UIEdgeInsets` 的逐字段赋值保持不变（两条编译路径等价）。
+
+验证：本容器以 `-x objective-c -Wall -Wextra -Werror` + 同形头文件编译运行
+`PASS: column geometry (split -> fullscreen expanded -> collapsed -> empty)`；
+`scripts/test_rail_layout.py` PASS。
+
 # 0.48.72 — CI 几何回归测试修复（RailLayoutTests 编译 + 断言）
 
 ## 失败来源（CI run 40336888237 / job 121620748255 真实日志）

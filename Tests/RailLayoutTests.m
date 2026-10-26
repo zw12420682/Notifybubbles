@@ -5,14 +5,15 @@
 // height, a hairline rail, or icons changing size between split and fullscreen
 // fails here.
 //
-// The file is plain C on purpose. CI compiles it with Foundation only
-// (`clang -fobjc-arc -framework Foundation -I Sources`), so it must not need
-// UIKit: UIEdgeInsets does not exist there. NSBRailSafe mirrors the four
-// insets that NFBPlanRail consumes and is turned into UIEdgeInsets at the
-// call site with NSBBuildSafeArea(), which is defined for whoever links UIKit
-// (the tweak) and falls back to a field copy in UIKit-less builds.
+// The file is plain C on purpose. CI compiles it with
+//   clang -fobjc-arc -framework Foundation -I Sources Tests/RailLayoutTests.m
+// and on that SDK Foundation alone does not declare CGRect at all; CoreGraphics
+// is pulled in explicitly below (plain structs, no views). UIEdgeInsets is
+// likewise only a CoreGraphics struct here; NSBRailSafe mirrors its four fields
+// and NSBBuildSafeArea() converts, so the test never needs UIKit.
 //
-// It also still builds without Foundation at all:
+// It also still builds without Foundation, through the portable branch of the
+// headers:
 //   clang -DNFB_RAIL_PORT=1 -I Sources -I . RailLayoutTests.m -lm -o t
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,15 +33,12 @@
 typedef struct { double top, left, bottom, right; } NSBRailSafe;
 
 #ifdef NFBRailLayoutPort
-#if __has_include(<UIKit/UIKit.h>)
-#include <UIKit/UIKit.h>
-static inline UIEdgeInsets NSBBuildSafeArea(NSBRailSafe s) {
-    return UIEdgeInsetsMake(s.top, s.left, s.bottom, s.right);
-}
-#else
-// No UIKit in this build: NFBPlanRail only reads top/bottom here, but the
-// layout is identical because the struct is layout-compatible with
-// UIEdgeInsets where the real tweak compiles.
+// CGRect/UIEdgeInsets come from CoreGraphics. Foundation on its own re-exports
+// them nowhere guaranteed (the CI macOS SDK left CGRect undefined with
+// -framework Foundation), so ask for CoreGraphics explicitly - it is a
+// framework in its own right and the geometry types are plain structs there,
+// which is all this test needs (it never creates a view).
+#include <CoreGraphics/CoreGraphics.h>
 static inline UIEdgeInsets NSBBuildSafeArea(NSBRailSafe s) {
     UIEdgeInsets i;
     i.top = s.top;
@@ -49,7 +47,6 @@ static inline UIEdgeInsets NSBBuildSafeArea(NSBRailSafe s) {
     i.right = s.right;
     return i;
 }
-#endif
 #endif
 
 static void check(bool condition, const char *message) {
