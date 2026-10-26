@@ -313,6 +313,18 @@ BOOL NFBCloseCurrentSplit(void) {
             NFBDebugLog(@"orange-close: closeCurrentFloatingWindow on %@", i ? @"window" : @"bridge");
             return YES;
         }
+        // Last resort: both editions keep this on the floating window; it closes
+        // the pane without terminating the hosted app.
+        SEL dismiss = NSSelectorFromString(@"closeWindowWithoutTerminatingProcessWithoutAnimation");
+        if ([window respondsToSelector:dismiss]) {
+            NSMethodSignature *sig = NFBSignature(window, dismiss);
+            if (sig && sig.numberOfArguments == 2 && strcmp(sig.methodReturnType, @encode(void)) == 0) {
+                ((void (*)(id, SEL))objc_msgSend)(window, dismiss);
+                NFBInvalidateWindowState();
+                NFBDebugLog(@"orange-close: closeWindowWithoutTerminatingProcessWithoutAnimation");
+                return YES;
+            }
+        }
         NFBErrorLog(@"orange-close: no close entry point on this TrollOpen build");
         return NO;
     } @catch (NSException *exception) { NFBDebugLog(@"orange-close: %@", exception); return NO; }
