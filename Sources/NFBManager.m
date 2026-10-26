@@ -1156,7 +1156,10 @@ static NSString *NFBFrontmostAppID(void) {
     if (!isfinite(splitA.origin.x) || !isfinite(splitA.origin.y) ||
         !isfinite(splitA.size.width) || !isfinite(splitA.size.height)) splitA = CGRectZero;
     BOOL splitUsable = splitNow && isfinite(CGRectGetMaxX(splitA)) && isfinite(CGRectGetMaxY(splitA));
-    NFBRailPlan plan = NFBPlanRail(bounds.size.width, bounds.size.height, safe, top, self.iconSize,
+    // The plan takes a platform-neutral inset struct; being field-compatible with
+    // UIEdgeInsets means this stays a plain value copy.
+    NFBRailInsets planSafe = { safe.top, safe.left, safe.bottom, safe.right };
+    NFBRailPlan plan = NFBPlanRail(bounds.size.width, bounds.size.height, planSafe, top, self.iconSize,
         NFBFloatingPosition, splitNow, splitA, splitUsable, self.verticalPosition, collapse,
         hideFavorites ? 0 : self.favoriteApps.count, (unsigned long)rowCount, (unsigned long)notified,
         (double)self.splitRailTop, (double)self.splitRailDiameter, (double)self.splitRailScreenWidth,

@@ -11,6 +11,10 @@
 // Pure geometry for the notification column. Kept out of the UIKit code so the
 // exact regressions (control landing bottom-right, the main rail crushed to a
 // hairline, split/fullscreen icons of different size) can be asserted in CI.
+// Four insets, field-compatible with UIEdgeInsets but declared here so the header
+// builds against Foundation (which has no UIEdgeInsets on macOS) as well as UIKit.
+typedef struct { double top, left, bottom, right; } NFBRailInsets;
+
 typedef struct {
     CGRect rail;
     CGRect favorites;
@@ -33,7 +37,7 @@ typedef struct {
 // as the split measured, and the same absolute row position. Only the horizontal
 // placement changes (hug the right screen edge).
 static inline NFBRailPlan NFBPlanRail(double screenWidth, double screenHeight,
-        UIEdgeInsets safe, double top, double settingsDiameter, double splitPosition,
+        NFBRailInsets safe, double top, double settingsDiameter, double splitPosition,
         bool split, CGRect splitFrame, bool usableSplit, double currentPosition,
         bool collapsed, unsigned long favorites, unsigned long rows, unsigned long notifiedCount,
         double lastSplitTop, double lastSplitDiameter, double lastSplitScreenWidth,

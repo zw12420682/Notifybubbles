@@ -25,11 +25,10 @@
 #endif
 
 // Geometry types must exist before NFBRailLayout.h is parsed: NFBRailLayoutPort
-// makes that header skip Foundation. CI builds this file with -fmodules and
-// -framework Foundation, so importing Foundation here (it re-exports the geometry
-// types) is what both build paths rely on; the standalone portable build defines
-// NFB_RAIL_PORT and supplies its own structs via -include.
-#if !NFB_RAIL_PORT
+// makes that header skip Foundation. CGRect/CGPoint come from CoreGraphics, which
+// Foundation re-exports on macOS; the safe-area struct is declared by the header
+// itself, because macOS Foundation has no UIEdgeInsets.
+#if __has_include(<Foundation/Foundation.h>)
 #import <Foundation/Foundation.h>
 #endif
 
@@ -38,17 +37,10 @@
 #include "NFBContainerLayout.h"
 #include "NFBRailLayout.h"
 
-// Same field order and types as UIEdgeInsets (top, left, bottom, right).
-typedef struct { double top, left, bottom, right; } NSBRailSafe;
-
-static inline UIEdgeInsets NSBBuildSafeArea(NSBRailSafe s) {
-    UIEdgeInsets i;
-    i.top = s.top;
-    i.left = s.left;
-    i.bottom = s.bottom;
-    i.right = s.right;
-    return i;
-}
+// NFBRailInsets is declared by the header itself, so no platform conversion is
+// needed here (macOS Foundation has no UIEdgeInsets at all).
+typedef NFBRailInsets NSBRailSafe;
+static inline NFBRailInsets NSBBuildSafeArea(NSBRailSafe s) { return s; }
 
 static void check(bool condition, const char *message) {
     if (condition) return;
@@ -73,7 +65,7 @@ static void finiteRect(CGRect rect, const char *message) {
 int main(void) {
     const double W = 390, H = 844, TOP = 90;
     NSBRailSafe safeRaw = { 59, 0, 34, 0 };
-    UIEdgeInsets safe = NSBBuildSafeArea(safeRaw);
+    NFBRailInsets safe = NSBBuildSafeArea(safeRaw);
     CGRect splitFrame = CGRectMake(0, 422, 195, 422);   // bottom-left split, maxY = screen height
     double splitPosition = 0.80;
 
