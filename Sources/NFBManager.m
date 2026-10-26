@@ -540,9 +540,9 @@ static NSString *NFBFrontmostAppID(void) {
             button.frame = frame;
             CGFloat imageSide = MAX(1, frame.size.width - 14);
             button.imageView.frame = CGRectMake(7, 7, imageSide, imageSide);
-            // A circle, matching the notification bubbles; the desktop button keeps
-            // its rounded-square so the two modes stay visually distinct.
-            button.imageView.layer.cornerRadius = self.desktopActionToggle ? imageSide / 2 : imageSide * 0.23;
+            // Identical shape in both modes: the toggle occupies the desktop
+            // button's slot, so it must read as the same control.
+            button.imageView.layer.cornerRadius = imageSide * 0.23;
         }
     } completion:nil];
 }
@@ -1182,22 +1182,32 @@ static NSString *NFBFrontmostAppID(void) {
         // The action occupies its own row above both rails, never inside scrolling content.
         // Outside a split the same slot becomes the collapse control, so it is
         // reserved even though there is no desktop target to activate.
-        BOOL needsSlot = actionTarget || !floatingApp.length;
-        if (needsSlot && floor - y >= 2 * side + 18) {
+        // Outside a split this slot is the collapse control, which must sit exactly
+        // where the desktop button sits in a split: first row of the column. It is
+        // therefore always reserved there, regardless of the desktop target.
+        BOOL toggleSlot = !floatingApp.length;
+        BOOL needsSlot = actionTarget || toggleSlot;
+        BOOL roomForSlot = floor - y >= (toggleSlot ? (side + 9) : (2 * side + 18));
+        if (needsSlot && roomForSlot) {
             desktopActionFrame = CGRectMake(railFrame.origin.x, y, side, side);
             y += side + 9;
         }
-        if (!floatingApp.length && self.notifiedCount == 0) {
-            // Nothing else on screen: the control alone stays half off the right
-            // edge, translucent. The visible circle lives at inset 7 inside the
-            // padded box, so the box origin is derived from where the circle's
-            // centre has to land: half of it past the screen edge.
-            CGFloat circleCenterX = CGRectGetWidth(bounds) - diameter / 2;
-            CGFloat parkedY = CGRectIsEmpty(desktopActionFrame) ? y : CGRectGetMinY(desktopActionFrame);
-            desktopActionFrame = CGRectMake(circleCenterX - 7 - diameter / 2, parkedY, side, side);
-            self.desktopActionParked = YES;
-        } else {
-            self.desktopActionParked = NO;
+        if (toggleSlot && CGRectIsEmpty(desktopActionFrame)) {
+            // No room above the rails: fall back to the column's own top row so the
+            // control still shares the desktop button's position.
+            CGFloat slotY = MAX(ceiling, MIN(railFrame.origin.y, floor - side));
+            desktopActionFrame = CGRectMake(railFrame.origin.x, slotY, side, side);
+        }
+        // Nothing else on screen: the control keeps its slot (the desktop button's
+        // row) and simply slides half past the right edge at half opacity.
+        BOOL parked = !floatingApp.length && self.notifiedCount == 0;
+        self.desktopActionParked = parked;
+        if (parked) {
+            if (CGRectIsEmpty(desktopActionFrame)) desktopActionFrame = CGRectMake(railFrame.origin.x, y, side, side);
+            // Shift right by half of the visible icon so the left half stays on screen.
+            CGPoint origin = desktopActionFrame.origin;
+            desktopActionFrame.origin.x = CGRectGetWidth(bounds) - diameter / 2 - 7;
+            if (!isfinite(desktopActionFrame.origin.x)) desktopActionFrame.origin = origin;
         }
         CGFloat room = MAX(0, floor - y - side - 9);
         NFBContainerHeights fit = NFBFitContainers(room, side, step, self.favoriteApps.count, rowCount);
@@ -1683,7 +1693,11 @@ static NSString *NFBFrontmostAppID(void) {
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldReceiveTouch:(UITouch *)touch {
     if (gesture == self.desktopActionTap || gesture == self.desktopActionHold) {
         self.desktopActionTouchTarget = self.desktopActionTarget;
-        return self.enabled && ![self isLocked] && self.desktopActionTouchTarget != nil;
+        if (!self.enabled || [self isLocked]) return NO;
+        // Toggle mode has no desktop target by design; requiring one here was why
+        // the collapse control never responded to a tap.
+        if (self.desktopActionToggle) return YES;
+        return self.desktopActionTouchTarget != nil;
     }
     return YES;
 }
