@@ -24,6 +24,15 @@
 #define NFB_RAIL_PORT 0
 #endif
 
+// Geometry types must exist before NFBRailLayout.h is parsed: NFBRailLayoutPort
+// makes that header skip Foundation. CI builds this file with -fmodules and
+// -framework Foundation, so importing Foundation here (it re-exports the geometry
+// types) is what both build paths rely on; the standalone portable build defines
+// NFB_RAIL_PORT and supplies its own structs via -include.
+#if !NFB_RAIL_PORT
+#import <Foundation/Foundation.h>
+#endif
+
 #define NFBRailLayoutPort 1
 #include "NFBGeometry.h"
 #include "NFBContainerLayout.h"
@@ -32,13 +41,6 @@
 // Same field order and types as UIEdgeInsets (top, left, bottom, right).
 typedef struct { double top, left, bottom, right; } NSBRailSafe;
 
-#ifdef NFBRailLayoutPort
-// CGRect/UIEdgeInsets come from CoreGraphics. Foundation on its own re-exports
-// them nowhere guaranteed (the CI macOS SDK left CGRect undefined with
-// -framework Foundation), so ask for CoreGraphics explicitly - it is a
-// framework in its own right and the geometry types are plain structs there,
-// which is all this test needs (it never creates a view).
-#include <CoreGraphics/CoreGraphics.h>
 static inline UIEdgeInsets NSBBuildSafeArea(NSBRailSafe s) {
     UIEdgeInsets i;
     i.top = s.top;
@@ -47,7 +49,6 @@ static inline UIEdgeInsets NSBBuildSafeArea(NSBRailSafe s) {
     i.right = s.right;
     return i;
 }
-#endif
 
 static void check(bool condition, const char *message) {
     if (condition) return;
