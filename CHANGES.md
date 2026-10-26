@@ -1,3 +1,66 @@
+# 0.48.72 — CI 几何回归测试修复（RailLayoutTests 编译 + 断言）
+
+## 失败来源（CI run 40336888237 / job 121620748255 真实日志）
+
+失败步骤 `Test column geometry (split, fullscreen, collapsed, empty)`，报错：
+
+```
+In file included from Tests/RailLayoutTests.m:18:
+Sources/NFBRailLayout.h:36:9: error: unknown type name 'UIEdgeInsets'
+```
+
+日志不是网络问题，是测试源文件本身写坏了：
+
+1. **语言/框架混用**。0.48.71 把测试改成「纯 C 端口 + 条件块」的形态，但文件顶部
+   `#include "CoreGraphics/CoreGraphics.h"`，并在函数体里调 `UIEdgeInsetsMake(...)`、
+   把结果赋给 `UIEdgeInsets`。该步骤只链接 `-framework Foundation`，Foundation 不导出
+   `UIEdgeInsets`（那是 UIKit 的类型），所以 `NFBRailLayout.h` 的签名无法编译。
+   同时 `.m` 被当作 Objective-C 编译时，C 端口代码并非条件编译，纯 C 端也走不到。
+2. **一条断言本身写错了**（即使编译通过也会失败）：`close_(split.rail.origin.y, 422 + 422*0.05)`
+   —— 分屏时首行由收藏夹 rail 占用，主轨在收藏夹之后才开始（119 + 9），
+   正确值是 571.1 而不是 443.1。同理 `split.rail` 右沿不是 `windowMaxX + 4`，而是
+   经 `NFBContainedRailX` 收紧后的位置（390 屏宽、195 宽分屏时为 261）。
+   `toggle.y < H/2` 也是错的：测试里的分屏窗口本身在下半屏（y=422），继承来的行
+   本来就在 443.1；这条断言把「不落到右下」写成了「必须在上半屏」。
+
+## 修复
+
+- `Tests/RailLayoutTests.m` 重写为**单一、纯 C 可编译**文件，不再混入 UIKit 类型：
+  - 自定义 `NSBRailSafe { top, left, bottom, right }`（与 `UIEdgeInsets` 同字段同序），
+    用 `NSBBuildSafeArea()` 转换成 `UIEdgeInsets`。链接 UIKit 时（tweak 本体）走
+    `UIEdgeInsetsMake`，UIKit-less 编译（CI 的 `-framework Foundation`、本容器）走
+    逐字段赋值，两条路径产物完全一致。
+  - 保留 `-DNFB_RAIL_PORT=1` 的纯 C 形态（`NFBRailLayoutPort` 抑制 Foundation 导入），
+    CI 与本容器都能直接编译执行。
+- 断言改为与 `NFBPlanRail` 的真实语义一致，并**按需求覆盖每个确认点**，而不是删测试：
+  - 分屏：行顶 = 窗口顶 + 5%，主轨在收藏夹块之后，水平用 `NFBContainedRailX` 收紧且不出屏，
+    diameter = 设置值，分屏不显示桌面/收纳按钮，分屏永不 park（分屏样式不动）。
+  - 非分屏展开：diameter 复用分屏实测值，**行顶 = 分屏行顶**（不再由全屏滑块从底部重算），
+    控件 x = 屏宽 − 62 − 4（贴右沿），主轨在控件下方、宽 > 48（不是一条横线），
+    收藏夹可见，永不半隐。
+  - 窄分屏（340 宽窗口）收紧后的 diameter 被展开态完整复用。
+  - 收纳（折叠）：diameter 与行顶同分屏，控件停在 `W − 7 − diameter/2`（图心落在右缘，
+    即露左半），列本身贴右沿、宽 < 80 且高 > 宽（竖列非横条），收藏夹高度为 0
+    （隐藏的收藏夹不吃高度），且带未读数时正确 park。
+  - 空通知：尺寸/位置与折叠一致，`NFBToggleShouldFade` 为真（只露左半、alpha 0.5）。
+  - 折叠下收藏夹数量 5 与 0 的主轨高度一致（收藏夹不偷高度）。
+  - 有未读通知时折叠列不 park、不淡化（收起仅未读）。
+  - 无缓存（首次布局）：行顶取设置值 90，不再落到屏底。
+  - 旋转到 657 宽后缓存失效，diameter 回落到设置值 52。
+  - NaN / ∞ / 0 屏宽输入：rail / toggle 全部有限且非负。
+  - 长列表保留真实视口；`NFBSplitMetricsValid` 正负例。
+
+## 验证（本容器，Alpine aarch64 / clang 19）
+
+- 以 CI 同形命令（`-x objective-c -Wall -Wextra -Werror` + 桩 Foundation/CoreGraphics 头）
+  编译并运行：`PASS: column geometry (split -> fullscreen expanded -> collapsed -> empty)`。
+  （本容器没有 Apple SDK，桩头只提供 CG/UIEdgeInsets 几何类型，足以验证真实
+  `NFBRailLayout.h` / `NFBGeometry.h` / `NFBContainerLayout.h` 的编译与断言。）
+- `scripts/test_rail_layout.py`、`validate.py`、`test_validator.py`、`test_cleanup.py`、
+  `test_scheme.py`、`test_package_parser.py` 全部 PASS。
+- **未做**：iOS/UIKit 真编译、模拟器、真机行为。测试只覆盖纯几何函数，
+  不覆盖动画时序、真实 safeArea、Open 分屏窗口实测值与真机渲染观感。
+
 # 0.48.71 — 非分屏列：收纳键贴右沿、复用分屏列几何
 
 ## 根因（已在源码中确认，不是推测）
