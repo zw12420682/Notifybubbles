@@ -180,7 +180,10 @@ static double NFBNumber(NSString *key, double fallback) {
 
 @property(nonatomic) BOOL edgeMode;
 @property(nonatomic) BOOL edgeExpanded;
-@property(nonatomic, strong) NFBBubble *edgeIcon;
+@property(nonatomic) NSUInteger notifiedCount;
+@property(nonatomic) BOOL showClearAll;
+@property(nonatomic) CFTimeInterval lastInteractionAt;
+@property(nonatomic, strong) NFBBubble *edgeToggleButton;
 - (void)closeBubble:(NFBBubble *)button;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NFBBubble *> *buttons;
 @property(nonatomic, strong) NSTimer *timer;
@@ -238,8 +241,10 @@ static double NFBNumber(NSString *key, double fallback) {
 // Previous keyboard state, so refresh can spot the up/down edges.
 @property(nonatomic) BOOL keyboardUp;
 - (void)refresh;
-- (void)layoutEdgeIconInBounds:(CGRect)bounds safe:(UIEdgeInsets)safe top:(CGFloat)top available:(CGFloat)available railFrame:(CGRect)railFrame side:(CGFloat)side diameter:(CGFloat)diameter split:(BOOL)split duration:(NSTimeInterval)duration;
-- (void)edgeIconTapped:(id)sender;
+- (void)layoutEdgeToggleInBounds:(CGRect)bounds top:(CGFloat)top available:(CGFloat)available railFrame:(CGRect)railFrame side:(CGFloat)side diameter:(CGFloat)diameter split:(BOOL)split collapsed:(BOOL)collapsed duration:(NSTimeInterval)duration;
+- (void)edgeToggleTapped:(id)sender;
+- (void)scheduleAutoCollapse;
+- (void)resetAutoCollapseTimer;
 - (void)setColumnOffscreen:(BOOL)offscreen;
 - (void)setNeedsRefresh;
 - (void)updatePrivacy;
@@ -422,15 +427,16 @@ static NSString *NFBFrontmostAppID(void) {
     }];
 }
 - (void)clearAllTapped:(UITapGestureRecognizer *)gesture {
-    if (gesture.state != UIGestureRecognizerStateEnded || self.edgeMode || [self isLocked] || ![self acceptGestureForKey:@"closeSplit"]) return;
+    if (gesture.state != UIGestureRecognizerStateEnded || [self isLocked] || ![self acceptGestureForKey:@"clearAll"]) return;
     if (!NFBTrollVisibleApp().length) {
-        // Expanded our own list outside a split: this button clears the queue and
-        // collapses, it is not a split-close action.
+        // Outside a split this button clears the notification queue and folds the
+        // list away; it is not a split-close action.
         [self.store clear];
         self.edgeExpanded = NO;
         [self refresh];
         return;
     }
+    [self resetAutoCollapseTimer];
     NFBCloseDesktopSplit();
     if (!NFBCloseCurrentSplit()) [self showOpenNotice:@"未能读取 TrollOpen 右侧区域的单击接口"];
     else NFBOpenEdgeAfterClose();
@@ -614,6 +620,11 @@ static NSString *NFBFrontmostAppID(void) {
     @catch (NSException *error) { NFBErrorLog(@"tick failed: %@", error); }
 }
 - (void)tickBody {
+    if (self.edgeExpanded && CACurrentMediaTime() - self.lastInteractionAt > 5.0) {
+        self.edgeExpanded = NO;
+        [self refresh];
+        return;
+    }
     NSString *desktopFailure = NFBConsumeDesktopSplitFailure();
     if (desktopFailure.length) [self showOpenNotice:desktopFailure];
     if (self.pendingRecord) {
@@ -820,82 +831,84 @@ static NSString *NFBFrontmostAppID(void) {
 // The column is a window, so `hidden` cannot be animated (it switches the render
 // tree off between frames). Translate the root view instead and only flip
 // `hidden` once the slide has finished.
-// A collapsed entry point we own outright: shows the unread total and toggles the
-// list. Previously TrollOpen drew this; 2.0.1 shipped none of the hooks.
-- (void)layoutEdgeIconInBounds:(CGRect)bounds safe:(UIEdgeInsets)safe top:(CGFloat)top
-                     available:(CGFloat)available railFrame:(CGRect)railFrame side:(CGFloat)side
-                      diameter:(CGFloat)diameter split:(BOOL)split
-                      duration:(NSTimeInterval)duration {
-    // Shown whenever there is no split: collapsed (list hidden) and expanded
-    // (list up, icon acts as the collapse control) both need it.
+// The collapse/expand control that replaced the desktop button outside a split.
+// It only tucks half off-screen (and dims) once there is nothing left to show:
+// no app bubbles and no clear button.
+- (void)layoutEdgeToggleInBounds:(CGRect)bounds top:(CGFloat)top available:(CGFloat)available
+                       railFrame:(CGRect)railFrame side:(CGFloat)side diameter:(CGFloat)diameter
+                           split:(BOOL)split collapsed:(BOOL)collapsed duration:(NSTimeInterval)duration {
     BOOL visible = self.enabled && !split;
     if (!visible) {
-        if (self.edgeIcon) self.edgeIcon.hidden = YES;
+        if (self.edgeToggleButton) self.edgeToggleButton.hidden = YES;
         return;
     }
     UIView *root = self.window.rootViewController.view;
-    if (!self.edgeIcon) {
-        NFBBubble *icon = [[NFBBubble alloc] initWithFrame:CGRectZero];
-        icon.appID = @"local.notifybubbles.edge";
-        UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(edgeIconTapped:)];
-        [icon addGestureRecognizer:tap];
+    if (!self.edgeToggleButton) {
+        NFBBubble *button = [[NFBBubble alloc] initWithFrame:CGRectZero];
+        button.appID = @"local.notifybubbles.toggle";
+        UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(edgeToggleTapped:)];
+        [button addGestureRecognizer:tap];
         __weak typeof(self) weakSelf = self;
-        __weak NFBBubble *weakIcon = icon;
-        icon.tapHandler = ^{ if (weakIcon) [weakSelf edgeIconTapped:nil]; };
-        self.edgeIcon = icon;
-        [root addSubview:icon];
+        __weak NFBBubble *weakButton = button;
+        button.tapHandler = ^{ if (weakButton) [weakSelf edgeToggleTapped:nil]; };
+        self.edgeToggleButton = button;
+        [root addSubview:button];
     }
-    NFBBubble *icon = self.edgeIcon;
-    icon.hidden = NO;
-    if (icon.superview != root) {
-        [icon removeFromSuperview];
-        [root addSubview:icon];
+    NFBBubble *button = self.edgeToggleButton;
+    button.hidden = NO;
+    if (button.superview != root) {
+        [button removeFromSuperview];
+        [root addSubview:button];
     } else {
-        [root bringSubviewToFront:icon];
+        [root bringSubviewToFront:button];
     }
-    NSUInteger total = self.store.count;
-    UIImage *glyph = nil;
-    static UIImage *bell;
-    if (!bell) bell = [UIImage systemImageNamed:@"bell.fill"];
-    glyph = self.edgeExpanded ? [UIImage systemImageNamed:@"chevron.right"] : bell;
-    if (!glyph) glyph = bell;
-    if (icon.imageView.image != glyph) icon.imageView.image = glyph;
-    icon.badge.hidden = total == 0;
-    NSString *text = total ? [NSString stringWithFormat:@"%lu", (unsigned long)total] : nil;
-    if (![icon.badge.text isEqual:text]) icon.badge.text = text;
-    CGFloat iconSide = side;
-    CGFloat margin = 4;
-    CGFloat x = CGRectGetWidth(bounds) - iconSide - margin;
-    CGFloat y;
-    if (self.edgeExpanded) {
-        // Park it just under the list, or above it when the bottom is taken.
-        CGFloat below = CGRectGetMaxY(railFrame) + 9;
-        CGFloat limit = CGRectGetHeight(bounds) - MAX(safe.bottom, 20) - 4 - iconSide;
-        y = below <= limit ? below : MAX(top, CGRectGetMinY(railFrame) - iconSide - 9);
-    } else {
+    static UIImage *chevronLeft;
+    if (!chevronLeft) chevronLeft = [UIImage systemImageNamed:@"chevron.left"];
+    UIImage *glyph = collapsed ? chevronLeft : nil;
+    if (!glyph) glyph = [UIImage systemImageNamed:@"chevron.right"] ?: chevronLeft;
+    if (button.imageView.image != glyph) button.imageView.image = glyph;
+    button.badge.hidden = YES;
+    button.badge.text = nil;
+    button.accessibilityLabel = collapsed ? @"展开通知列表" : @"收起通知列表";
+    // Nothing to show means the whole column is away: tuck the control half out.
+    BOOL parked = collapsed && self.notifiedCount == 0;
+    CGFloat x = parked ? CGRectGetWidth(bounds) - side / 2 : CGRectGetWidth(bounds) - side - 4;
+    CGFloat y = CGRectGetMinY(railFrame) - side - 9;
+    if (parked || !isfinite(y) || y < top) {
         y = top + available * self.verticalPosition;
-        y = MAX(top, MIN(CGRectGetHeight(bounds) - MAX(safe.bottom, 20) - 20 - iconSide, y));
+        y = MAX(top, MIN(CGRectGetHeight(bounds) - MAX(self.window.safeAreaInsets.bottom, 20) - 20 - side, y));
     }
-    CGRect frame = CGRectMake(x, y, iconSide, iconSide);
-    icon.imageView.frame = CGRectMake(7, 7, diameter, diameter);
-    icon.imageView.layer.cornerRadius = diameter / 2;
-    icon.layer.shadowPath = [UIBezierPath bezierPathWithOvalInRect:CGRectMake(7, 7, diameter, diameter)].CGPath;
-    icon.alpha = 1;
-    if (CGRectIsEmpty(icon.frame)) {
-        icon.bounds = CGRectMake(0, 0, iconSide, iconSide);
-        icon.center = CGPointMake(CGRectGetMidX(frame), CGRectGetMidY(frame));
-    } else if (!CGRectEqualToRect(icon.frame, frame)) {
+    CGRect frame = CGRectMake(x, y, side, side);
+    CGFloat alpha = parked ? 0.5 : 1;
+    button.imageView.frame = CGRectMake(7, 7, diameter, diameter);
+    button.imageView.layer.cornerRadius = diameter / 2;
+    button.layer.shadowPath = [UIBezierPath bezierPathWithOvalInRect:CGRectMake(7, 7, diameter, diameter)].CGPath;
+    if (CGRectIsEmpty(button.frame)) {
+        button.bounds = CGRectMake(0, 0, side, side);
+        button.center = CGPointMake(CGRectGetMidX(frame), CGRectGetMidY(frame));
+        button.alpha = alpha;
+    } else if (!CGRectEqualToRect(button.frame, frame) || fabs(button.alpha - alpha) > 0.01) {
         [UIView animateWithDuration:duration delay:0
             options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseInOut
-            animations:^{ icon.frame = frame; } completion:nil];
+            animations:^{ button.frame = frame; button.alpha = alpha; } completion:nil];
     }
-    [self layoutBadge:icon diameter:diameter];
 }
 
-- (void)edgeIconTapped:(id)sender {
+- (void)edgeToggleTapped:(id)sender {
     if (!self.enabled || [self isLocked]) return;
     self.edgeExpanded = !self.edgeExpanded;
+    [self scheduleAutoCollapse];
     [self refresh];
+}
+
+// Expanded lists fold themselves away after five seconds without interaction.
+// A timestamp checked by the existing 2 Hz tick avoids rebuilding a timer on
+// every scroll callback.
+- (void)scheduleAutoCollapse {
+    self.lastInteractionAt = CACurrentMediaTime();
+}
+- (void)resetAutoCollapseTimer {
+    if (self.edgeExpanded) self.lastInteractionAt = CACurrentMediaTime();
 }
 
 - (void)setColumnOffscreen:(BOOL)offscreen {
@@ -993,9 +1006,11 @@ static NSString *NFBFrontmostAppID(void) {
     BOOL keyboardUp = NFBKeyboardVisible();
     self.keyboardUp=keyboardUp;
     BOOL home = NFBCurrentWindowState().home;
-    // Our own edge icon owns the collapsed state now; TrollOpen 2.0.1 removed the
-    // presentation this used to borrow. Expanding the list clears edgeMode.
-    BOOL edgeMode = !floatingApp.length && !self.edgeExpanded;
+    // Outside a split the column has two states: collapsed (only apps with unread
+    // notifications) and expanded (everything, auto-collapses after 5s).
+    BOOL split = floatingApp.length > 0;
+    BOOL collapsed = !split && !self.edgeExpanded;
+    BOOL edgeMode = collapsed;
     NSString *active = NFBTrollVisibleApp() ?: floatingApp ?: (home ? nil : NFBCurrentWindowState().frontApp);
     if (NFBIsSystemDesktop(active)) active = nil;
     // Recency decides membership, never a forced jump of an existing icon.
@@ -1011,18 +1026,34 @@ static NSString *NFBFrontmostAppID(void) {
     self.edgeMode = edgeMode;
     NSMutableOrderedSet *history = [NSMutableOrderedSet orderedSetWithArray:self.recentUsedApps];
     [history addObjectsFromArray:self.lastSwitcher ?: @[]];
+    // Apps that actually have queued notifications.
+    NSMutableArray<NSString *> *notified = [NSMutableArray array];
+    for (NSString *app in apps)
+        if ([self.store countForApp:app] > 0 && ![self.closingApps containsObject:app]) [notified addObject:app];
+    self.notifiedCount = notified.count;
     NSArray<NSString *> *railApps;
-    if (edgeMode) {
-        railApps = @[]; // Open owns all edge presentation in this edition.
-    } else {
+    if (split) {
         // Membership, not merely viewport height, is limited to three recent apps.
         NSMutableArray<NSString *> *background = [NSMutableArray array];
         for (NSString *app in apps)
             if ([self.lastSwitcher containsObject:app] || [app isEqual:active]) [background addObject:app];
         railApps = NFBRecentBackgroundThree(background, history.array, self.favoriteApps);
+    } else if (collapsed) {
+        railApps = notified;
+    } else {
+        // Expanded: everything, so nothing is hidden behind the collapsed state.
+        NSMutableOrderedSet *all = [NSMutableOrderedSet orderedSetWithArray:notified];
+        NSMutableArray<NSString *> *background = [NSMutableArray array];
+        for (NSString *app in apps)
+            if ([self.lastSwitcher containsObject:app] || [app isEqual:active]) [background addObject:app];
+        [all addObjectsFromArray:NFBRecentBackgroundThree(background, history.array, self.favoriteApps)];
+        railApps = all.array;
     }
     NSMutableArray<NSString *> *displayApps = [railApps mutableCopy];
-    if (!edgeMode) [displayApps addObject:NFBClearAllID];
+    // The clear button only makes sense with something to clear (or a split to close).
+    BOOL showClearAll = split || notified.count > 0;
+    if (showClearAll) [displayApps addObject:NFBClearAllID];
+    self.showClearAll = showClearAll;
     BOOL orderChanged = ![self.lastLayoutApps isEqualToArray:displayApps];
     self.lastLayoutApps = [displayApps copy];
     for (NSString *appID in self.buttons.allKeys) {
@@ -1104,7 +1135,7 @@ static NSString *NFBFrontmostAppID(void) {
     // keeps the fullscreen tray closed and other eligible states expanded.
     NFBUpdateOpenEdgeSplitIconsVisible(floatingApp.length > 0 && !hideForPosition);
 
-    BOOL containerMode = !edgeMode;
+    BOOL containerMode = YES;
     BOOL attachmentChanged = attached != self.splitRailActive;
     self.splitRailActive = attached;
     CGFloat diameter = self.iconSize;
@@ -1198,9 +1229,9 @@ static NSString *NFBFrontmostAppID(void) {
     CGFloat childDuration = viewportResized ? 0 : layoutDuration;
     [self layoutFavorites:favoritesFrame diameter:diameter active:active duration:childDuration];
     [self layoutDesktopAction:desktopActionFrame target:actionTarget duration:childDuration];
-    BOOL hideEdgeIcons = edgeMode;
-    self.rail.hidden = hideEdgeIcons;
-    self.railMaterial.hidden = hideEdgeIcons;
+    BOOL hideEdgeIcons = NO;
+    self.rail.hidden = rowCount == 0;
+    self.railMaterial.hidden = rowCount == 0;
     BOOL railSizeChanged = !CGSizeEqualToSize(self.rail.bounds.size, railFrame.size);
     // Narrow only the visible edge material. Retain the padded hit/clip area
     // so icon edges, shadows and the external unread badges stay intact.
@@ -1219,9 +1250,9 @@ static NSString *NFBFrontmostAppID(void) {
                 self.railMaterial.alpha = rowCount && height > 0 ? 0.55 : 0;
             } completion:nil];
     }
-    [self layoutEdgeIconInBounds:bounds safe:safe top:top available:available
-                         railFrame:railFrame side:side diameter:diameter
-                        split:(floatingApp.length > 0) duration:childDuration];
+    [self layoutEdgeToggleInBounds:bounds top:top available:available railFrame:railFrame
+                              side:side diameter:diameter split:split collapsed:collapsed
+                          duration:childDuration];
     self.rail.contentSize = CGSizeMake(railWidth, contentHeight);
     CGFloat maxOffset = MAX(0, self.rail.contentSize.height - height);
     if (!self.rail.dragging && !self.rail.decelerating) {
@@ -1668,6 +1699,9 @@ static NSString *NFBFrontmostAppID(void) {
 - (void)appHeld:(UILongPressGestureRecognizer *)gesture {
     if (gesture.state==UIGestureRecognizerStateBegan) [self closeBubble:(NFBBubble *)gesture.view];
 }
+- (void)scrollViewDidScroll:(UIScrollView *)scrollView {
+    if (scrollView == self.rail || scrollView == self.favoritesRail) [self resetAutoCollapseTimer];
+}
 - (void)scrollViewDidEndDragging:(UIScrollView *)scrollView willDecelerate:(BOOL)decelerate {
     if (scrollView == self.favoritesRail && !decelerate) [self saveFavoritePosition];
 }
@@ -1684,6 +1718,7 @@ static NSString *NFBFrontmostAppID(void) {
 // against a reorder releasing into a tap.
 - (void)favoriteTapped:(UITapGestureRecognizer *)gesture {
     if (gesture.state != UIGestureRecognizerStateEnded) return;
+    [self resetAutoCollapseTimer];
     if (self.favoriteDragConsumed) { self.favoriteDragConsumed = NO; return; }
     NFBBubble *button = (NFBBubble *)gesture.view;
     if (self.favoriteDrag || !button) return;
