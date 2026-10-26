@@ -182,8 +182,9 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic) BOOL edgeExpanded;
 @property(nonatomic) NSUInteger notifiedCount;
 @property(nonatomic) BOOL showClearAll;
+@property(nonatomic) BOOL desktopActionToggle;
+@property(nonatomic) BOOL desktopActionParked;
 @property(nonatomic) CFTimeInterval lastInteractionAt;
-@property(nonatomic, strong) NFBBubble *edgeToggleButton;
 - (void)closeBubble:(NFBBubble *)button;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NFBBubble *> *buttons;
 @property(nonatomic, strong) NSTimer *timer;
@@ -241,8 +242,6 @@ static double NFBNumber(NSString *key, double fallback) {
 // Previous keyboard state, so refresh can spot the up/down edges.
 @property(nonatomic) BOOL keyboardUp;
 - (void)refresh;
-- (void)layoutEdgeToggleInBounds:(CGRect)bounds top:(CGFloat)top available:(CGFloat)available railFrame:(CGRect)railFrame side:(CGFloat)side diameter:(CGFloat)diameter split:(BOOL)split collapsed:(BOOL)collapsed duration:(NSTimeInterval)duration;
-- (void)edgeToggleTapped:(id)sender;
 - (void)scheduleAutoCollapse;
 - (void)resetAutoCollapseTimer;
 - (void)setColumnOffscreen:(BOOL)offscreen;
@@ -450,6 +449,13 @@ static NSString *NFBFrontmostAppID(void) {
 }
 - (void)desktopActionTapped:(UITapGestureRecognizer *)gesture {
     if (gesture.state != UIGestureRecognizerStateEnded || !self.enabled || [self isLocked]) return;
+    if (self.desktopActionToggle) {
+        // Same slot, different job outside a split: fold or unfold the column.
+        self.edgeExpanded = !self.edgeExpanded;
+        [self scheduleAutoCollapse];
+        [self refresh];
+        return;
+    }
     UIView *target = self.desktopActionTouchTarget;
     self.desktopActionTouchTarget = nil;
     if (!target || target != self.desktopActionTarget || target != NFBDesktopActionWindow()) { [self refresh]; return; }
@@ -468,9 +474,14 @@ static NSString *NFBFrontmostAppID(void) {
     [self refresh];
 }
 - (void)layoutDesktopAction:(CGRect)frame target:(UIView *)target duration:(NSTimeInterval)duration {
-    BOOL visible = target && !CGRectIsNull(frame) && !CGRectIsEmpty(frame) && self.enabled;
-    self.desktopActionTarget = visible ? target : nil;
+    // This slot does double duty: in a split it is the desktop button, outside one
+    // it is the collapse/expand control for the column. Same position, same size,
+    // so the two never compete for space.
+    BOOL toggleMode = !target && (frame.size.width > 0);
+    BOOL visible = ((target && !CGRectIsNull(frame) && !CGRectIsEmpty(frame)) || toggleMode) && self.enabled;
+    self.desktopActionTarget = (target && !toggleMode) ? target : nil;
     if (!self.desktopActionButton && !visible) return;
+    self.desktopActionToggle = toggleMode;
     if (!self.desktopActionButton) {
         NFBBubble *button = [[NFBBubble alloc] initWithFrame:frame];
         button.badge.hidden = YES;
@@ -493,9 +504,32 @@ static NSString *NFBFrontmostAppID(void) {
         [self.window.rootViewController.view addSubview:button];
     }
     NFBBubble *button = self.desktopActionButton;
-    button.accessibilityLabel = @"显示桌面 / Open 控制台";
-    button.accessibilityHint = @"单击显示或关闭桌面分屏，长按打开 Open 控制台";
-    CGFloat targetAlpha = visible ? 1 : 0;
+    static UIImage *houseIcon, *chevronLeftIcon, *chevronRightIcon;
+    if (!houseIcon) {
+        houseIcon = [UIImage systemImageNamed:@"house.fill"];
+        chevronLeftIcon = [UIImage systemImageNamed:@"chevron.left"];
+        chevronRightIcon = [UIImage systemImageNamed:@"chevron.right"];
+    }
+    UIImage *glyph = houseIcon;
+    UIColor *tint = UIColor.systemGreenColor;
+    if (toggleMode) {
+        glyph = self.edgeExpanded ? chevronRightIcon : chevronLeftIcon;
+        tint = UIColor.systemBlueColor;
+        button.accessibilityLabel = self.edgeExpanded ? @"收起图标列" : @"展开图标列";
+        button.accessibilityHint = @"单击收起或展开通知图标列";
+    } else {
+        button.accessibilityLabel = @"显示桌面 / Open 控制台";
+        button.accessibilityHint = @"单击显示或关闭桌面分屏，长按打开 Open 控制台";
+    }
+    if (button.imageView.image != glyph) button.imageView.image = glyph;
+    if (!CGColorEqualToColor(button.imageView.tintColor.CGColor, tint.CGColor)) button.imageView.tintColor = tint;
+    // Toggle mode only responds to a plain tap; holding has no meaning there.
+    button.gestureRecognizers.firstObject.enabled = YES;
+    for (UIGestureRecognizer *recognizer in button.gestureRecognizers)
+        if (recognizer == self.desktopActionHold) recognizer.enabled = !toggleMode;
+    // Parked: nothing else is on screen, so the control alone stays half off the
+    // right edge at half opacity.
+    CGFloat targetAlpha = visible ? (self.desktopActionParked ? 0.5 : 1) : 0;
     button.userInteractionEnabled = visible;
     if (visible && button.alpha < 0.01) button.frame = frame;
     [self.window.rootViewController.view bringSubviewToFront:button];
@@ -506,7 +540,9 @@ static NSString *NFBFrontmostAppID(void) {
             button.frame = frame;
             CGFloat imageSide = MAX(1, frame.size.width - 14);
             button.imageView.frame = CGRectMake(7, 7, imageSide, imageSide);
-            button.imageView.layer.cornerRadius = imageSide * 0.23;
+            // A circle, matching the notification bubbles; the desktop button keeps
+            // its rounded-square so the two modes stay visually distinct.
+            button.imageView.layer.cornerRadius = self.desktopActionToggle ? imageSide / 2 : imageSide * 0.23;
         }
     } completion:nil];
 }
@@ -837,99 +873,6 @@ static NSString *NFBFrontmostAppID(void) {
 // The column is a window, so `hidden` cannot be animated (it switches the render
 // tree off between frames). Translate the root view instead and only flip
 // `hidden` once the slide has finished.
-// The collapse/expand control that replaced the desktop button outside a split.
-// It only tucks half off-screen (and dims) once there is nothing left to show:
-// no app bubbles and no clear button.
-- (void)layoutEdgeToggleInBounds:(CGRect)bounds top:(CGFloat)top available:(CGFloat)available
-                       railFrame:(CGRect)railFrame side:(CGFloat)side diameter:(CGFloat)diameter
-                           split:(BOOL)split collapsed:(BOOL)collapsed duration:(NSTimeInterval)duration {
-    BOOL visible = self.enabled && !split;
-    if (!visible) {
-        if (self.edgeToggleButton) self.edgeToggleButton.hidden = YES;
-        return;
-    }
-    UIView *root = self.window.rootViewController.view;
-    if (!self.edgeToggleButton) {
-        NFBBubble *button = [[NFBBubble alloc] initWithFrame:CGRectZero];
-        button.appID = @"local.notifybubbles.toggle";
-        // Same visual recipe as the split buttons: a white circle with a tinted glyph.
-        button.imageView.contentMode = UIViewContentModeCenter;
-        button.imageView.backgroundColor = UIColor.secondarySystemBackgroundColor;
-        button.imageView.tintColor = UIColor.systemBlueColor;
-        button.imageView.frame = CGRectMake(7, 7, diameter, diameter);
-        button.imageView.layer.cornerRadius = diameter / 2;
-        UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(edgeToggleTapped:)];
-        [button addGestureRecognizer:tap];
-        __weak typeof(self) weakSelf = self;
-        __weak NFBBubble *weakButton = button;
-        button.tapHandler = ^{ if (weakButton) [weakSelf edgeToggleTapped:nil]; };
-        self.edgeToggleButton = button;
-        [root addSubview:button];
-    }
-    NFBBubble *button = self.edgeToggleButton;
-    button.hidden = NO;
-    if (button.superview != root) {
-        [button removeFromSuperview];
-        [root addSubview:button];
-    } else {
-        [root bringSubviewToFront:button];
-    }
-    static UIImage *chevronLeft;
-    if (!chevronLeft) chevronLeft = [UIImage systemImageNamed:@"chevron.left"];
-    UIImage *glyph = collapsed ? chevronLeft : nil;
-    if (!glyph) glyph = [UIImage systemImageNamed:@"chevron.right"] ?: chevronLeft;
-    if (button.imageView.image != glyph) button.imageView.image = glyph;
-    button.badge.hidden = YES;
-    button.badge.text = nil;
-    button.accessibilityLabel = collapsed ? @"展开通知列表" : @"收起通知列表";
-    // Nothing to show means the whole column is away: tuck the control half out.
-    // Same footprint as a notification bubble: `side` is the padded hit area, the
-    // visible circle is `diameter`. Using side for the circle made this read as a
-    // much larger button than the app icons beside it.
-    BOOL parked = collapsed && self.notifiedCount == 0;
-    CGFloat margin = 4;
-    // Half of the visible circle, not half of the padded box.
-    CGFloat restX = CGRectGetWidth(bounds) - diameter / 2 - margin + 7;
-    CGFloat fullX = CGRectGetWidth(bounds) - diameter - margin - 7;
-    CGFloat x = parked ? restX : fullX;
-    CGFloat y = CGRectGetMinY(railFrame) - side - 9;
-    if (parked || !isfinite(y) || y < top) {
-        y = top + available * self.verticalPosition;
-        y = MAX(top, MIN(CGRectGetHeight(bounds) - MAX(self.window.safeAreaInsets.bottom, 20) - 20 - side, y));
-    }
-    // frame origin so the circular image lands where `x`/`y` describe
-    CGRect frame = CGRectMake(x - 7, y + 7, diameter, diameter);
-    CGFloat alpha = parked ? 0.5 : 1;
-    if (button.imageView.image) {
-        button.imageView.contentMode = UIViewContentModeCenter;
-        button.imageView.backgroundColor = UIColor.secondarySystemBackgroundColor;
-        button.imageView.tintColor = parked ? UIColor.secondaryLabelColor : UIColor.systemBlueColor;
-    }
-    button.imageView.layer.cornerRadius = diameter / 2;
-    button.layer.shadowPath = [UIBezierPath bezierPathWithOvalInRect:button.imageView.frame].CGPath;
-    if (CGRectIsEmpty(button.frame)) {
-        button.bounds = CGRectMake(0, 0, side, side);
-        button.center = CGPointMake(CGRectGetMidX(frame), CGRectGetMidY(frame));
-        button.alpha = alpha;
-    } else if (!CGRectEqualToRect(button.frame, frame) || fabs(button.alpha - alpha) > 0.01 ||
-               !CGColorEqualToColor(button.imageView.tintColor.CGColor, (parked ? UIColor.secondaryLabelColor : UIColor.systemBlueColor).CGColor)) {
-        [UIView animateWithDuration:duration delay:0
-            options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseInOut
-            animations:^{
-                button.frame = frame;
-                button.alpha = alpha;
-                button.imageView.tintColor = parked ? UIColor.secondaryLabelColor : UIColor.systemBlueColor;
-            } completion:nil];
-    }
-}
-
-- (void)edgeToggleTapped:(id)sender {
-    if (!self.enabled || [self isLocked]) return;
-    self.edgeExpanded = !self.edgeExpanded;
-    [self scheduleAutoCollapse];
-    [self refresh];
-}
-
 // Expanded lists fold themselves away after five seconds without interaction.
 // A timestamp checked by the existing 2 Hz tick avoids rebuilding a timer on
 // every scroll callback.
@@ -1234,9 +1177,24 @@ static NSString *NFBFrontmostAppID(void) {
         CGFloat desiredTop = (attached && usableSplit) ? NFBSplitRailTop(CGRectGetMinY(splitFrame), CGRectGetHeight(splitFrame)) : railFrame.origin.y;
         CGFloat y = MAX(ceiling, MIN(desiredTop, floor - side - 9));
         // The action occupies its own row above both rails, never inside scrolling content.
-        if (actionTarget && !CGRectIsNull(actionWindowFrame) && floor - y >= 2 * side + 18) {
+        // Outside a split the same slot becomes the collapse control, so it is
+        // reserved even though there is no desktop target to activate.
+        BOOL needsSlot = actionTarget || !floatingApp.length;
+        if (needsSlot && floor - y >= 2 * side + 18) {
             desktopActionFrame = CGRectMake(railFrame.origin.x, y, side, side);
             y += side + 9;
+        }
+        if (!floatingApp.length && self.notifiedCount == 0) {
+            // Nothing else on screen: the control alone stays half off the right
+            // edge, translucent. The visible circle lives at inset 7 inside the
+            // padded box, so the box origin is derived from where the circle's
+            // centre has to land: half of it past the screen edge.
+            CGFloat circleCenterX = CGRectGetWidth(bounds) - diameter / 2;
+            CGFloat parkedY = CGRectIsEmpty(desktopActionFrame) ? y : CGRectGetMinY(desktopActionFrame);
+            desktopActionFrame = CGRectMake(circleCenterX - 7 - diameter / 2, parkedY, side, side);
+            self.desktopActionParked = YES;
+        } else {
+            self.desktopActionParked = NO;
         }
         CGFloat room = MAX(0, floor - y - side - 9);
         NFBContainerHeights fit = NFBFitContainers(room, side, step, self.favoriteApps.count, rowCount);
@@ -1283,9 +1241,6 @@ static NSString *NFBFrontmostAppID(void) {
                 self.railMaterial.alpha = rowCount && height > 0 ? 0.55 : 0;
             } completion:nil];
     }
-    [self layoutEdgeToggleInBounds:bounds top:top available:available railFrame:railFrame
-                              side:side diameter:diameter split:split collapsed:collapsed
-                          duration:childDuration];
     self.rail.contentSize = CGSizeMake(railWidth, contentHeight);
     CGFloat maxOffset = MAX(0, self.rail.contentSize.height - height);
     if (!self.rail.dragging && !self.rail.decelerating) {
