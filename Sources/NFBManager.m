@@ -438,6 +438,12 @@ static NSString *NFBFrontmostAppID(void) {
     }
     [self resetAutoCollapseTimer];
     NFBCloseDesktopSplit();
+    // Fold to the collapsed state first so the column slides to the edge with the
+    // split's own dismissal animation instead of snapping after it.
+    if (self.edgeExpanded) {
+        self.edgeExpanded = NO;
+        [self refresh];
+    }
     if (!NFBCloseCurrentSplit()) [self showOpenNotice:@"未能读取 TrollOpen 右侧区域的单击接口"];
     else NFBOpenEdgeAfterClose();
     [self refresh];
@@ -846,6 +852,12 @@ static NSString *NFBFrontmostAppID(void) {
     if (!self.edgeToggleButton) {
         NFBBubble *button = [[NFBBubble alloc] initWithFrame:CGRectZero];
         button.appID = @"local.notifybubbles.toggle";
+        // Same visual recipe as the split buttons: a white circle with a tinted glyph.
+        button.imageView.contentMode = UIViewContentModeCenter;
+        button.imageView.backgroundColor = UIColor.secondarySystemBackgroundColor;
+        button.imageView.tintColor = UIColor.systemBlueColor;
+        button.imageView.frame = CGRectMake(7, 7, diameter, diameter);
+        button.imageView.layer.cornerRadius = diameter / 2;
         UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(edgeToggleTapped:)];
         [button addGestureRecognizer:tap];
         __weak typeof(self) weakSelf = self;
@@ -871,26 +883,43 @@ static NSString *NFBFrontmostAppID(void) {
     button.badge.text = nil;
     button.accessibilityLabel = collapsed ? @"展开通知列表" : @"收起通知列表";
     // Nothing to show means the whole column is away: tuck the control half out.
+    // Same footprint as a notification bubble: `side` is the padded hit area, the
+    // visible circle is `diameter`. Using side for the circle made this read as a
+    // much larger button than the app icons beside it.
     BOOL parked = collapsed && self.notifiedCount == 0;
-    CGFloat x = parked ? CGRectGetWidth(bounds) - side / 2 : CGRectGetWidth(bounds) - side - 4;
+    CGFloat margin = 4;
+    // Half of the visible circle, not half of the padded box.
+    CGFloat restX = CGRectGetWidth(bounds) - diameter / 2 - margin + 7;
+    CGFloat fullX = CGRectGetWidth(bounds) - diameter - margin - 7;
+    CGFloat x = parked ? restX : fullX;
     CGFloat y = CGRectGetMinY(railFrame) - side - 9;
     if (parked || !isfinite(y) || y < top) {
         y = top + available * self.verticalPosition;
         y = MAX(top, MIN(CGRectGetHeight(bounds) - MAX(self.window.safeAreaInsets.bottom, 20) - 20 - side, y));
     }
-    CGRect frame = CGRectMake(x, y, side, side);
+    // frame origin so the circular image lands where `x`/`y` describe
+    CGRect frame = CGRectMake(x - 7, y + 7, diameter, diameter);
     CGFloat alpha = parked ? 0.5 : 1;
-    button.imageView.frame = CGRectMake(7, 7, diameter, diameter);
+    if (button.imageView.image) {
+        button.imageView.contentMode = UIViewContentModeCenter;
+        button.imageView.backgroundColor = UIColor.secondarySystemBackgroundColor;
+        button.imageView.tintColor = parked ? UIColor.secondaryLabelColor : UIColor.systemBlueColor;
+    }
     button.imageView.layer.cornerRadius = diameter / 2;
-    button.layer.shadowPath = [UIBezierPath bezierPathWithOvalInRect:CGRectMake(7, 7, diameter, diameter)].CGPath;
+    button.layer.shadowPath = [UIBezierPath bezierPathWithOvalInRect:button.imageView.frame].CGPath;
     if (CGRectIsEmpty(button.frame)) {
         button.bounds = CGRectMake(0, 0, side, side);
         button.center = CGPointMake(CGRectGetMidX(frame), CGRectGetMidY(frame));
         button.alpha = alpha;
-    } else if (!CGRectEqualToRect(button.frame, frame) || fabs(button.alpha - alpha) > 0.01) {
+    } else if (!CGRectEqualToRect(button.frame, frame) || fabs(button.alpha - alpha) > 0.01 ||
+               !CGColorEqualToColor(button.imageView.tintColor.CGColor, (parked ? UIColor.secondaryLabelColor : UIColor.systemBlueColor).CGColor)) {
         [UIView animateWithDuration:duration delay:0
             options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseInOut
-            animations:^{ button.frame = frame; button.alpha = alpha; } completion:nil];
+            animations:^{
+                button.frame = frame;
+                button.alpha = alpha;
+                button.imageView.tintColor = parked ? UIColor.secondaryLabelColor : UIColor.systemBlueColor;
+            } completion:nil];
     }
 }
 
@@ -1224,9 +1253,13 @@ static NSString *NFBFrontmostAppID(void) {
     // but zeroing the duration for the whole pass turned every bubble into an
     // instant jump on each split/fullscreen toggle. Commit the new size first and
     // let the children keep a normal, short duration.
+    // A resized viewport only needs the container's own size committed without an
+    // animation race. Zeroing the duration for every child made the whole column
+    // snap on each split/fullscreen toggle, including the toggle's move to the
+    // edge. Children keep a short but real duration.
     BOOL viewportResized = !CGSizeEqualToSize(self.rail.bounds.size, railFrame.size) ||
         !CGSizeEqualToSize(self.favoritesRail.bounds.size, favoritesFrame.size);
-    CGFloat childDuration = viewportResized ? 0 : layoutDuration;
+    CGFloat childDuration = viewportResized ? (UIAccessibilityIsReduceMotionEnabled() ? 0 : 0.22) : layoutDuration;
     [self layoutFavorites:favoritesFrame diameter:diameter active:active duration:childDuration];
     [self layoutDesktopAction:desktopActionFrame target:actionTarget duration:childDuration];
     BOOL hideEdgeIcons = NO;
