@@ -665,7 +665,7 @@ static NSString *NFBFrontmostAppID(void) {
     CGRect frame = NFBSplitFrameInView(self.window.rootViewController.view);
     BOOL sameFrame = CGRectEqualToRect(frame, self.observedSplitFrame) ||
         (CGRectIsNull(frame) && CGRectIsNull(self.observedSplitFrame));
-    UIView *actionTarget = floatingApp.length ? NFBDesktopActionWindow() : nil;
+    UIView *actionTarget = currentApp.length ? NFBDesktopActionWindow() : nil;
     CGRect actionFrame = NFBWindowFrameInView(actionTarget, self.window.rootViewController.view);
     BOOL sameActionFrame = CGRectEqualToRect(actionFrame, self.observedActionFrame) ||
         (CGRectIsNull(actionFrame) && CGRectIsNull(self.observedActionFrame));
@@ -1139,7 +1139,13 @@ static NSString *NFBFrontmostAppID(void) {
     BOOL attachmentChanged = attached != self.splitRailActive;
     self.splitRailActive = attached;
     // One geometry source for both modes. `split` here is the resolved, real split
-    // state, never a guess from the desktop target (nil while Open rebuilds).
+    // state, never a guess from the desktop target (nil while Open rebuilds). The
+    // frame is sanitised first, so usableSplit can be evaluated before any use.
+    CGRect splitA = CGRectIsNull(splitFrame) ? CGRectZero : splitFrame;
+    if (!isfinite(splitA.origin.x) || !isfinite(splitA.origin.y) ||
+        !isfinite(splitA.size.width) || !isfinite(splitA.size.height)) splitA = CGRectZero;
+    BOOL usableSplit = isfinite(CGRectGetMaxX(splitA)) && isfinite(CGRectGetMaxY(splitA)) &&
+        CGRectGetWidth(splitA) > 0 && CGRectGetHeight(splitA) > 0;
     BOOL splitNow = floatingApp.length > 0 && usableSplit;
     self.splitLayout = splitNow;
     NSUInteger notifiedCount = self.notifiedCount;
@@ -1147,10 +1153,7 @@ static NSString *NFBFrontmostAppID(void) {
     // it keeps only the unread apps and the collapse control: no X, no favorites.
     BOOL hideFavorites = !(splitNow || self.edgeExpanded);
     BOOL collapse = !splitNow && !self.edgeExpanded;
-    CGRect splitA = CGRectIsNull(splitFrame) ? CGRectZero : splitFrame;
-    if (!isfinite(splitA.origin.x) || !isfinite(splitA.origin.y) ||
-        !isfinite(splitA.size.width) || !isfinite(splitA.size.height)) splitA = CGRectZero;
-    BOOL splitUsable = splitNow && isfinite(CGRectGetMaxX(splitA)) && isfinite(CGRectGetMaxY(splitA));
+    BOOL splitUsable = splitNow;
     NSUInteger columnRows = railApps.count;
     // The plan takes a platform-neutral inset struct; being field-compatible with
     // UIEdgeInsets means this stays a plain value copy.
@@ -1181,7 +1184,7 @@ static NSString *NFBFrontmostAppID(void) {
     self.edgeMode = edgeMode;
     NSUInteger rowCount = columnRows;
     CGFloat contentHeight = rowCount ? (rowCount - 1) * step + side : 0;
-    UIView *actionTarget = floatingApp.length ? NFBDesktopActionWindow() : nil;
+    UIView *actionTarget = currentApp.length ? NFBDesktopActionWindow() : nil;
     CGRect desktopActionFrame = splitNow ? plan.toggle : CGRectNull;
     CGRect toggleFrame = plan.toggleVisible ? plan.toggle : CGRectNull;
     BOOL parked = plan.parked && !self.edgeExpanded;
