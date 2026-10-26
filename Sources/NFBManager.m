@@ -1165,7 +1165,10 @@ static NSString *NFBFrontmostAppID(void) {
     CGFloat clearCenterY = railFrame.origin.y - 8 - side / 2;
     CGRect favoritesFrame = CGRectZero;
     UIView *actionTarget = NFBDesktopActionWindow();
-    CGRect actionWindowFrame = NFBWindowFrameInView(actionTarget, root);
+    // The slot decision no longer needs the window frame: outside a split it is
+    // reserved for the collapse control regardless of where the desktop is.
+    CGRect actionWindowFrame __attribute__((unused)) = CGRectNull;
+    if (actionTarget) actionWindowFrame = NFBWindowFrameInView(actionTarget, root);
     CGRect desktopActionFrame = CGRectNull;
     if (containerMode) {
         CGFloat ceiling = MAX(safe.top, 12);
