@@ -10,6 +10,7 @@
 #import "NFBPrivate.h"
 #import "NFBStore.h"
 #import "NFBGeometry.h"
+#import "NFBRailLayout.h"
 #import "NFBSwitcher.h"
 #import "NFBTrollOpen.h"
 #import "NFBWindowControls.h"
@@ -664,7 +665,7 @@ static NSString *NFBFrontmostAppID(void) {
     CGRect frame = NFBSplitFrameInView(self.window.rootViewController.view);
     BOOL sameFrame = CGRectEqualToRect(frame, self.observedSplitFrame) ||
         (CGRectIsNull(frame) && CGRectIsNull(self.observedSplitFrame));
-    UIView *actionTarget = splitNow ? NFBDesktopActionWindow() : nil;
+    UIView *actionTarget = floatingApp.length ? NFBDesktopActionWindow() : nil;
     CGRect actionFrame = NFBWindowFrameInView(actionTarget, self.window.rootViewController.view);
     BOOL sameActionFrame = CGRectEqualToRect(actionFrame, self.observedActionFrame) ||
         (CGRectIsNull(actionFrame) && CGRectIsNull(self.observedActionFrame));
@@ -1141,27 +1142,22 @@ static NSString *NFBFrontmostAppID(void) {
     // state, never a guess from the desktop target (nil while Open rebuilds).
     BOOL splitNow = floatingApp.length > 0 && usableSplit;
     self.splitLayout = splitNow;
-    NSUInteger notified = self.notifiedCount;
+    NSUInteger notifiedCount = self.notifiedCount;
     // The hidden column has nothing to clear when no notification is queued, so
     // it keeps only the unread apps and the collapse control: no X, no favorites.
-    BOOL collapseThisPass = !splitNow && !self.edgeExpanded;
-    if (collapseThisPass && notified == 0) railApps = @[];
-    NSUInteger rowCount = railApps.count;
-    BOOL wantFavorites = splitNow || self.edgeExpanded;
-    // The collapsed column only lists apps with unread notifications, plus the
-    // clear action when there is actually something to clear.
-    BOOL hideFavorites = !wantFavorites;
+    BOOL hideFavorites = !(splitNow || self.edgeExpanded);
     BOOL collapse = !splitNow && !self.edgeExpanded;
     CGRect splitA = CGRectIsNull(splitFrame) ? CGRectZero : splitFrame;
     if (!isfinite(splitA.origin.x) || !isfinite(splitA.origin.y) ||
         !isfinite(splitA.size.width) || !isfinite(splitA.size.height)) splitA = CGRectZero;
     BOOL splitUsable = splitNow && isfinite(CGRectGetMaxX(splitA)) && isfinite(CGRectGetMaxY(splitA));
+    NSUInteger columnRows = railApps.count;
     // The plan takes a platform-neutral inset struct; being field-compatible with
     // UIEdgeInsets means this stays a plain value copy.
     NFBRailInsets planSafe = { safe.top, safe.left, safe.bottom, safe.right };
     NFBRailPlan plan = NFBPlanRail(bounds.size.width, bounds.size.height, planSafe, top, self.iconSize,
         NFBFloatingPosition, splitNow, splitA, splitUsable, self.verticalPosition, collapse,
-        hideFavorites ? 0 : self.favoriteApps.count, (unsigned long)rowCount, (unsigned long)notified,
+        hideFavorites ? 0 : self.favoriteApps.count, (unsigned long)columnRows, (unsigned long)notifiedCount,
         (double)self.splitRailTop, (double)self.splitRailDiameter, (double)self.splitRailScreenWidth,
         self.splitRailMeasured);
     if (splitNow && CGRectGetHeight(plan.rail) >= plan.diameter + 14) {
@@ -1183,9 +1179,9 @@ static NSString *NFBFrontmostAppID(void) {
     NSTimeInterval layoutDuration = UIAccessibilityIsReduceMotionEnabled() ? 0 : (attachmentChanged ? 0.35 : (splitNow ? 0.16 : NFBMotion));
     BOOL edgeMode = collapse;
     self.edgeMode = edgeMode;
-    rowCount = railApps.count;
+    NSUInteger rowCount = columnRows;
     CGFloat contentHeight = rowCount ? (rowCount - 1) * step + side : 0;
-    UIView *actionTarget = splitNow ? NFBDesktopActionWindow() : nil;
+    UIView *actionTarget = floatingApp.length ? NFBDesktopActionWindow() : nil;
     CGRect desktopActionFrame = splitNow ? plan.toggle : CGRectNull;
     CGRect toggleFrame = plan.toggleVisible ? plan.toggle : CGRectNull;
     BOOL parked = plan.parked && !self.edgeExpanded;
