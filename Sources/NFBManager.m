@@ -1184,7 +1184,7 @@ static NSString *NFBFrontmostAppID(void) {
     self.edgeMode = edgeMode;
     NSUInteger rowCount = columnRows;
     CGFloat contentHeight = rowCount ? (rowCount - 1) * step + side : 0;
-    UIView *actionTarget = currentApp.length ? NFBDesktopActionWindow() : nil;
+    UIView *actionTarget = floatingApp.length ? NFBDesktopActionWindow() : nil;
     CGRect desktopActionFrame = splitNow ? plan.toggle : CGRectNull;
     CGRect toggleFrame = plan.toggleVisible ? plan.toggle : CGRectNull;
     BOOL parked = plan.parked && !self.edgeExpanded;
