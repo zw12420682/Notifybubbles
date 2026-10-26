@@ -59,6 +59,9 @@ extern BOOL NFBLaunchAppFromDesktopIcon(id);
 static BOOL openAccepted=YES;
 static NSString *submittedBundle;
 BOOL NFBOpenTrollApp(NSString *bundle) { submittedBundle=bundle; return openAccepted; }
+// The simulator has no TrollOpen; NFBDesktopHost asks for the floating-window
+// class, so answer nil here instead of linking the real adapter.
+Class NFBTrollFloatingWindowClass(void) { return Nil; }
 BOOL NFBSplitTrollFrontmostApp(void) { submittedBundle=@"frontmost"; return openAccepted; }
 // Reproduce the device log: the private wrapper stops hit testing at itself.
 @interface _SBRootFolderLayoutWrapperView : UIView @end

@@ -16,8 +16,7 @@ arch="arm64" if platform.machine()=="arm64" else "x86_64"
 run("xcrun","--sdk","iphonesimulator","clang","-target",arch+"-apple-ios16.0-simulator", "-isysroot",sdk,
     "-DNFB_DESKTOP_SIM_TEST","-fobjc-arc","-fblocks","-Wall","-Wextra","-Werror","-Wno-deprecated-declarations","-I",str(root/"Sources"),
     "-framework","UIKit","-framework","Foundation","-framework","QuartzCore","-framework","CoreGraphics",
-    str(root/"Sources/NFBDesktopHost.m"),str(root/"Sources/NFBStateLedger.m"),str(root/"Sources/NFBInterfaces.m"),str(root/"Sources/NFBDebugLog.m"),
-    str(root/"Sources/NFBTrollOpen.m"),str(root/"Tests/DesktopHostTests.m"),
+    str(root/"Sources/NFBDesktopHost.m"),str(root/"Sources/NFBStateLedger.m"),str(root/"Sources/NFBInterfaces.m"),str(root/"Sources/NFBDebugLog.m"),str(root/"Tests/DesktopHostTests.m"),
     "-o",str(app/"DesktopHostTest"))
 (app/"Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier":"local.notifybubbles.desktop-tests",
     "CFBundleExecutable":"DesktopHostTest","CFBundleName":"DesktopHostTest","CFBundleVersion":"1",
