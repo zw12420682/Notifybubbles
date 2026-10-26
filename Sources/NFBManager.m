@@ -32,10 +32,8 @@ static const NSTimeInterval NFBGestureCooldown = 0.25;
 // Vertical position (0 = top, 1 = bottom) the whole row shifts to while an app
 // is in the split view, so it clears the floating window. Restores on exit.
 static const CGFloat NFBFloatingPosition = 0.80;
-// Vertical position the row shifts to while the keyboard is up, so the bubbles
-// clear the keyboard. Applies in BOTH split view and fullscreen, and outranks
-// every other position rule.
-static const CGFloat NFBKeyboardPosition = 0.49;
+// Keyboard placement is not a constant here: the column is hidden entirely while
+// typing (see setColumnOffscreen:), so there is no keyboard position to blend.
 // Synthetic bubble id that rides at the top of the row while an app is in the
 // split view. Tapping it clears every background app at once. It never enters
 // the store or the switcher ordering.
