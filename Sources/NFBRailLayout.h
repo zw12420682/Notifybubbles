@@ -19,10 +19,11 @@ typedef struct {
     CGRect rail;
     CGRect favorites;
     CGRect toggle;
+    double toggleTop;
     double clearCenterY;
     double diameter;
     double railTop;
-    double rowsTop;
+    double rowsTop;     // content top, one row below toggleTop
     bool parked;
     bool toggleVisible;
     bool favoritesVisible;
@@ -86,11 +87,16 @@ static inline NFBRailPlan NFBPlanRail(double screenWidth, double screenHeight,
     double ceiling = fmax(safe.top, 12);
     double floorY = screenHeight - fmax(safe.bottom, 12);
     if (split && usableSplit) floorY = fmin(floorY, CGRectGetMaxY(splitFrame) - CGRectGetHeight(splitFrame) * 0.05);
-    // The toggle/desktop action always owns the first row. In a split the top is
-    // derived from the window; outside one it is the remembered split top, so the
+    // The toggle/desktop action always owns the first row - in a split too. The
+    // first-row top is therefore allocated here for both modes, before any mode
+    // specific branch runs or the row cursor advances. In a split the top comes
+    // from the window; outside one it is the remembered split top, so the
     // fullscreen column starts exactly where the split column started instead of
     // being re-derived from the fullscreen position slider (which put it near the
-    // bottom right).
+    // bottom right). Whether the slot is actually painted is a separate question
+    // (toggleVisible below): in a split it is the desktop button and needs a
+    // desktop target, so the manager decides that from the target's availability.
+    // Leaving it CGRectZero in a split used to make the desktop button vanish.
     double y;
     if (split && usableSplit) {
         // Original split geometry, untouched: derive the first row from the window
@@ -109,12 +115,13 @@ static inline NFBRailPlan NFBPlanRail(double screenWidth, double screenHeight,
         double lastRowTop = screenHeight - fmax(safe.bottom, 12) - side;
         if (y > lastRowTop) y = fmax(ceiling, lastRowTop);
     }
-    bool toggleSlot = !split;
-    CGRect toggle = CGRectZero;
-    if (toggleSlot) {
-        toggle = CGRectMake(rail.origin.x, y, side, side);
-        y += side + 9;
-    }
+    // The slot top is the anchor the fullscreen column replays; plan.rowsTop is
+    // the content top *after* this row, so the manager must cache this value.
+    plan.toggleTop = y;
+    plan.toggle = CGRectMake(rail.origin.x, y, side, side);
+    // One full step below the slot: a single step put the first icon only 9pt
+    // under the button, so their circular images nearly touched/overlapped.
+    y += side + 9;
     double room = fmax(0, floorY - y - side - 9);
     // A hidden fullscreen column shows no favorites rail, so favorites must not
     // eat the height budget: doing so crushed the main rail to a hairline.
@@ -128,13 +135,15 @@ static inline NFBRailPlan NFBPlanRail(double screenWidth, double screenHeight,
     plan.favorites = CGRectMake(rail.origin.x, y, railWidth, favoriteHeight);
     plan.clearCenterY = CGRectGetMaxY(plan.rail) + 9 + side / 2;
     plan.diameter = diameter;
+    // First content row (favorites block start) - one row below the slot. It is
+    // not the slot anchor: feeding it back as lastSplitTop shifted the next
+    // fullscreen top down by one row.
     plan.railTop = y;
     plan.rowsTop = y;
     plan.favoritesVisible = favoriteRows > 0 && favoriteHeight > 0;
     plan.favoriteHeight = favoriteHeight;
 
-    plan.toggleVisible = toggleSlot;
-    plan.toggle = toggle;
+    plan.toggleVisible = CGRectGetWidth(plan.toggle) > 0;
     plan.parked = NFBShouldParkToggle(collapsed, split, notifiedCount);
     if (plan.parked) {
         double parkedX = NFBParkedToggleX(screenWidth, diameter);

@@ -47,7 +47,35 @@ for token in ["splitRailTop", "splitRailDiameter", "splitRailScreenWidth", "spli
 if "NFBSplitMetricsValid" not in read("Sources/NFBGeometry.h"):
     problems.append("split metric validity helper missing")
 
-# 4. Toggle mode must follow the explicit split state, not the desktop target.
+# 3b. The cache must store the button-slot top, never the content top one row
+#     below it (that shifted the next fullscreen top down by a row), and the
+#     geometry must survive a SpringBoard relaunch through its own state domain.
+state = strip_comments(read("Sources/NFBRailLayout.h"))
+if "self.splitRailTop = plan.toggleTop;" not in manager:
+    problems.append("split metric must cache plan.toggleTop (button slot), not the content top")
+if "self.splitRailTop = plan.rowsTop;" in manager:
+    problems.append("split metric still caches the content top")
+if "plan.toggleTop" not in state:
+    problems.append("plan must expose the button slot top")
+store = read("Sources/NFBRailStateStore.m")
+if 'return @"local.notifybubbles.railstate";' not in store:
+    problems.append("rail geometry must persist in its own state domain")
+if 'CFStringRef)NFBDomain' in store or "NFBDomain" in store:
+    problems.append("rail geometry must not write the user settings domain")
+if "scheduleMetric" not in manager or "restoreRailMetric" not in manager:
+    problems.append("rail geometry must be restored once and written debounced")
+if "NFBRailStateStore.m" not in read("Makefile"):
+    problems.append("NFBRailStateStore.m must be part of the tweak sources")
+if "invalidateRestoredRailMetricForSize" not in manager:
+    problems.append("a restored metric must be dropped when the screen width changes")
+
+# 4. The top slot exists in both modes; in a split it is the desktop action.
+if "CGRect desktopActionFrame = (splitNow && actionTarget) ? plan.toggle : CGRectNull;" not in manager:
+    problems.append("split desktop action must use the plan's top slot")
+if "if (toggleSlot)" in plan or "bool toggleSlot = !split" in plan:
+    problems.append("the top slot must be allocated in split mode too")
+
+# 4b. Toggle mode must follow the explicit split state, not the desktop target.
 toggle = re.search(r"BOOL toggleMode\s*=\s*([^;]+);", manager)
 if not toggle or "splitNow" not in toggle.group(1):
     problems.append("toggle mode must be derived from the explicit split state")

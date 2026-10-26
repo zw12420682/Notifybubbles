@@ -1,3 +1,41 @@
+# 0.48.81 — 分屏顶部房子键 + 注销后位置恢复
+
+只修这两项，其余收纳交互未动。
+
+1. **分屏时列顶的房子键消失（只修这一点）**
+   根因：`NFBPlanRail` 里 `bool toggleSlot = !split;`，分屏时 `plan.toggle` 一直是
+   `CGRectZero`，而布局用 `desktopActionFrame = splitNow ? plan.toggle : CGRectNull`
+   取它，于是分屏打开后桌面/房子键 frame 为零而消失。
+   现在顶部槽位在**任何模式**下都分配（`plan.toggle` = 列 x、槽位 top、`side×side`），
+   并新增 `plan.toggleTop`，即“按钮槽位 top”（不是 content top 的 `rowsTop`），
+   由 manager 缓存；是否显示仍由 manager 按 target 是否可用决定：
+   `desktopActionFrame = (splitNow && actionTarget) ? plan.toggle : CGRectNull`，
+   `toggleFrame = (plan.toggleVisible && !splitNow) ? plan.toggle : CGRectNull`。
+   行距、字号、交互（单击/长按、半露淡出）全部沿用原值。
+   顺带修正：缓存值原先写 `plan.rowsTop`（已经是图标内容首行），下次非分屏顶部会多偏一格，
+   现在缓存 `plan.toggleTop`，并有回归断言 split 顶部槽位与非分屏 toggle 的 y 相同。
+   内容首行间距保持“槽位 + 一个完整行高（side + 9）”，保证与首图标不重叠。
+
+2. **注销（SpringBoard 重启）后收纳键跑到右上角，开一次分屏才恢复**
+   根因：`splitRailTop/Diameter/ScreenWidth/Measured` 是内存属性，`init` 不恢复，
+   首次非分屏布局没有测量值 → 用设置里的 top（右上）。
+   现在新增 `NFBRailState`（纯几何校验，可在 portable 测试里跑）与
+   `NFBRailStateStore`：把最后一次有效分屏列几何写入**独立状态域**
+   `local.notifybubbles.railstate`（绝不写用户设置域 `local.notifybubbles`），
+   键带格式版本号；主线程 `init` 时读一次并恢复。
+   写入只在有效几何变化后去抖（1s，`scheduleMetric` 只保留最新一次），
+   分屏布局 20Hz 也不会落盘；屏宽变化（旋转/不同设备）时恢复值失效，
+   回落到重新测量 + 设置尺寸，不会把旧锚点混进新屏宽。
+
+测试：`Tests/RailLayoutTests.m` 增加几何与持久化断言——split `plan.toggle`
+有正 size、在 favorites/图标之前（不重叠、保持 9pt 间距）、split→非分屏
+toggle top 相同；持久化恢复同位置同尺寸（半露 x 规则不变）、非法数据回退设置 top、
+屏宽变更不误用旧值、旋转不保留屏外锚点。
+`scripts/test_rail_layout.py` 增加静态检查：槽位在 split 模式也分配、
+缓存的是 `plan.toggleTop`、状态域独立、恢复/去抖/屏宽失效接线、源文件进 Makefile。
+
+真机未验证。
+
 # 0.48.80 — 全量静态审计（一次改完所有编译错误）
 
 上一轮起 CI 已全部通过（run 40354195666 / 0.48.79）。本次不再“一次只修一个报错”，

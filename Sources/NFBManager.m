@@ -11,6 +11,7 @@
 #import "NFBStore.h"
 #import "NFBGeometry.h"
 #import "NFBRailLayout.h"
+#import "NFBRailStateStore.h"
 #import "NFBSwitcher.h"
 #import "NFBTrollOpen.h"
 #import "NFBWindowControls.h"
@@ -28,6 +29,9 @@ static const NSTimeInterval NFBMotion = 0.35;
 // No double-tap recognizer: a short tap resolves on release.
 // Guard against repeated callbacks from the same completed gesture.
 static const NSTimeInterval NFBGestureCooldown = 0.25;
+// Coalesced persistence of the split column geometry. A split lays out at display
+// rate, so the record is committed at most this often and only when it changed.
+static const NSTimeInterval NFBRailStateWriteDelay = 1.0;
 
 // Vertical position (0 = top, 1 = bottom) the whole row shifts to while an app
 // is in the split view, so it clears the floating window. Restores on exit.
@@ -241,6 +245,13 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic) CGFloat splitRailTop;
 @property(nonatomic) CGFloat splitRailScreenWidth;
 @property(nonatomic) BOOL splitRailMeasured;
+// Last split geometry restored from disk (nil/false when none was usable). The
+// restore happens once, on creation; later writes are debounced by the store.
+@property(nonatomic, strong) NFBRailStateStore *railStateStore;
+@property(nonatomic) NFBRailMetric restoredRailMetric;
+@property(nonatomic) BOOL restoredRailMetricValid;
+// Width the restored record was last checked against; 0 until the first layout.
+@property(nonatomic) CGFloat restoredRailLastWidth;
 @property(nonatomic) BOOL splitLayout;
 - (void)touchColumn;
 @property(nonatomic, strong) UIVisualEffectView *railMaterial;
@@ -297,12 +308,55 @@ static double NFBNumber(NSString *key, double fallback) {
         _lastBadges = [NSMutableDictionary dictionary];
         _gestureTimes = [NSMutableDictionary dictionary];
         _retractTokens=[NSMutableDictionary dictionary];
+        _railStateStore = [NFBRailStateStore new];
+        [self restoreRailMetric];
         __weak NFBManager *weakSelf = self;
         NFBKeyboardInstall(^{ [weakSelf setNeedsRefresh]; });
         [self reloadPreferences];
     }
     return self;
 }
+// The column reuses the split's top edge and icon size in fullscreen, and those
+// lived in memory only - so after a SpringBoard relaunch the first layout fell
+// back to the settings top and the control sat in the top-right corner until a
+// split had been opened once. Read the persisted geometry once, on the main
+// thread, before the first layout runs.
+- (void)restoreRailMetric {
+    self.restoredRailMetricValid = NO;
+    NFBRailMetric stored = [self.railStateStore loadMetric];
+    if (!NFBRailMetricUsable(stored, stored.screenWidth)) return;
+    self.restoredRailMetric = stored;
+    self.restoredRailMetricValid = YES;
+    self.splitRailTop = stored.top;
+    self.splitRailDiameter = stored.diameter;
+    self.splitRailScreenWidth = stored.screenWidth;
+    self.splitRailMeasured = YES;
+    self.restoredRailLastWidth = stored.screenWidth;
+}
+
+// Switches the restored metric off as soon as the screen shape changes: the
+// cached top is only meaningful on the width it was measured on, so a rotation
+// must fall back to a fresh measurement (and the settings size) rather than mix
+// a stale anchor into a different screen.
+- (void)invalidateRestoredRailMetricForSize:(CGSize)size {
+    if (!self.restoredRailMetricValid) return;
+    if (self.restoredRailLastWidth == size.width) return;
+    self.restoredRailLastWidth = size.width;
+    if (!NFBSplitMetricsValid(self.restoredRailMetric.diameter, 0, size.width,
+            self.restoredRailMetric.screenWidth)) {
+        self.restoredRailMetricValid = NO;
+    }
+}
+
+- (void)persistRailMetricIfMeasured:(BOOL)measured {
+    if (!measured) return;
+    NFBRailMetric metric;
+    metric.top = self.splitRailTop;
+    metric.diameter = self.splitRailDiameter;
+    metric.screenWidth = self.splitRailScreenWidth;
+    [self.railStateStore scheduleMetric:metric after:NFBRailStateWriteDelay];
+}
+
 - (void)reloadPreferences {
     NSAssert(NSThread.isMainThread, @"UI must be on main thread");
     CFPreferencesAppSynchronize(NFBDomain);
@@ -1156,19 +1210,28 @@ static NSString *NFBFrontmostAppID(void) {
     // The plan takes a platform-neutral inset struct; being field-compatible with
     // UIEdgeInsets means this stays a plain value copy.
     NFBRailInsets planSafe = { safe.top, safe.left, safe.bottom, safe.right };
+    // A restored record only applies on the screen shape it was measured on; a
+    // rotation or a different device drops it before the plan can reuse it.
+    [self invalidateRestoredRailMetricForSize:bounds.size];
     NFBRailPlan plan = NFBPlanRail(bounds.size.width, bounds.size.height, planSafe, top, self.iconSize,
         NFBFloatingPosition, splitNow, splitA, splitUsable, self.verticalPosition, collapse,
         hideFavorites ? 0 : self.favoriteApps.count, (unsigned long)columnRows, (unsigned long)notifiedCount,
         (double)self.splitRailTop, (double)self.splitRailDiameter, (double)self.splitRailScreenWidth,
         self.splitRailMeasured);
-    if (splitNow && CGRectGetHeight(plan.rail) >= plan.diameter + 14) {
+    BOOL railMeasuredNow = NO;
+    if (splitNow && plan.toggleTop > 0) {
         // A genuinely laid-out split column is the reference the fullscreen column
-        // reuses: same top edge and the diameter its actual space allowed.
-        self.splitRailTop = plan.rowsTop;
+        // reuses: the same button-slot top (plan.toggleTop, not the content top one
+        // row below it) and the diameter its actual space allowed. The slot top is
+        // the only anchor that exists before any content row, so a very short
+        // split window still records a usable value.
+        self.splitRailTop = plan.toggleTop;
         self.splitRailDiameter = plan.diameter;
         self.splitRailScreenWidth = bounds.size.width;
         self.splitRailMeasured = YES;
+        railMeasuredNow = YES;
     }
+    [self persistRailMetricIfMeasured:railMeasuredNow];
     CGFloat diameter = plan.diameter;
     CGFloat side = diameter + 14;
     CGFloat step = diameter + 9;
@@ -1183,8 +1246,11 @@ static NSString *NFBFrontmostAppID(void) {
     NSUInteger rowCount = columnRows;
     CGFloat contentHeight = rowCount ? (rowCount - 1) * step + side : 0;
     UIView *actionTarget = floatingApp.length ? NFBDesktopActionWindow() : nil;
-    CGRect desktopActionFrame = splitNow ? plan.toggle : CGRectNull;
-    CGRect toggleFrame = plan.toggleVisible ? plan.toggle : CGRectNull;
+    // Both modes own the same top slot; the house button shows while a desktop
+    // target exists, otherwise the collapse control covers it. The slot rect is
+    // no longer zero in a split, which used to make the button disappear.
+    CGRect desktopActionFrame = (splitNow && actionTarget) ? plan.toggle : CGRectNull;
+    CGRect toggleFrame = (plan.toggleVisible && !splitNow) ? plan.toggle : CGRectNull;
     BOOL parked = plan.parked && !self.edgeExpanded;
     self.desktopActionParked = parked;
     // A changing clipped viewport must not race independently animated child

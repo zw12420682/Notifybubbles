@@ -37,7 +37,7 @@ include $(THEOS)/makefiles/common.mk
 
 # Only SpringBoard is injected; the app-side return helper is retired.
 TWEAK_NAME = NotifyBubbles
-NotifyBubbles_FILES = Sources/Tweak.m Sources/NFBStore.m Sources/NFBManager.m Sources/NFBSwitcher.m Sources/NFBTrollOpen.m Sources/NFBWindowControls.m Sources/NFBNotificationPolicy.m Sources/NFBAppExit.m Sources/NFBKeyboard.m Sources/NFBPrivacy.m Sources/NFBOpenEdge.m Sources/NFBDebugLog.m Sources/NFBWindowState.m Sources/NFBOpenConsole.m Sources/NFBHotspot.m Sources/NFBDesktopHost.m Sources/NFBStateLedger.m Sources/NFBInterfaces.m
+NotifyBubbles_FILES = Sources/Tweak.m Sources/NFBStore.m Sources/NFBManager.m Sources/NFBSwitcher.m Sources/NFBTrollOpen.m Sources/NFBWindowControls.m Sources/NFBNotificationPolicy.m Sources/NFBAppExit.m Sources/NFBKeyboard.m Sources/NFBPrivacy.m Sources/NFBOpenEdge.m Sources/NFBDebugLog.m Sources/NFBWindowState.m Sources/NFBOpenConsole.m Sources/NFBHotspot.m Sources/NFBDesktopHost.m Sources/NFBStateLedger.m Sources/NFBRailStateStore.m Sources/NFBInterfaces.m
 NFB_PACKAGE_VERSION = $(shell sed -n 's/^Version: //p' control)
 NotifyBubbles_CFLAGS = -fobjc-arc -Wall -Wextra -DNFB_VERSION='@"$(NFB_PACKAGE_VERSION)"'
 NotifyBubbles_FRAMEWORKS = UIKit Foundation QuartzCore CoreGraphics UserNotifications
