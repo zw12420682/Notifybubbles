@@ -10,6 +10,23 @@ static inline double NFBOpacity(double value) {
 // exactly onto that edge when retracted, exposing half of the circular image.
 static inline double NFBRetraction(double diameter) { return diameter / 2 + 7; }
 
+// Collapsed, non-split column while a fullscreen app is in use. That app gets a
+// row of its own even without a notification, and it is the only row (plus the
+// collapse control) that shows just its left half: those two views move right by
+// their own half width until the image centre sits exactly on the screen edge.
+// Everything else keeps the original collapsed rule (full icon, original x).
+// Both conditions are required, so a split (whose column has the same x) and a
+// parked empty column never half-hide anything but the control.
+static inline bool NFBExpandedAppHalfHidden(bool collapsed, bool split, bool frontAppPresent) {
+    return collapsed && !split && frontAppPresent;
+}
+// Same x as NFBRetraction puts the expanded image, mirrored: the image is inset 7
+// points inside the bubble, so this makes the bubble's image centre equal the
+// screen width. Fixed: independent of how many unread icons share the column.
+static inline double NFBHalfHiddenBubbleX(double diameter) {
+    return isfinite(diameter) ? diameter / 2 - 7 : 0;
+}
+
 static inline double NFBPosition(double value) { return isfinite(value) ? fmax(0, fmin(1, value)) : 0.7; }
 static inline double NFBRowCenter(unsigned long count, unsigned long index, double step, double side) {
     // count-1-index underflows for an empty list or an out-of-range index and
@@ -67,6 +84,17 @@ static inline bool NFBSplitMetricsValid(double diameter, double span,
 static inline double NFBCollapsedRailFrameX(double screenWidth, double railWidth, double margin) {
     if (!isfinite(screenWidth) || !isfinite(railWidth) || !isfinite(margin)) return 0;
     return fmax(0, screenWidth - railWidth - margin);
+}
+
+// Collapsed column that carries a half-hidden row: the viewport widens by one
+// bubble so its right edge reaches the physical screen edge. Rows are laid out
+// from the view's left edge, so every row (regular ones included) moves together
+// and keeps its original x inside the column; only the exception row and the
+// toggle add NFBHalfHiddenBubbleX on top. The extra width is plain on-screen
+// space (no parent clipping), so the moved views are not cut.
+static inline double NFBCollapsedEdgeRailFrameX(double screenWidth, double railWidth, double margin) {
+    if (!isfinite(screenWidth) || !isfinite(railWidth) || !isfinite(margin)) return 0;
+    return NFBCollapsedRailFrameX(screenWidth, railWidth + margin + 7, margin);
 }
 
 // Half-hidden toggle: the image's center belongs exactly on the screen edge, so

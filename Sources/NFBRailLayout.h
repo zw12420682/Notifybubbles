@@ -22,6 +22,8 @@ typedef struct {
     double toggleTop;
     double clearCenterY;
     double diameter;
+    bool edgeRail;      // collapsed before a fullscreen app: viewport widened to the edge
+    double railViewportWidth; // icon column width inside the (possibly widened) rail frame
     double railTop;
     double rowsTop;     // content top, one row below toggleTop
     bool parked;
@@ -42,10 +44,11 @@ static inline NFBRailPlan NFBPlanRail(double screenWidth, double screenHeight,
         bool split, CGRect splitFrame, bool usableSplit, double currentPosition,
         bool collapsed, unsigned long favorites, unsigned long rows, unsigned long notifiedCount,
         double lastSplitTop, double lastSplitDiameter, double lastSplitScreenWidth,
-        bool measured) {
+        bool measured, bool edgeRail) {
     NFBRailPlan plan;
     memset(&plan, 0, sizeof(plan));
     plan.rail = CGRectZero;
+    plan.railViewportWidth = 0;
     plan.favorites = CGRectZero;
     plan.toggle = CGRectZero;
     if (!isfinite(screenWidth) || !isfinite(screenHeight) || screenWidth <= 0 || screenHeight <= 0) return plan;
@@ -74,7 +77,16 @@ static inline NFBRailPlan NFBPlanRail(double screenWidth, double screenHeight,
     double railY = anchor + (step - side / 2) + padding - height;
     railY = fmax(top, fmin(screenHeight - fmax(safe.bottom, 20) - 20 - height, railY));
     double railWidth = side;
-    CGRect rail = CGRectMake(NFBCollapsedRailFrameX(screenWidth, railWidth, screenMargin), railY, railWidth, height);
+    // Collapsed column with a half-hidden fullscreen row: keep the y/size budget
+    // untouched and only widen the clipped viewport to the physical edge (the
+    // left edge stays put, so regular rows keep their x). Any other mode keeps
+    // the original frame exactly.
+    bool edge = edgeRail && collapsed && !split;
+    double railX = edge ? NFBCollapsedEdgeRailFrameX(screenWidth, railWidth, screenMargin)
+                        : NFBCollapsedRailFrameX(screenWidth, railWidth, screenMargin);
+    double frameWidth = edge ? screenWidth - railX : railWidth;
+    CGRect rail = CGRectMake(railX, railY, frameWidth, height);
+    plan.railViewportWidth = railWidth;
     if (split && usableSplit) {
         double y = fmax(safe.top, CGRectGetMinY(splitFrame));
         double bottom = fmin(screenHeight - safe.bottom, CGRectGetMaxY(splitFrame));
@@ -131,10 +143,11 @@ static inline NFBRailPlan NFBPlanRail(double screenWidth, double screenHeight,
     double favoriteHeight = hideFavorites ? 0 : fit.favorites;
     double gap = fit.gap;
     height = fit.regular;
-    plan.rail = CGRectMake(rail.origin.x, y + favoriteHeight + gap, railWidth, height);
+    plan.rail = CGRectMake(rail.origin.x, y + favoriteHeight + gap, frameWidth, height);
     plan.favorites = CGRectMake(rail.origin.x, y, railWidth, favoriteHeight);
     plan.clearCenterY = CGRectGetMaxY(plan.rail) + 9 + side / 2;
     plan.diameter = diameter;
+    plan.edgeRail = edge;
     // First content row (favorites block start) - one row below the slot. It is
     // not the slot anchor: feeding it back as lastSplitTop shifted the next
     // fullscreen top down by one row.

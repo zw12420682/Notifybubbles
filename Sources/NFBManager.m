@@ -216,6 +216,10 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic) NSUInteger emptyReads;
 @property(nonatomic) CGFloat verticalPosition;
 @property(nonatomic, copy) NSString *lastActiveApp;
+// The fullscreen app the collapsed column shows as a half-hidden exception row
+// even without a notification; nil unless the column is collapsed, not split and
+// an app really is frontmost. Kept so the move animates from the current spot.
+@property(nonatomic, copy) NSString *railExceptionApp;
 @property(nonatomic, strong) NSMutableArray<NSString *> *recentUsedApps;
 @property(nonatomic, copy) NSArray *lastLayoutApps;
 @property(nonatomic) CGFloat iconSize;
@@ -1063,7 +1067,19 @@ static NSString *NFBFrontmostAppID(void) {
     // notifications) and expanded (everything, auto-collapses after 5s).
     BOOL split = floatingApp.length > 0;
     BOOL collapsed = !split && !self.edgeExpanded;
-    NSString *active = NFBTrollVisibleApp() ?: floatingApp ?: (home ? nil : NFBCurrentWindowState().frontApp);
+    // Frontmost fullscreen app. The resolved window state is built once per main
+    // runloop turn and shared, so this is a lookup, not an extra tree scan. A
+    // split owns the column, and the desktop owns no app, so neither qualifies.
+    NFBWindowState *windowState = NFBCurrentWindowState();
+    NSString *fullscreenApp = (!split && !windowState.home && windowState.fullscreen) ? windowState.frontApp : nil;
+    if (NFBIsSystemDesktop(fullscreenApp)) fullscreenApp = nil;
+    if ([self.closingApps containsObject:fullscreenApp ?: @""] || [self.dismissedSwitcher containsObject:fullscreenApp ?: @""])
+        fullscreenApp = nil;
+    // Collapsed column only: the exception row exists to keep the current app
+    // reachable while the column is folded; expanding shows everything anyway.
+    BOOL exceptionApp = NFBExpandedAppHalfHidden(collapsed, split, fullscreenApp.length > 0);
+    self.railExceptionApp = exceptionApp ? fullscreenApp : nil;
+    NSString *active = NFBTrollVisibleApp() ?: floatingApp ?: (home ? nil : windowState.frontApp);
     if (NFBIsSystemDesktop(active)) active = nil;
     // Recency decides membership, never a forced jump of an existing icon.
     if (active.length && ![self.closingApps containsObject:active] && ![self.dismissedSwitcher containsObject:active] && ![apps containsObject:active])
@@ -1099,6 +1115,11 @@ static NSString *NFBFrontmostAppID(void) {
             if ([self.lastSwitcher containsObject:app] || [app isEqual:active]) [background addObject:app];
         [columnApps addObjectsFromArray:NFBRecentBackgroundThree(background, history.array, self.favoriteApps)];
     }
+    // The half-hidden exception row joins the same column - no separate floating
+    // view. It is appended last so it never reshuffles the unread order, and it is
+    // skipped when that app already has a notification: then the original full
+    // rule applies and the app appears exactly once.
+    if (exceptionApp && ![columnApps containsObject:fullscreenApp]) [columnApps addObject:fullscreenApp];
     NSArray<NSString *> *railApps = columnApps.array;
     NSMutableArray<NSString *> *displayApps = [railApps mutableCopy];
     // The clear button only makes sense with something to clear (or a split to close).
@@ -1217,7 +1238,7 @@ static NSString *NFBFrontmostAppID(void) {
         NFBFloatingPosition, splitNow, splitA, splitUsable, self.verticalPosition, collapse,
         hideFavorites ? 0 : self.favoriteApps.count, (unsigned long)columnRows, (unsigned long)notifiedCount,
         (double)self.splitRailTop, (double)self.splitRailDiameter, (double)self.splitRailScreenWidth,
-        self.splitRailMeasured);
+        self.splitRailMeasured, self.railExceptionApp.length > 0);
     BOOL railMeasuredNow = NO;
     if (splitNow && plan.toggleTop > 0) {
         // A genuinely laid-out split column is the reference the fullscreen column
@@ -1240,6 +1261,9 @@ static NSString *NFBFrontmostAppID(void) {
     CGRect favoritesFrame = plan.favoritesVisible ? plan.favorites : CGRectZero;
     CGFloat clearCenterY = plan.clearCenterY;
     CGFloat railWidth = side;
+    // Widened when the exception row is present: rows keep their offsets from the
+    // view's left edge, so every regular icon stays where it was.
+    CGFloat railFrameWidth = CGRectGetWidth(railFrame);
     NSTimeInterval layoutDuration = UIAccessibilityIsReduceMotionEnabled() ? 0 : (attachmentChanged ? 0.35 : (splitNow ? 0.16 : NFBMotion));
     BOOL edgeMode = collapse;
     self.edgeMode = edgeMode;
@@ -1251,6 +1275,12 @@ static NSString *NFBFrontmostAppID(void) {
     // no longer zero in a split, which used to make the button disappear.
     CGRect desktopActionFrame = (splitNow && actionTarget) ? plan.toggle : CGRectNull;
     CGRect toggleFrame = (plan.toggleVisible && !splitNow) ? plan.toggle : CGRectNull;
+    // The collapse control joins the exception row: same x as the fullscreen
+    // app's bubble, so both show their left half on the screen edge. It only
+    // moves in that mode; a split, an expanded column or a parked-only column keep
+    // the plain slot.
+    if (self.railExceptionApp.length > 0 && !splitNow && !CGRectIsNull(toggleFrame) && toggleFrame.size.width > 0)
+        toggleFrame.origin.x += NFBHalfHiddenBubbleX(diameter);
     BOOL parked = plan.parked && !self.edgeExpanded;
     self.desktopActionParked = parked;
     // A changing clipped viewport must not race independently animated child
@@ -1291,7 +1321,7 @@ static NSString *NFBFrontmostAppID(void) {
                 self.railMaterial.alpha = rowCount && height > 0 ? 0.55 : 0;
             } completion:nil];
     }
-    self.rail.contentSize = CGSizeMake(railWidth, contentHeight);
+    self.rail.contentSize = CGSizeMake(railFrameWidth, contentHeight);
     CGFloat maxOffset = MAX(0, self.rail.contentSize.height - height);
     if (!self.rail.dragging && !self.rail.decelerating) {
         CGFloat offset = attachmentChanged ? maxOffset - oldBottomOffset : self.rail.contentOffset.y;
@@ -1370,7 +1400,12 @@ static NSString *NFBFrontmostAppID(void) {
         // The clear action is appended last and therefore stays above all apps.
         CGFloat rowY = isClearAll ? side / 2 : NFBRowCenter(rowCount, rowIndex, step, side);
         CGFloat corner = !isClearAll ? diameter * 0.23 : diameter / 2;
-        CGPoint targetCenter = isClearAll ? CGPointMake(CGRectGetMidX(railFrame), clearCenterY) : CGPointMake(side / 2, rowY);
+        // Only the exception row (and never a whole-column transform) is moved:
+        // the fullscreen app's bubble, and the toggle in layoutDesktopAction.
+        BOOL exceptionRow = !isClearAll && self.railExceptionApp.length > 0 &&
+            [appID isEqualToString:self.railExceptionApp];
+        CGFloat rowX = side / 2 + (exceptionRow ? NFBHalfHiddenBubbleX(diameter) : 0);
+        CGPoint targetCenter = isClearAll ? CGPointMake(CGRectGetMidX(railFrame), clearCenterY) : CGPointMake(rowX, rowY);
         if (fresh) {
             button.bounds = targetBounds;
             button.center = targetCenter;
@@ -1382,12 +1417,15 @@ static NSString *NFBFrontmostAppID(void) {
         }
         // The clear-all bubble is an action, not an app: keep it fully opaque so
         // it stays discoverable, unlike the dimmed background bubbles around it.
+        // The exception row keeps the half opacity; an app that has its own
+        // notification is not the exception, so it keeps the regular opacity.
         CGFloat alpha = self.iconOpacity;
         if (isClearAll) {
             alpha = 1.0;
         } else if ([active isEqualToString:appID]) {
             alpha = 1.0;
         }
+        if (exceptionRow) alpha = 0.5;
         BOOL changed = fresh || fabs(button.imageView.layer.cornerRadius - corner) > 0.01 || !CGRectEqualToRect(button.bounds, targetBounds) ||
             !CGPointEqualToPoint(button.center, targetCenter) ||
             !CGAffineTransformEqualToTransform(button.transform, target) ||

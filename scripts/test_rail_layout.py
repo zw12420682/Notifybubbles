@@ -117,7 +117,40 @@ if "NFBPlanRail" not in tests:
 if "RailLayoutTests.m" not in workflow:
     problems.append("CI must run RailLayoutTests.m")
 
+# 10. Collapsed column with a fullscreen app: one exception row inside the same
+#     column, half-hidden by x (never by a whole-column transform or clipping).
+geometry = read("Sources/NFBGeometry.h")
+for helper in ["NFBExpandedAppHalfHidden", "NFBHalfHiddenBubbleX", "NFBCollapsedEdgeRailFrameX"]:
+    if helper not in geometry:
+        problems.append("missing geometry helper: " + helper)
+if "return collapsed && !split && frontAppPresent;" not in geometry:
+    problems.append("the half-hidden exception must require collapsed && !split && a fullscreen app")
+if "return isfinite(diameter) ? diameter / 2 - 7 : 0;" not in geometry:
+    problems.append("half-hidden x must be diameter/2 - 7 (image centre on the edge)")
+if "self.railExceptionApp" not in manager:
+    problems.append("the manager must track the exception row")
+if "if (exceptionApp && ![columnApps containsObject:fullscreenApp]) [columnApps addObject:fullscreenApp];" not in manager:
+    problems.append("the exception app must join the same column and never duplicate a notified app")
+if "windowState.fullscreen" not in manager or "NFBCurrentWindowState()" not in manager:
+    problems.append("the front app must come from the shared NFBWindowState, not a new tree scan")
+if "self.railExceptionApp.length > 0" not in manager or "toggleFrame.origin.x += NFBHalfHiddenBubbleX(diameter);" not in manager:
+    problems.append("the collapse control must take the same half-hidden x")
+# The exception row moves through its centre; the column itself is never shifted.
+if "CGFloat rowX = side / 2 + (exceptionRow ? NFBHalfHiddenBubbleX(diameter) : 0);" not in manager:
+    problems.append("the exception row must be offset through its own centre")
+if "transform.origin.x" in manager or "self.rail.transform = CGAffineTransform" in manager:
+    problems.append("the exception must move by row x, never by a column transform")
+    problems.append("the exception must move by row x, never by a column transform")
+if "railViewportWidth" not in plan:
+    problems.append("the plan must expose the icon column width inside the widened frame")
+if "CGSizeMake(railFrameWidth, contentHeight)" not in manager:
+    problems.append("the rail content size must follow the widened frame")
+if "exceptionSlot" in manager:
+    problems.append("no separate exception slot may be created")
+if "NFBExpandedAppHalfHidden(" not in tests:
+    problems.append("RailLayoutTests must cover the half-hidden policy")
+
 if problems:
     print("FAIL: rail layout checks\n - " + "\n - ".join(problems))
     sys.exit(1)
-print("PASS: rail layout wiring (single geometry source, no hidden favorites, explicit split state)")
+print("PASS: rail layout wiring (single geometry source, no hidden favorites, explicit split state, half-hidden exception row)")

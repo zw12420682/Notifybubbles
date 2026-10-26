@@ -51,8 +51,14 @@ static inline NFBRailInsets NSBBuildSafeArea(NSBRailSafe s) { return s; }
 
 static void check(bool condition, const char *message) {
     if (condition) return;
+    fprintf(stderr, "GUARD>%s<\n", message);
     fprintf(stderr, "FAIL: %s\n", message);
     exit(1);
+}
+
+// Right edge a regular row's image reaches inside the (possibly widened) rail.
+static double regularRightX(NFBRailPlan plan) {
+    return plan.rail.origin.x + plan.diameter + 14 - 7;
 }
 
 static void close_(double a, double b, const char *message) {
@@ -80,7 +86,7 @@ int main(void) {
 
     // --- split column: derived from the window, icons sized from the room left
     NFBRailPlan split = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, true,
-            splitFrame, true, 0.7, false, 2, 3, 0, 0, 0, 0, false);
+            splitFrame, true, 0.7, false, 2, 3, 0, 0, 0, 0, false, false);
     finiteRect(split.rail, "split rail finite");
     // The house button owns the top slot in a split too: a zero frame here made
     // it disappear from the top of the split icon column.
@@ -126,7 +132,7 @@ int main(void) {
     // --- fullscreen expanded: reuses the split slot anchor and the split diameter
     // (the manager passes the button slot top it cached, i.e. plan.toggleTop)
     NFBRailPlan open = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, false, CGRectZero,
-            false, 0.7, false, 2, 3, 0, split.toggleTop, split.diameter, W, true);
+            false, 0.7, false, 2, 3, 0, split.toggleTop, split.diameter, W, true, false);
     finiteRect(open.rail, "expanded rail finite");
     close_(open.diameter, split.diameter, "expanded reuses the split diameter");
     check(open.toggleVisible, "expanded shows the desktop toggle");
@@ -153,15 +159,15 @@ int main(void) {
     // --- squeezed split (window leaves little room) is reused, not re-measured
     CGRect wide = CGRectMake(0, 422, 340, 422);
     NFBRailPlan sq = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, true, wide, true,
-            0.7, false, 2, 3, 0, 0, 0, 0, false);
+            0.7, false, 2, 3, 0, 0, 0, 0, false, false);
     check(sq.diameter < 48, "narrow split shrinks the icons");
     NFBRailPlan as = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, false, CGRectZero,
-            false, 0.7, false, 2, 3, 0, sq.toggleTop, sq.diameter, W, true);
+            false, 0.7, false, 2, 3, 0, sq.toggleTop, sq.diameter, W, true, false);
     close_(as.diameter, sq.diameter, "expanded reuses the squeezed split diameter");
 
     // --- collapsed column: same top, same size, hugs the right edge, parks
     NFBRailPlan col = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, false, CGRectZero,
-            false, 0.7, true, 0, 2, 0, split.toggleTop, split.diameter, W, true);
+            false, 0.7, true, 0, 2, 0, split.toggleTop, split.diameter, W, true, false);
     finiteRect(col.rail, "collapsed rail finite");
     close_(col.diameter, 48, "collapsed keeps the split diameter");
     close_(col.toggle.origin.y, split.toggleTop, "collapsed control keeps the split row top");
@@ -180,7 +186,7 @@ int main(void) {
 
     // --- empty collapsed column: identical geometry, fades out
     NFBRailPlan emp = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, false, CGRectZero,
-            false, 0.7, true, 0, 0, 0, split.toggleTop, split.diameter, W, true);
+            false, 0.7, true, 0, 0, 0, split.toggleTop, split.diameter, W, true, false);
     close_(emp.toggle.origin.y, col.toggle.origin.y, "empty y equals collapsed y");
     close_(emp.toggle.origin.x, col.toggle.origin.x, "empty x equals collapsed x");
     check(emp.parked && NFBToggleShouldFade(emp.parked, true), "empty column fades");
@@ -189,12 +195,12 @@ int main(void) {
 
     // --- collapsed with favorites: favorites never buy height while hidden
     NFBRailPlan many = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, false, CGRectZero,
-            false, 0.7, true, 5, 2, 0, split.toggleTop, split.diameter, W, true);
+            false, 0.7, true, 5, 2, 0, split.toggleTop, split.diameter, W, true, false);
     close_(CGRectGetHeight(many.rail), CGRectGetHeight(col.rail), "favorites do not resize the hidden rail");
 
     // --- collapsed with notifications: stays on screen, does not park
     NFBRailPlan notified = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, false, CGRectZero,
-            false, 0.7, true, 0, 2, 2, split.toggleTop, split.diameter, W, true);
+            false, 0.7, true, 0, 2, 2, split.toggleTop, split.diameter, W, true, false);
     close_(notified.toggle.origin.x, NFBCollapsedRailFrameX(W, col.diameter + 14, 4),
             "notified collapsed column stays fully on screen");
     check(!notified.parked && !NFBToggleShouldFade(notified.parked, true),
@@ -202,7 +208,7 @@ int main(void) {
 
     // --- expanded with zero regular rows still shows the control on the right
     NFBRailPlan oe = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, false, CGRectZero,
-            false, 0.7, false, 3, 3, 0, split.toggleTop, split.diameter, W, true);
+            false, 0.7, false, 3, 3, 0, split.toggleTop, split.diameter, W, true, false);
     check(!oe.parked && !NFBToggleShouldFade(oe.parked, true), "expanded never fades");
     close_(oe.toggle.origin.x, NFBCollapsedRailFrameX(W, 62, 4), "expanded control on screen");
     check(CGRectGetHeight(oe.rail) >= 62, "expanded rail not crushed by favorites");
@@ -215,14 +221,14 @@ int main(void) {
 
     // --- first layout (nothing measured yet): top comes from the setting
     NFBRailPlan first = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, false, CGRectZero,
-            false, 0.7, true, 0, 0, 0, 0, 0, 0, false);
+            false, 0.7, true, 0, 0, 0, 0, 0, 0, false, false);
     finiteRect(first.toggle, "first toggle finite");
     close_(first.toggle.origin.y, 90, "first layout uses the configured top");
     check(first.toggle.origin.y < H / 2, "first layout is not at the bottom");
 
     // --- a rotated screen invalidates the remembered split metric
     NFBRailPlan rot = NFBPlanRail(H, W, safe, TOP, 52, splitPosition, false, CGRectZero,
-            false, 0.7, false, 2, 3, 0, split.toggleTop, split.diameter, W, true);
+            false, 0.7, false, 2, 3, 0, split.toggleTop, split.diameter, W, true, false);
     close_(rot.diameter, 52, "rotation falls back to the settings diameter");
     finiteRect(rot.rail, "rotated rail finite");
     // A rotated screen must not reuse the landscape anchor either.
@@ -231,24 +237,24 @@ int main(void) {
     NFBRailMetric rotated = NFBRailMetricChoose(stored, false, stored, H);
     check(NFBRailMetricUsable(rotated, H), "stored metric stays readable after rotation");
     NFBRailPlan rotBack = NFBPlanRail(W, H, safe, TOP, 52, splitPosition, false, CGRectZero,
-            false, 0.7, false, 2, 3, 0, rotated.top, rotated.diameter, rotated.screenWidth, true);
+            false, 0.7, false, 2, 3, 0, rotated.top, rotated.diameter, rotated.screenWidth, true, false);
     close_(rotBack.toggle.origin.y, stored.top, "rotated back to the same width reuses the anchor");
 
     // --- hostile input never yields NaN/infinite frames
     NFBRailPlan nan = NFBPlanRail(NAN, H, safe, TOP, NAN, splitPosition, false, CGRectZero,
-            false, NAN, true, 0, 0, 0, NAN, NAN, NAN, true);
+            false, NAN, true, 0, 0, 0, NAN, NAN, NAN, true, false);
     finiteRect(nan.rail, "nan rail");
     finiteRect(nan.toggle, "nan toggle");
     NFBRailPlan inf = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, true,
-            CGRectMake(0, 0, INFINITY, 0), true, 0.7, false, 2, 3, 0, 0, 0, 0, false);
+            CGRectMake(0, 0, INFINITY, 0), true, 0.7, false, 2, 3, 0, 0, 0, 0, false, false);
     finiteRect(inf.rail, "inf rail");
     NFBRailPlan z = NFBPlanRail(0, 0, safe, TOP, 48, splitPosition, false, CGRectZero,
-            false, 0.7, true, 0, 0, 0, 0, 0, 0, false);
+            false, 0.7, true, 0, 0, 0, 0, 0, 0, false, false);
     finiteRect(z.rail, "zero rail");
 
     // --- a long list gets a real viewport
     NFBRailPlan longl = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, false, CGRectZero,
-            false, 0.7, true, 0, 8, 0, split.toggleTop, split.diameter, W, true);
+            false, 0.7, true, 0, 8, 0, split.toggleTop, split.diameter, W, true, false);
     check(CGRectGetHeight(longl.rail) > 2 * 57, "long list keeps a viewport");
     check(NFBSplitMetricsValid(48, 0, W, W), "valid metric");
     check(!NFBSplitMetricsValid(0, 0, W, W), "zero metric rejected");
@@ -267,7 +273,7 @@ int main(void) {
     close_(chosen.top, stored.top, "persisted record keeps the slot top");
     NFBRailPlan relaunch = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, false, CGRectZero,
             false, 0.7, true, 0, 2, 0, chosen.top, chosen.diameter, chosen.screenWidth,
-            NFBRailMetricUsable(chosen, W));
+            NFBRailMetricUsable(chosen, W), false);
     // Same place, same size as just before the respring.
     close_(relaunch.toggle.origin.y, 200 + 422 * 0.05, "relaunch keeps the toggle top");
     close_(relaunch.toggle.origin.x, col.toggle.origin.x, "relaunch keeps the parked x");
@@ -300,7 +306,7 @@ int main(void) {
         NFBRailMetric fb = NFBRailMetricChoose(none, false, bad, W);
         check(!NFBRailMetricUsable(fb, W), "invalid top is not adopted");
         NFBRailPlan p = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, false, CGRectZero,
-                false, 0.7, true, 0, 0, 0, fb.top, fb.diameter, fb.screenWidth, NFBRailMetricUsable(fb, W));
+                false, 0.7, true, 0, 0, 0, fb.top, fb.diameter, fb.screenWidth, NFBRailMetricUsable(fb, W), false);
         close_(p.toggle.origin.y, TOP, "invalid top falls back to the settings top");
         finiteRect(p.toggle, "fallback toggle finite");
     }
@@ -322,7 +328,7 @@ int main(void) {
     bool changedMeasured = NFBSplitMetricsValid(chosen.diameter, 0, wider, chosen.screenWidth);
     check(!changedMeasured, "a new screen width invalidates the cached metric");
     NFBRailPlan changed = NFBPlanRail(wider, H, safe, TOP, 48, splitPosition, false, CGRectZero,
-            false, 0.7, true, 0, 2, 0, chosen.top, chosen.diameter, chosen.screenWidth, changedMeasured);
+            false, 0.7, true, 0, 2, 0, chosen.top, chosen.diameter, chosen.screenWidth, changedMeasured, false);
     close_(changed.diameter, 48, "screen width change falls back to the settings diameter");
     check(!overlap(changed.toggle, changed.rail), "widened screen keeps the toggle off the rail");
     // Parked control: image centre on the screen edge. Compare whole points -
@@ -336,7 +342,7 @@ int main(void) {
     check(changed.parked, "widened screen keeps the parked state");
     NFBRailPlan narrower = NFBPlanRail(320, H, safe, TOP, 48, splitPosition, false, CGRectZero,
             false, 0.7, true, 0, 2, 0, chosen.top, chosen.diameter, chosen.screenWidth,
-            NFBSplitMetricsValid(chosen.diameter, 0, 320, chosen.screenWidth));
+            NFBSplitMetricsValid(chosen.diameter, 0, 320, chosen.screenWidth), false);
     close_(narrower.toggle.origin.x, 289, "narrower screen parks the toggle half off the edge");
     close_(narrower.toggle.origin.x, NFBParkedToggleX(320, narrower.diameter),
             "narrower screen keeps the parked x");
@@ -344,11 +350,95 @@ int main(void) {
 
     // --- a split with no room for content still allocates the slot
     NFBRailPlan tiny = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, true,
-            CGRectMake(0, H - 100, 195, 100), true, 0.7, false, 0, 1, 0, 0, 0, 0, false);
+            CGRectMake(0, H - 100, 195, 100), true, 0.7, false, 0, 1, 0, 0, 0, 0, false, false);
     check(CGRectGetWidth(tiny.toggle) > 0 && CGRectGetHeight(tiny.toggle) > 0, "short split keeps the slot");
     check(!overlap(tiny.toggle, tiny.rail), "short split keeps the toggle off the rail");
     finiteRect(tiny.rail, "short split rail finite");
 
+    // --- collapsed column while a fullscreen app is in use (edge rail)
+    const double margin = 4, inset = 7;
+    // Exception row = the fullscreen app (shown even without a notification) and
+    // the collapse control: two views only. Both shift right by diameter/2 - 7 so
+    // the image centre lands on the screen edge; unread rows keep the original
+    // collapsed rule (full icon). The clipped viewport is widened to the edge so
+    // nothing is cut by the parent, and it starts 11pt further left, which leaves
+    // every row's offset inside the column unchanged.
+    NFBRailPlan edge = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, false, CGRectZero,
+            false, 0.7, true, 0, 2, 0, split.toggleTop, split.diameter, W, true, true);
+    finiteRect(edge.rail, "edge rail finite");
+    check(edge.edgeRail && NFBExpandedAppHalfHidden(true, false, true),
+            "collapsed non-split fullscreen column is an edge rail");
+    double halfX = NFBHalfHiddenBubbleX(edge.diameter);
+    close_(halfX, edge.diameter / 2 - inset, "half-hidden x is a fixed partial offset");
+    close_(CGRectGetMaxX(edge.rail), W, "edge rail viewport reaches the screen edge");
+    close_(CGRectGetWidth(edge.rail), 77, "edge rail widens the viewport to the edge");
+    close_(CGRectGetWidth(col.rail), 62, "plain collapsed rail keeps the icon column width");
+    close_(edge.rail.origin.x, 313, "edge rail viewport starts one inset+margin further left");
+    close_(col.rail.origin.x, W - 62 - margin, "plain collapsed rail keeps its x");
+    close_(edge.rail.origin.x, col.rail.origin.x - (inset + margin),
+            "edge rail only moves left by the extra width");
+    close_(edge.railViewportWidth, col.railViewportWidth, "edge rail keeps the icon column width");
+    close_(CGRectGetHeight(edge.rail), CGRectGetHeight(col.rail), "edge rail keeps the row budget");
+    close_(edge.diameter, col.diameter, "edge rail keeps the icon diameter");
+    close_(edge.toggle.origin.y, col.toggle.origin.y, "edge rail keeps the control row");
+    close_(edge.clearCenterY, col.clearCenterY, "edge rail keeps the clear row");
+    close_(edge.toggle.origin.x, col.toggle.origin.x, "edge rail keeps the control x");
+    check(edge.parked, "a lone fullscreen app without notifications leaves the control parked");
+    // Same y and spacing as any other row: only the x of the two exceptions moves.
+    close_(NFBRowCenter(2, 0, edge.diameter + 9, edge.diameter + 14),
+            NFBRowCenter(2, 0, col.diameter + 9, col.diameter + 14),
+            "exception row centre is unchanged by the widening");
+    close_(halfX + inset + edge.diameter / 2, edge.diameter,
+            "half-hidden centre is the bubble half width");
+    close_(halfX + inset - edge.diameter / 2, 0,
+            "half-hidden offset is mirrored from the image inset");
+    close_(regularRightX(edge), W - 22,
+            "unread rows keep their column offset with a full icon");
+    check(edge.rail.origin.x + halfX + edge.diameter + inset <= CGRectGetMaxX(edge.rail) + 0.51,
+            "half-hidden bubble is not clipped by the rail");
+
+    // Notified unread apps also present: same exception geometry, the unread rows
+    // are not moved and stay fully visible (no whole-column transform).
+    NFBRailPlan edgeNotified = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, false, CGRectZero,
+            false, 0.7, true, 2, 3, 2, split.toggleTop, split.diameter, W, true, true);
+    close_(edgeNotified.rail.origin.x, edge.rail.origin.x, "unread rows share the exception left edge");
+    close_(edgeNotified.railViewportWidth, 62, "unread rows keep the original column width");
+    close_(CGRectGetMaxX(edgeNotified.rail), W, "widened viewport reaches the screen edge");
+    close_(regularRightX(edgeNotified), W - 22,
+           "unread rows stay fully on screen inside the widened viewport");
+    check(!edgeNotified.parked, "unread apps keep the column on screen");
+    close_(edgeNotified.toggle.origin.x, edgeNotified.rail.origin.x, "control x stays on the column, never offset for the exception");
+    // No whole-column transform: the regular row centres are identical in both
+    // columns, only the exception row and the toggle are offset.
+    close_(NFBRowCenter(3, 1, edgeNotified.diameter + 9, edgeNotified.diameter + 14),
+            NFBRowCenter(3, 1, edge.diameter + 9, edge.diameter + 14) + 0,
+            "unread row y is unchanged by the exception");
+    check(NFBExpandedAppHalfHidden(true, false, true) && !edgeNotified.parked,
+            "edge rail keeps half-hiding while unread apps share the column");
+
+    // Split is untouched by the flag, and never half-hides its icons.
+    check(!NFBExpandedAppHalfHidden(false, true, true), "split never half-hides");
+    check(!NFBExpandedAppHalfHidden(false, false, true), "expanded never half-hides");
+    check(!NFBExpandedAppHalfHidden(true, false, false), "no fullscreen app, no exception");
+    NFBRailPlan edgeSplit = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, true, splitFrame, true,
+            0.7, false, 2, 3, 2, 0, 0, 0, false, true);
+    check(!edgeSplit.edgeRail, "split ignores the edge rail flag");
+    close_(CGRectGetWidth(edgeSplit.rail), CGRectGetWidth(split.rail), "split viewport unchanged");
+    close_(edgeSplit.rail.origin.x, split.rail.origin.x, "split x unchanged");
+    close_(edgeSplit.toggle.origin.x, split.toggle.origin.x, "split control unchanged");
+    NFBRailPlan edgeExpanded = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, false, CGRectZero,
+            false, 0.7, false, 2, 3, 2, split.toggleTop, split.diameter, W, true, true);
+    check(!edgeExpanded.edgeRail, "expanded ignores the edge rail flag");
+    close_(CGRectGetWidth(edgeExpanded.rail), CGRectGetWidth(open.rail), "expanded viewport unchanged");
+
+    // Rotated screen: the image centre still lands on the new right edge.
+    NFBRailPlan edgeLand = NFBPlanRail(H, W, safe, TOP, 52, splitPosition, false, CGRectZero,
+            false, 0.7, true, 0, 2, 0, 0, 0, 0, false, true);
+    close_(NFBHalfHiddenBubbleX(edgeLand.diameter) + 7 + edgeLand.diameter / 2,
+            edgeLand.diameter, "landscape edge rail puts the image centre on the column right edge");
+    finiteRect(edgeLand.rail, "landscape edge rail finite");
+
     printf("PASS: column geometry (split -> fullscreen expanded -> collapsed -> empty)\n");
+    printf("PASS: hidden fullscreen exception (half-hidden row, full unread rows)\n");
     return 0;
 }
