@@ -195,7 +195,6 @@ static double NFBNumber(NSString *key, double fallback) {
 - (NFBActionMode)desktopActionMode;
 - (void)performDesktopAction:(NFBActionEffect)effect;
 - (void)clearUnreadKeepingExpanded;
-- (BOOL)edgeRailHugging:(BOOL)halfHidden;
 - (void)layoutDesktopAction:(CGRect)frame target:(UIView *)target split:(BOOL)splitNow toggleFrame:(CGRect)toggleFrame duration:(NSTimeInterval)duration;
 
 @property(nonatomic, strong) NFBRail *favoritesRail;
@@ -339,6 +338,11 @@ static double NFBNumber(NSString *key, double fallback) {
 @end
 
 @implementation NFBManager
+// Only a collapsed column hugs the screen edge; an expanded one stays
+// visible, which is what a left swipe unfolds into.
+static BOOL edgeRailHugging(BOOL halfHidden, BOOL expanded) {
+    return halfHidden && !expanded;
+}
 + (instancetype)shared {
     static NFBManager *manager;
     static dispatch_once_t once;
@@ -559,11 +563,6 @@ static NSString *NFBFrontmostAppID(void) {
     if (!NFBCloseCurrentSplit()) [self showOpenNotice:@"未能读取 TrollOpen 右侧区域的单击接口"];
     else NFBOpenEdgeAfterClose();
     [self refresh];
-}
-// Only a collapsed column hugs the screen edge; an expanded one stays
-// visible, which is what a left swipe unfolds into.
-- (BOOL)edgeRailHugging:(BOOL)halfHidden {
-    return halfHidden && !self.edgeExpanded;
 }
 - (NFBActionMode)desktopActionMode {
     return NFBActionModeFor(self.splitLayout && self.desktopActionTarget != nil, self.edgeExpanded);
@@ -1425,7 +1424,7 @@ static NSString *NFBFrontmostAppID(void) {
         NFBFloatingPosition, splitNow, splitA, splitUsable, self.verticalPosition, collapse,
         hideFavorites ? 0 : self.favoriteApps.count, (unsigned long)columnRows, (unsigned long)notifiedCount,
         (double)self.splitRailTop, (double)self.splitRailDiameter, (double)self.splitRailScreenWidth,
-        self.splitRailMeasured, self.edgeRailHugging(exceptionApp));
+        self.splitRailMeasured, edgeRailHugging(exceptionApp, self.edgeExpanded));
     // Keep the old fullscreen placement available if a device asks for it; the
     // default replays the measured split column (see NFBRailLayout.h).
     if (!splitNow && !NFBPreference(@"ColumnReuseSplitMeasure", YES))
@@ -1433,7 +1432,7 @@ static NSString *NFBFrontmostAppID(void) {
             NFBFloatingPosition, NO, CGRectZero, NO, self.verticalPosition, collapse,
             hideFavorites ? 0 : self.favoriteApps.count, (unsigned long)columnRows,
             (unsigned long)notifiedCount, (double)self.splitRailTop, (double)self.splitRailDiameter,
-            (double)self.splitRailScreenWidth, self.splitRailMeasured, self.edgeRailHugging(exceptionApp));
+            (double)self.splitRailScreenWidth, self.splitRailMeasured, edgeRailHugging(exceptionApp, self.edgeExpanded));
     BOOL railMeasuredNow = NO;
     if (splitNow && plan.toggleTop > 0) {
         // A genuinely laid-out split column is the reference the fullscreen column
@@ -2038,7 +2037,9 @@ static NSString *NFBFrontmostAppID(void) {
         self.desktopActionTouchTarget = self.desktopActionTarget;
         if (!self.enabled || [self isLocked]) return NO;
         NFBActionMode mode = [self desktopActionMode];
-        NFBActionGesture kind = gesture == self.desktopActionSwipe ? NFBActionSwipeLeft : gesture;
+        NFBActionGesture kind = NFBActionTap;
+        if (gesture == self.desktopActionSwipe) kind = NFBActionSwipeLeft;
+        if (gesture == self.desktopActionHold) kind = NFBActionHold;
         // The hold only acts inside a split and on an expanded column; elsewhere
         // it is refused here so it can neither fire nor delay the tap, which is
         // all its disabled recognizer used to achieve.
