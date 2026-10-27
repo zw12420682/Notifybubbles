@@ -141,6 +141,15 @@ static inline bool NFBSplitMetricsValid(double diameter, double span,
     return screenWidth > 0;
 }
 
+// Sane first-use anchor when nothing was ever measured (first launch, no split
+// opened yet). The collapsed/expanded column replays the split geometry, so with
+// no record at all it must still start at the top - never near the bottom right,
+// which is where the fullscreen vertical-position slider used to put the control.
+static inline double NFBUnmeasuredColumnTop(double safeTop) {
+    if (!isfinite(safeTop) || safeTop < 0) safeTop = 0;
+    return fmax(safeTop, 48) + 30;
+}
+
 // Collapsed non-split geometry. Only the horizontal placement changes: the
 // column hugs the right screen edge. The top must be finite and fully on screen.
 static inline double NFBCollapsedRailFrameX(double screenWidth, double railWidth, double margin) {

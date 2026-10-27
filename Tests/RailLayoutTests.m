@@ -177,6 +177,13 @@ int main(void) {
     check(open.toggle.origin.y < CGRectGetMaxY(splitFrame) - 62, "expanded control above the window bottom");
     check(CGRectGetWidth(open.rail) > 48, "expanded rail is a column, not a hairline");
 
+    // --- with no measurement and a small configured top, the column still
+    // anchors below the safe area instead of collapsing onto the slider top.
+    NFBRailPlan tinyTop = NFBPlanRail(W, H, safe, 0, 48, splitPosition, false, CGRectZero,
+            false, 0.95, false, 0, 1, 0, 0, 0, 0, false, false);
+    check(tinyTop.toggle.origin.y >= NFBUnmeasuredColumnTop(safe.top) - 1.01,
+          "unmeasured column never collapses onto a zero configured top");
+
     // --- squeezed split (window leaves little room) is reused, not re-measured
     CGRect wide = CGRectMake(0, 422, 340, 422);
     NFBRailPlan sq = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, true, wide, true,

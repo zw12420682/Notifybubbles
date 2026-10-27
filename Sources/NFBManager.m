@@ -1327,6 +1327,14 @@ static NSString *NFBFrontmostAppID(void) {
         hideFavorites ? 0 : self.favoriteApps.count, (unsigned long)columnRows, (unsigned long)notifiedCount,
         (double)self.splitRailTop, (double)self.splitRailDiameter, (double)self.splitRailScreenWidth,
         self.splitRailMeasured, exceptionApp);
+    // Keep the old fullscreen placement available if a device asks for it; the
+    // default replays the measured split column (see NFBRailLayout.h).
+    if (!splitNow && !NFBPreference(@"ColumnReuseSplitMeasure", YES))
+        plan = NFBPlanRail(bounds.size.width, bounds.size.height, planSafe, top, self.iconSize,
+            NFBFloatingPosition, NO, CGRectZero, NO, self.verticalPosition, collapse,
+            hideFavorites ? 0 : self.favoriteApps.count, (unsigned long)columnRows,
+            (unsigned long)notifiedCount, (double)self.splitRailTop, (double)self.splitRailDiameter,
+            (double)self.splitRailScreenWidth, self.splitRailMeasured, exceptionApp);
     BOOL railMeasuredNow = NO;
     if (splitNow && plan.toggleTop > 0) {
         // A genuinely laid-out split column is the reference the fullscreen column
