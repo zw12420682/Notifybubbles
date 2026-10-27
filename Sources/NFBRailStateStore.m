@@ -46,13 +46,13 @@ static const NSInteger NFBRailStateVersion = 1;
         metric.screenWidth = width.doubleValue;
     }
     BOOL valid = NFBRailMetricUsable(metric, metric.screenWidth);
-    self.queue = NFBRailMetricQueueLoaded(metric, valid);
+    queue = NFBRailMetricQueueLoaded(metric, valid);
     return metric;
 }
 
 - (void)saveMetric:(NFBRailMetric)metric {
     if (!NFBRailMetricUsable(metric, metric.screenWidth)) return;
-    if (self.queue.committedValid && NFBRailMetricEqual(self.queue.committed, metric)) return;
+    if (queue.committedValid && NFBRailMetricEqual(queue.committed, metric)) return;
     NSString *domain = [NFBRailStateStore domain];
     CFPreferencesSetAppValue((__bridge CFStringRef)NFBRailStateVersionKey,
             (__bridge CFPropertyListRef)@(NFBRailStateVersion), (__bridge CFStringRef)domain);
@@ -63,7 +63,7 @@ static const NSInteger NFBRailStateVersion = 1;
     CFPreferencesSetAppValue((__bridge CFStringRef)NFBRailStateWidthKey,
             (__bridge CFPropertyListRef)@(metric.screenWidth), (__bridge CFStringRef)domain);
     CFPreferencesAppSynchronize((__bridge CFStringRef)domain);
-    NFBRailMetricQueueCommitted(&_queue, metric);
+    NFBRailMetricQueueCommitted(&queue, metric);
 }
 
 - (void)scheduleMetric:(NFBRailMetric)metric after:(NSTimeInterval)delay {
@@ -71,7 +71,7 @@ static const NSInteger NFBRailStateVersion = 1;
     // display rate, so A, B and C inside one debounce window must end with C on
     // disk. The queue keeps the latest value; the debounce clock is started once
     // and writes whatever is newest when it fires (NFBRailMetricQueue.h).
-    if (!NFBRailMetricQueueOffer(&_queue, metric)) return;
+    if (!NFBRailMetricQueueOffer(&queue, metric)) return;
     NSTimeInterval wait = delay > 0 ? delay : 0;
     __weak NFBRailStateStore *weakSelf = self;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(wait * NSEC_PER_SEC)),
@@ -87,7 +87,7 @@ static const NSInteger NFBRailStateVersion = 1;
 // pending without a timer behind it).
 - (void)flushScheduledMetric {
     NFBRailMetric pending = NFBRailMetricNoRecord();
-    if (!NFBRailMetricQueueDrain(&_queue, &pending)) return;
+    if (!NFBRailMetricQueueDrain(&queue, &pending)) return;
     [self saveMetric:pending];
 }
 @end

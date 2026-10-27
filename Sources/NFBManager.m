@@ -908,8 +908,8 @@ static NSString *NFBFrontmostAppID(void) {
 // the entry point and any layout scheduled from it share one answer.
 - (UIView *)desktopTargetProbe:(BOOL *)probed {
     UIView *target = NFBDesktopActionWindow();
-    if (target) self.desktopProbe = NFBProbeRecord(self.desktopProbe, YES, (__bridge const void *)self.probeRoundToken, CACurrentMediaTime());
-    else { self.desktopProbe = NFBProbeRecord(self.desktopProbe, NO, (__bridge const void *)self.probeRoundToken, CACurrentMediaTime()); }
+    if (target) desktopProbe = NFBProbeRecord(desktopProbe, YES, (__bridge const void *)self.probeRoundToken, CACurrentMediaTime());
+    else { desktopProbe = NFBProbeRecord(desktopProbe, NO, (__bridge const void *)self.probeRoundToken, CACurrentMediaTime()); }
     if (probed) *probed = YES;
     return target;
 }
@@ -918,7 +918,7 @@ static NSString *NFBFrontmostAppID(void) {
     BOOL usable = !CGRectIsNull(frame) && !CGRectIsEmpty(frame) && isfinite(CGRectGetMaxX(frame));
     // A null frame is recorded too: it belongs to this round and must not be
     // confused with a probe from an earlier one.
-    self.floatingProbe = NFBProbeRecord(self.floatingProbe, usable, (__bridge const void *)self.probeRoundToken, CACurrentMediaTime());
+    floatingProbe = NFBProbeRecord(floatingProbe, usable, (__bridge const void *)self.probeRoundToken, CACurrentMediaTime());
     if (probed) *probed = YES;
     return frame;
 }
@@ -952,8 +952,8 @@ static NSString *NFBFrontmostAppID(void) {
     BOOL classWasMissing = NFBSplitFrameClassUnavailable();
     self.floatingWatchClassMissing = classWasMissing;
     if (classWasMissing) {
-        self.floatingProbe.resolved = NO; self.floatingProbe.usable = NO;
-        self.desktopProbe.resolved = NO; self.desktopProbe.usable = NO; // both are ivars now
+        floatingProbe.resolved = NO; floatingProbe.usable = NO;
+        desktopProbe.resolved = NO; desktopProbe.usable = NO;
         self.desktopProbeLateRetry = CACurrentMediaTime() + NFBProbeLateRetry;
     }
     @try { [self floatingWatchBody]; }
@@ -985,7 +985,7 @@ static NSString *NFBFrontmostAppID(void) {
     UIView *actionTarget = nil;
     const void *round = (__bridge const void *)self.probeRoundToken;
     BOOL reusedDesktop = currentApp.length &&
-        NFBProbeReusable(self.desktopProbe, round, self.desktopProbeLateRetry, CACurrentMediaTime());
+        NFBProbeReusable(desktopProbe, round, self.desktopProbeLateRetry, CACurrentMediaTime());
     if (currentApp.length) {
         if (reusedDesktop) actionTarget = NFBDesktopActionWindow();
         else actionTarget = [self desktopTargetProbe:NULL];
@@ -1141,9 +1141,9 @@ static NSString *NFBFrontmostAppID(void) {
     // changes when no notification or gesture arrives: nothing else in the tick
     // looks at them, so they are part of NFBTickNeedsLayout and tested there. The
     // backstop above is the belt to this comparison's braces.
-    BOOL needs = NFBTickNeedsLayout(self.tickStateValid ? &_tickState : NULL, &current,
+    BOOL needs = NFBTickNeedsLayout(self.tickStateValid ? &tickState : NULL, &current,
                                     dirty || self.tickForcedRefresh || reconcile, NO);
-    self.tickState = current;
+    tickState = current;
     self.tickStateValid = YES;
     if (needs) {
         self.tickForcedRefresh = NO;
@@ -1761,7 +1761,7 @@ static NSString *NFBFrontmostAppID(void) {
     CGFloat contentHeight = rowCount ? (rowCount - 1) * step + side : 0;
     // Same-round reuse: when the watcher already probed in this round, this pass
     // reads its answer instead of asking SpringBoard again.
-    BOOL reusedDesktop = NFBProbeReusable(self.desktopProbe, (__bridge const void *)self.probeRoundToken,
+    BOOL reusedDesktop = NFBProbeReusable(desktopProbe, (__bridge const void *)self.probeRoundToken,
         self.desktopProbeLateRetry, CACurrentMediaTime());
     UIView *actionTarget = nil;
     if (floatingApp.length) {
