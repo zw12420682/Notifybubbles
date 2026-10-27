@@ -22,5 +22,9 @@ NSString *NFBRevisionForRequest(id request);
 - (void)removeApp:(NSString *)appID notification:(NSString *)notificationID revision:(NSString *)revision;
 - (void)removeApp:(NSString *)appID;
 - (void)closeApp:(NSString *)appID;
+// Drops every queued notification record (what the badge counts) while keeping
+// the bubble order (pins) and every background app identity: the expanded column
+// must survive "clear unread". The identity-keyed `clear` above removes both.
+- (void)clearUnreadRecords;
 - (void)clear;
 @end

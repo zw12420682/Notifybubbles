@@ -46,6 +46,43 @@ int main(void) {
         for (int index = 0; index < 600; index++) [revisionStore putApp:@"bulk" notification:[NSString stringWithFormat:@"%d", index] request:Request(index) destination:revisionDestination];
         Check(revisionStore.count == 512 && [revisionStore countForApp:@"bulk"] == 512, @"Trim updates both indexes");
         [revisionStore removeApp:@"bulk"]; Check(revisionStore.count == 0 && [revisionStore countForApp:@"bulk"] == 0, @"App clear updates both indexes");
+        // Clearing unread (long press on the expanded control) must drop the
+        // records the badge counts without touching the bubble order or the
+        // background apps pinned by the switcher. The identity-keyed -clear
+        // removes both, which is what made the expanded list empty out.
+        NFBStore *unreadStore = [NFBStore new];
+        id unreadDestination = [NSObject new];
+        [unreadStore pinApp:@"home"];
+        [unreadStore putApp:@"chat" notification:@"c1" request:Request(10) destination:unreadDestination];
+        [unreadStore putApp:@"mail" notification:@"m1" request:Request(11) destination:unreadDestination];
+        [unreadStore putApp:@"mail" notification:@"m2" request:Request(12) destination:unreadDestination];
+        [unreadStore putApp:@"video" notification:@"v1" request:Request(13) destination:unreadDestination];
+        [unreadStore pinApp:@"calendar"];
+        NSArray *orderBefore = unreadStore.appIDs;
+        Check(unreadStore.count == 4 && [unreadStore countForApp:@"mail"] == 2, @"Unread records queued before the clear");
+        [unreadStore clearUnreadRecords];
+        Check(unreadStore.count == 0, @"Clearing unread drops every record");
+        Check([unreadStore countForApp:@"chat"] == 0 && [unreadStore countForApp:@"mail"] == 0 &&
+              [unreadStore countForApp:@"video"] == 0, @"Per-app counts follow the global count to zero");
+        Check([unreadStore.appIDs isEqualToArray:orderBefore], @"Clearing unread keeps every bubble identity and its order");
+        Check([unreadStore.appIDs isEqualToArray:(@[@"home", @"chat", @"mail", @"video", @"calendar"])],
+              @"Background apps and pins survive the clear in their original order");
+        Check([unreadStore latestForApp:@"mail"] == nil, @"No latest record remains after the clear");
+        // A notification withdrawn after the clear must stay gone: the clear
+        // marks records consumed exactly like an app open does.
+        [unreadStore removeApp:@"chat" notification:@"c1" revision:NFBRevisionForRequest(Request(10))];
+        Check([unreadStore putApp:@"chat" notification:@"c1" request:Request(10) destination:unreadDestination] == NO,
+              @"A cleared record cannot be re-added by a late duplicate");
+        Check([unreadStore putApp:@"chat" notification:@"c9" request:Request(20) destination:unreadDestination] &&
+              unreadStore.count == 1 && [unreadStore countForApp:@"chat"] == 1,
+              @"A genuinely new notification after the clear is accepted and not duplicated in the order");
+        Check([unreadStore.appIDs isEqualToArray:orderBefore], @"Re-adding an app does not move it in the bubble order");
+        // Closing an app afterwards still removes only that identity.
+        [unreadStore closeApp:@"chat"];
+        Check([unreadStore.appIDs isEqual:(@[@"home", @"mail", @"video", @"calendar"])] && unreadStore.count == 0,
+              @"closeApp still removes the bubble identity after a clear");
+        [unreadStore clear];
+        Check(unreadStore.appIDs.count == 0, @"-clear still removes every identity (unchanged)");
         NSArray *overlapBackground = NFBRecentFour(@[@"mail", @"chat", @"video", @"maps", @"fifth"],
             @[@"mail", @"chat", @"video", @"maps", @"fifth"], @[], @"chat", @[]);
         Check([overlapBackground isEqual:@[@"mail", @"chat", @"video", @"maps"]],
@@ -196,7 +233,7 @@ int main(void) {
         Check(NFBDispatchRightEdgeTap(edge, tap) && edge.calls == 1 && edge.received == tap, @"Original tap callback invoked exactly once with recognizer");
         Check(!NFBDispatchRightEdgeTap([TestEdgeWrong new], tap), @"ABI mismatch rejected");
         Check(!NFBDispatchRightEdgeTap([NSObject new], tap) && !NFBDispatchRightEdgeTap(edge, nil), @"Missing callback/recognizer rejected");
-        NSLog(@"PASS: queue chronology, per-app isolation, deduplication, consumption, switcher pins and geometry");
+        NSLog(@"PASS: queue chronology, per-app isolation, deduplication, consumption, switcher pins, unread clearing and geometry");
     }
     return 0;
 }

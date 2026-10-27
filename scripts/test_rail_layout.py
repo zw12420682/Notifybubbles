@@ -142,8 +142,12 @@ if "if (exceptionApp && ![columnApps containsObject:fullscreenApp]) [columnApps 
 if "windowState.fullscreen" not in manager or "NFBCurrentWindowState()" not in manager:
     problems.append("the front app must come from the shared NFBWindowState, not a new tree scan")
 # The manager must pass the half-hidden state to the plan (not a local x guess).
-if "self.splitRailMeasured, exceptionApp);" not in manager:
+# ...through the one gate the collapsed control's gestures share, so an expanded
+# column (what a left swipe unfolds into) is never laid out half hidden.
+if "self.splitRailMeasured, self.edgeRailHugging(exceptionApp));" not in manager:
     problems.append("the plan must receive the half-hidden state")
+if "return halfHidden && !self.edgeExpanded;" not in manager:
+    problems.append("only the collapsed column may hug the screen edge")
 # The move is applied exactly once: no row carries an offset, and the control
 # takes the rail's x instead of adding the shift a second time.
 if "CGFloat rowX = side / 2;" not in manager:

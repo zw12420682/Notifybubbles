@@ -215,6 +215,23 @@ int main(void) {
           "fullscreen column is a column, not a bar");
     check(col.parked, "collapsed column with no notifications parks");
 
+    // --- expanded after a left swipe unfolded it during execution: the icons are
+    // on screen. The half-hidden x belongs to the collapsed state, so an expanded
+    // column must not inherit it (that put every icon past the screen edge).
+    NFBRailPlan fromEdge = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, false, CGRectZero,
+            false, 0.7, false, 2, 3, 2, split.toggleTop, split.diameter, W, true, false);
+    check(!fromEdge.edgeRail, "expanded column does not hug the screen edge");
+    close_(fromEdge.toggle.origin.x, NFBPlainRailFrameX(W, 62, 4), "unfolded control is fully on screen");
+    check(CGRectGetMaxX(fromEdge.toggle) <= W - 4 + 0.51, "unfolded control stays inside the screen");
+    check(CGRectGetMaxX(fromEdge.rail) <= W - 4 + 0.51, "unfolded column stays inside the screen");
+    // A fullscreen app still keeps the collapsed control half hidden, and that
+    // visible-half bound is the one the new swipe shares: nothing wider is exposed.
+    NFBRailPlan stillHidden = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, false, CGRectZero,
+            false, 0.7, true, 0, 2, 0, split.toggleTop, split.diameter, W, true, true);
+    check(stillHidden.edgeRail && stillHidden.toggleVisible, "collapsed fullscreen control stays half hidden");
+    close_(NFBVisibleMaxX(stillHidden.toggle.origin.x, CGRectGetWidth(stillHidden.toggle), W),
+            W - stillHidden.toggle.origin.x, "half-hidden control keeps its visible-half bound");
+
     // --- empty collapsed column: identical geometry, fades out
     NFBRailPlan emp = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, false, CGRectZero,
             false, 0.7, true, 0, 0, 0, split.toggleTop, split.diameter, W, true, false);

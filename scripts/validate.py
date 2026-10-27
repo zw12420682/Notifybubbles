@@ -124,7 +124,7 @@ assert "SBDeviceApplicationSceneEntity" not in read("Sources/NFBDesktopHost.m")
 print("PASS: private gesture target memory inspection and ordinary SpringBoard scene route stay excluded")
 
 workflow=read(".github/workflows/build.yml")
-tests=["StoreTests.m","TrollOpenTests.m","TransitionTests.c","InterfaceTests.m","StateLedgerTests.m"]
+tests=["StoreTests.m","TrollOpenTests.m","TransitionTests.c","ActionGestureTests.c","InterfaceTests.m","StateLedgerTests.m"]
 scripts=["validate.py","test_validator.py","test_cleanup.py","test_package_parser.py","test_desktop_simulator.py","check_package.py","test_scheme.py"]
 problems=[]
 for test in tests:

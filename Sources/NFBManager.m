@@ -7,6 +7,7 @@
 #import "NFBTransitionPolicy.h"
 #import "NFBMotionPolicy.h"
 #import "NFBHitPolicy.h"
+#import "NFBActionGesturePolicy.h"
 #import "NFBIcon.h"
 #import "NFBManager.h"
 #import "NFBPrivate.h"
@@ -183,11 +184,18 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, strong) NFBBubble *desktopActionButton;
 @property(nonatomic, strong) UITapGestureRecognizer *desktopActionTap;
 @property(nonatomic, strong) UILongPressGestureRecognizer *desktopActionHold;
+@property(nonatomic, strong) UISwipeGestureRecognizer *desktopActionSwipe;
 @property(nonatomic, weak) UIView *desktopActionTarget;
 @property(nonatomic, weak) UIView *desktopActionTouchTarget;
 @property(nonatomic, weak) UIView *observedActionTarget;
 @property(nonatomic) CGRect observedActionFrame;
 - (void)desktopActionTapped:(UITapGestureRecognizer *)gesture;
+- (void)desktopActionHeld:(UILongPressGestureRecognizer *)gesture;
+- (void)desktopActionSwiped:(UISwipeGestureRecognizer *)gesture;
+- (NFBActionMode)desktopActionMode;
+- (void)performDesktopAction:(NFBActionEffect)effect;
+- (void)clearUnreadKeepingExpanded;
+- (BOOL)edgeRailHugging:(BOOL)halfHidden;
 - (void)layoutDesktopAction:(CGRect)frame target:(UIView *)target split:(BOOL)splitNow toggleFrame:(CGRect)toggleFrame duration:(NSTimeInterval)duration;
 
 @property(nonatomic, strong) NFBRail *favoritesRail;
@@ -214,6 +222,8 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic) BOOL edgeExpanded;
 @property(nonatomic) NSUInteger notifiedCount;
 @property(nonatomic) BOOL showClearAll;
+// One layout after a clear unread: keep the expanded column's app rows.
+@property(nonatomic) BOOL holdsClearedColumn;
 @property(nonatomic) BOOL desktopActionToggle;
 @property(nonatomic) BOOL desktopActionParked;
 // Collapsed fullscreen column: the control shares the rows' shift and alpha.
@@ -550,31 +560,99 @@ static NSString *NFBFrontmostAppID(void) {
     else NFBOpenEdgeAfterClose();
     [self refresh];
 }
+// Only a collapsed column hugs the screen edge; an expanded one stays
+// visible, which is what a left swipe unfolds into.
+- (BOOL)edgeRailHugging:(BOOL)halfHidden {
+    return halfHidden && !self.edgeExpanded;
+}
+- (NFBActionMode)desktopActionMode {
+    return NFBActionModeFor(self.splitLayout && self.desktopActionTarget != nil, self.edgeExpanded);
+}
+- (void)performDesktopAction:(NFBActionEffect)effect {
+    switch (effect) {
+        case NFBActionToggleSplit: {
+            UIView *target = self.desktopActionTouchTarget;
+            self.desktopActionTouchTarget = nil;
+            if (!target || target != self.desktopActionTarget || target != NFBDesktopActionWindow()) { [self refresh]; return; }
+            if (![self acceptGestureForKey:@"desktopAction"]) return;
+            if (!NFBShowDesktopInSplit(target)) [self showOpenNotice:NFBDesktopSplitError()];
+            [self refresh];
+            return;
+        }
+        case NFBActionOpenConsole: {
+            UIView *target = self.desktopActionTouchTarget;
+            self.desktopActionTouchTarget = nil;
+            if (!target || target != self.desktopActionTarget || target != NFBDesktopActionWindow()) { [self refresh]; return; }
+            if (![self acceptGestureForKey:@"desktopConsole"]) return;
+            NFBCloseDesktopSplit();
+            if (!NFBOpenNativeConsole()) [self showOpenNotice:@"Open 控制台入口不可用，请确认使用适配的定制版 1.3.7"];
+            [self refresh];
+            return;
+        }
+        case NFBActionFoldColumn:
+            // The tap keeps its existing toggle; only the swipe is one-way.
+            self.desktopActionTouchTarget = nil;
+            self.edgeExpanded = NO;
+            [self scheduleAutoCollapse];
+            [self refresh];
+            return;
+        case NFBActionUnfoldColumn:
+            self.desktopActionTouchTarget = nil;
+            self.edgeExpanded = YES;
+            [self scheduleAutoCollapse];
+            [self refresh];
+            return;
+        case NFBActionClearUnread:
+            self.desktopActionTouchTarget = nil;
+            [self clearUnreadKeepingExpanded];
+            // No unread count, no X: the app buttons themselves stay, and the
+            // open column keeps its own real 5s clock instead of folding at once.
+            if (self.edgeExpanded) [self holdClearedColumnAndRestartClock];
+            return;
+        case NFBActionNone:
+            break;
+    }
+    [self refresh];
+}
 - (void)desktopActionTapped:(UITapGestureRecognizer *)gesture {
     if (gesture.state != UIGestureRecognizerStateEnded || !self.enabled || [self isLocked]) return;
-    if (self.desktopActionToggle) {
-        // Same slot, different job outside a split: fold or unfold the column.
-        self.edgeExpanded = !self.edgeExpanded;
-        [self scheduleAutoCollapse];
-        [self refresh];
-        return;
-    }
-    UIView *target = self.desktopActionTouchTarget;
-    self.desktopActionTouchTarget = nil;
-    if (!target || target != self.desktopActionTarget || target != NFBDesktopActionWindow()) { [self refresh]; return; }
-    if (![self acceptGestureForKey:@"desktopAction"]) return;
-    if (!NFBShowDesktopInSplit(target)) [self showOpenNotice:NFBDesktopSplitError()];
-    [self refresh];
+    [self performDesktopAction:NFBActionEffectFor([self desktopActionMode], NFBActionTap, YES, NO)];
 }
 - (void)desktopActionHeld:(UILongPressGestureRecognizer *)gesture {
     if (gesture.state != UIGestureRecognizerStateBegan || !self.enabled || [self isLocked]) return;
-    UIView *target = self.desktopActionTouchTarget;
-    self.desktopActionTouchTarget = nil;
-    if (!target || target != self.desktopActionTarget || target != NFBDesktopActionWindow()) { [self refresh]; return; }
-    if (![self acceptGestureForKey:@"desktopConsole"]) return;
-    NFBCloseDesktopSplit();
-    if (!NFBOpenNativeConsole()) [self showOpenNotice:@"Open 控制台入口不可用，请确认使用适配的定制版 1.3.7"];
+    // The expanded hold clears unread and counts as a real interaction even if
+    // the clear is then refused; the split house button is unchanged.
+    if ([self desktopActionMode] == NFBActionModeExpanded) [self touchColumn];
+    [self performDesktopAction:NFBActionEffectFor([self desktopActionMode], NFBActionHold, YES, NO)];
+}
+- (void)desktopActionSwiped:(UISwipeGestureRecognizer *)gesture {
+    if (gesture.state != UIGestureRecognizerStateEnded || !self.enabled || [self isLocked]) return;
+    if (gesture.direction != UISwipeGestureRecognizerDirectionLeft) return;
+    [self performDesktopAction:NFBActionEffectFor([self desktopActionMode], NFBActionSwipeLeft, YES, NO)];
+}
+// Long press on the expanded fullscreen control: drop what the bubbles count as
+// unread (and their badges) without touching the apps, the app switcher, the
+// system Notification Centre, or the column itself. Only the store's records go,
+// so pins/order and the background apps that make up the list stay put.
+//
+// Keeping those rows takes two steps. The clear's own refresh must not rebuild
+// them from the now-empty unread list (holdsClearedColumn), and a cleared column
+// has no X, so no later refresh would stamp the clock: the hold stamps it once,
+// with no unread left the column would otherwise fold on the next tick.
+- (void)holdClearedColumnAndRestartClock {
+    self.holdsClearedColumn = YES;
     [self refresh];
+    self.holdsClearedColumn = NO;
+    [self scheduleAutoCollapse];
+}
+- (void)clearUnreadKeepingExpanded {
+    if (![self acceptGestureForKey:@"desktopUnread"]) return;
+    [self.store clearUnreadRecords];
+    // The record waiting for its bubble has no queued entry, so the store cannot
+    // drop it; releasing it here keeps the badge from reappearing.
+    self.pendingRecord = nil;
+    // Stay expanded; the effect keeps the rows and stamps the 5s clock.
+    self.edgeExpanded = YES;
 }
 - (void)layoutDesktopAction:(CGRect)frame target:(UIView *)target split:(BOOL)splitNow toggleFrame:(CGRect)toggleFrame duration:(NSTimeInterval)duration {
     // This slot does double duty: in a split it is the desktop button, outside one
@@ -603,8 +681,17 @@ static NSString *NFBFrontmostAppID(void) {
         self.desktopActionHold = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(desktopActionHeld:)];
         self.desktopActionHold.minimumPressDuration = 0.45;
         self.desktopActionHold.delegate = self;
+        // Left only: a right swipe must never fold or toggle the column.
+        self.desktopActionSwipe = [[UISwipeGestureRecognizer alloc] initWithTarget:self action:@selector(desktopActionSwiped:)];
+        self.desktopActionSwipe.direction = UISwipeGestureRecognizerDirectionLeft;
+        self.desktopActionSwipe.delegate = self;
         [self.desktopActionTap requireGestureRecognizerToFail:self.desktopActionHold];
+        [self.desktopActionTap requireGestureRecognizerToFail:self.desktopActionSwipe];
+        // A refused swipe (expanded, split, locked) must leave the control as
+        // free as before: it never claims a touch it does not act on.
+        self.desktopActionSwipe.cancelsTouchesInView = NO;
         [button addGestureRecognizer:self.desktopActionHold];
+        [button addGestureRecognizer:self.desktopActionSwipe];
         [button addGestureRecognizer:self.desktopActionTap];
         button.alpha = 0;
         self.desktopActionButton = button;
@@ -629,17 +716,18 @@ static NSString *NFBFrontmostAppID(void) {
         glyph = self.edgeExpanded ? chevronRightIcon : chevronLeftIcon;
         tint = UIColor.systemBlueColor;
         button.accessibilityLabel = self.edgeExpanded ? @"收起图标列" : @"展开图标列";
-        button.accessibilityHint = @"单击收起或展开通知图标列";
+        button.accessibilityHint = self.edgeExpanded ? @"单击收起通知图标列，长按清除未读与角标"
+                                                     : @"单击或向左滑动展开通知图标列";
     } else {
         button.accessibilityLabel = @"显示桌面 / Open 控制台";
         button.accessibilityHint = @"单击显示或关闭桌面分屏，长按打开 Open 控制台";
     }
     if (button.imageView.image != glyph) button.imageView.image = glyph;
     if (!CGColorEqualToColor(button.imageView.tintColor.CGColor, tint.CGColor)) button.imageView.tintColor = tint;
-    // Toggle mode only responds to a plain tap; holding has no meaning there.
-    button.gestureRecognizers.firstObject.enabled = YES;
-    for (UIGestureRecognizer *recognizer in button.gestureRecognizers)
-        if (recognizer == self.desktopActionHold) recognizer.enabled = !toggleMode;
+    // Every recognizer stays enabled. A disabled hold would never fail, so the
+    // tap's requireGestureRecognizerToFail would hold each tap for the press
+    // duration; the delegate refuses the hold wherever it has no job instead.
+    for (UIGestureRecognizer *recognizer in button.gestureRecognizers) recognizer.enabled = YES;
     // Parked: nothing else is on screen so the hidden column keeps only the
     // control, half off the right edge (origin.x = width - 7 - diameter/2) at half
     // opacity. An expanded column never parks, even with nothing to show.
@@ -1161,8 +1249,19 @@ static NSString *NFBFrontmostAppID(void) {
         fullscreenApp = nil;
     // Collapsed column only: that row exists to keep the current app reachable
     // while the column is folded; expanding shows everything fully again.
+    // A left swipe unfolds from the screen edge, so only the collapsed column
+    // hugs it (edgeRailHugging); an expanded one must keep its icons on screen.
     BOOL exceptionApp = NFBExpandedAppHalfHidden(collapsed, split, fullscreenApp.length > 0);
     NSString *active = NFBTrollVisibleApp() ?: floatingApp ?: (home ? nil : windowState.frontApp);
+    // Clearing unread must leave the column (and its background apps) exactly as
+    // it was, so this one layout keeps the apps it is replacing until the
+    // expanded hold has cleared. Pins and the app order live in the store and are
+    // never touched; only the unread records go.
+    if (self.holdsClearedColumn) {
+        [apps removeAllObjects];
+        [apps addObjectsFromArray:self.lastLayoutApps ?: @[]];
+        [apps removeObject:NFBClearAllID];
+    }
     if (NFBIsSystemDesktop(active)) active = nil;
     // Recency decides membership, never a forced jump of an existing icon.
     if (active.length && ![self.closingApps containsObject:active] && ![self.dismissedSwitcher containsObject:active] && ![apps containsObject:active])
@@ -1326,7 +1425,7 @@ static NSString *NFBFrontmostAppID(void) {
         NFBFloatingPosition, splitNow, splitA, splitUsable, self.verticalPosition, collapse,
         hideFavorites ? 0 : self.favoriteApps.count, (unsigned long)columnRows, (unsigned long)notifiedCount,
         (double)self.splitRailTop, (double)self.splitRailDiameter, (double)self.splitRailScreenWidth,
-        self.splitRailMeasured, exceptionApp);
+        self.splitRailMeasured, self.edgeRailHugging(exceptionApp));
     // Keep the old fullscreen placement available if a device asks for it; the
     // default replays the measured split column (see NFBRailLayout.h).
     if (!splitNow && !NFBPreference(@"ColumnReuseSplitMeasure", YES))
@@ -1334,7 +1433,7 @@ static NSString *NFBFrontmostAppID(void) {
             NFBFloatingPosition, NO, CGRectZero, NO, self.verticalPosition, collapse,
             hideFavorites ? 0 : self.favoriteApps.count, (unsigned long)columnRows,
             (unsigned long)notifiedCount, (double)self.splitRailTop, (double)self.splitRailDiameter,
-            (double)self.splitRailScreenWidth, self.splitRailMeasured, exceptionApp);
+            (double)self.splitRailScreenWidth, self.splitRailMeasured, self.edgeRailHugging(exceptionApp));
     BOOL railMeasuredNow = NO;
     if (splitNow && plan.toggleTop > 0) {
         // A genuinely laid-out split column is the reference the fullscreen column
@@ -1374,11 +1473,13 @@ static NSString *NFBFrontmostAppID(void) {
     // shift for the rail has to be applied to it here: same shift as the rows, so
     // its image centre is the screen edge too. A split, an expanded column or a
     // parked-only column keep the plain slot.
-    if (exceptionApp && !splitNow && !CGRectIsNull(toggleFrame) && toggleFrame.size.width > 0)
-        toggleFrame.origin.x = CGRectGetMinX(railFrame);
+    // Every gesture on the control (tap, hold, swipe) shares that visible half,
+    // so a half-hidden control never claims the full square behind the edge.
+    BOOL toggleHalfHidden = exceptionApp && !self.edgeExpanded && !splitNow && !CGRectIsNull(toggleFrame);
+    if (toggleHalfHidden) toggleFrame.origin.x = CGRectGetMinX(railFrame);
     BOOL parked = plan.parked && !self.edgeExpanded;
     self.desktopActionParked = parked;
-    self.desktopActionHalfHidden = exceptionApp && !splitNow && !CGRectIsNull(toggleFrame);
+    self.desktopActionHalfHidden = toggleHalfHidden;
     // A changing clipped viewport must not race independently animated child
     // sizes and scroll bounds. Commit resize geometry together, then keep the
     // normal animation timing for subsequent moves within a stable viewport.
@@ -1932,9 +2033,16 @@ static NSString *NFBFrontmostAppID(void) {
     return nil;
 }
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldReceiveTouch:(UITouch *)touch {
-    if (gesture == self.desktopActionTap || gesture == self.desktopActionHold) {
+    if (gesture == self.desktopActionTap || gesture == self.desktopActionHold ||
+        gesture == self.desktopActionSwipe) {
         self.desktopActionTouchTarget = self.desktopActionTarget;
         if (!self.enabled || [self isLocked]) return NO;
+        NFBActionMode mode = [self desktopActionMode];
+        NFBActionGesture kind = gesture == self.desktopActionSwipe ? NFBActionSwipeLeft : gesture;
+        // The hold only acts inside a split and on an expanded column; elsewhere
+        // it is refused here so it can neither fire nor delay the tap, which is
+        // all its disabled recognizer used to achieve.
+        if (!NFBActionGestureAllowed(mode, kind, YES, NO)) return NO;
         // Toggle mode has no desktop target by design; requiring one here was why
         // the collapse control never responded to a tap.
         if (self.desktopActionToggle) {

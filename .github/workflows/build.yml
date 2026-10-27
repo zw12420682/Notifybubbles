@@ -62,6 +62,8 @@ jobs:
         run: |
           clang -std=c11 -Wall -Wextra -Werror -I Sources Tests/TransitionTests.c -o "$RUNNER_TEMP/test-transition"
           "$RUNNER_TEMP/test-transition"
+          clang -std=c11 -Wall -Wextra -Werror -I Sources Tests/ActionGestureTests.c -o "$RUNNER_TEMP/test-action-gesture"
+          "$RUNNER_TEMP/test-action-gesture"
           xcrun --sdk macosx clang -fobjc-arc -fmodules -Wall -Wextra -Werror \
             -framework Foundation -I Sources Sources/NFBInterfaces.m Sources/NFBDebugLog.m Tests/InterfaceTests.m -o "$RUNNER_TEMP/test-interface"
           "$RUNNER_TEMP/test-interface"

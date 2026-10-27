@@ -105,5 +105,10 @@ NSString *NFBRevisionForRequest(id request) {
     for (NFBRecord *r in [self.recordsByApp[appID] copy]) [self consumeRecord:r];
 }
 - (void)closeApp:(NSString *)appID { [self removeApp:appID]; [self.pins removeObject:appID]; }
+// Same record/consumed bookkeeping as consumeRecord:, so a notification that is
+// still in flight cannot re-add the record after the clear.
+- (void)clearUnreadRecords {
+    for (NFBRecord *record in [self.records copy]) [self consumeRecord:record];
+}
 - (void)clear { for (NSString *app in self.appIDs) [self closeApp:app]; }
 @end
