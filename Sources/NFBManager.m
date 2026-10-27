@@ -57,11 +57,17 @@ static double NFBNumber(NSString *key, double fallback) {
     return [value respondsToSelector:@selector(doubleValue)] ? [value doubleValue] : fallback;
 }
 
-// Both active rails are ordinary interactive scroll containers.
+// The rail asks its owner for a row hanging past its bounds. A protocol, not a
+// direct NFBManager reference: NFBRail is defined before the manager's class
+// extension, and only a *previously declared* interface is visible there.
 @class NFBRail;
-@class NFBManager;
+@protocol NFBRailHitDelegate <NSObject>
+- (UIView *)rail:(NFBRail *)rail bubbleAtPoint:(CGPoint)point withEvent:(UIEvent *)event;
+@end
+
+// Both active rails are ordinary interactive scroll containers.
 @interface NFBRail : UIScrollView
-@property(nonatomic, weak) NFBManager *nfbHitDelegate;
+@property(nonatomic, weak) id<NFBRailHitDelegate> nfbHitDelegate;
 @end
 @implementation NFBRail
 // A half-hidden row hangs past this scroll view's right edge, and UIKit refuses a
@@ -169,7 +175,7 @@ static double NFBNumber(NSString *key, double fallback) {
 }
 @end
 
-@interface NFBManager () <UIScrollViewDelegate, UIGestureRecognizerDelegate>
+@interface NFBManager () <UIScrollViewDelegate, UIGestureRecognizerDelegate, NFBRailHitDelegate>
 @property(nonatomic, strong) NFBStore *store;
 @property(nonatomic, strong) NFBWindow *window;
 @property(nonatomic, strong) NFBRail *rail;
