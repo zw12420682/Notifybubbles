@@ -72,3 +72,20 @@ static inline bool NFBTickNeedsLayout(const NFBTickState *previous, const NFBTic
     if (previous->captureHidden != current->captureHidden) return true;
     return false;
 }
+
+// Bounded reconciliation. The comparison above is only as complete as the state
+// it is given, and the unread count it receives is the sum of *this plugin's*
+// records. A badge cleared or changed outside SpringBoard's notification path
+// therefore produces no field change at all, and "nothing changed" would hold
+// forever. The tick must not rely on the fields for that case: it also forces a
+// full layout whenever the last real layout is older than this bound (the caller
+// measures the age from the last pass that actually laid the column out). That
+// keeps the old behaviour - a full layout at least every 0.5s - as a real
+// backstop instead of a claim, while the field comparison still removes the 20 Hz
+// layout submissions in between.
+static const double NFBTickReconcileInterval = 2.0;
+
+// True when a full layout is due regardless of state.
+static inline bool NFBTickReconcileDue(double secondsSinceLastLayout) {
+    return !(secondsSinceLastLayout < NFBTickReconcileInterval);
+}

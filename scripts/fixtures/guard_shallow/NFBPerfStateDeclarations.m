@@ -1,0 +1,108 @@
+// Fixture: state the 2 Hz tick/reconcile and the drag clock use, declared exactly
+// as in Sources/NFBManager.m. If any of these is renamed or dropped there, the
+// perf/reconcile tests break even when this file is not rebuilt - fail here first.
+@interface NFBPerfStateDeclarations : NSObject
+@end
+@interface NFBPerfStateDeclarations ()
+@property(nonatomic, strong) NFBStore *store;
+@property(nonatomic, strong) NFBWindow *window;
+@property(nonatomic, strong) NFBRail *rail;
+@property(nonatomic, strong) NFBBubble *desktopActionButton;
+@property(nonatomic, strong) UITapGestureRecognizer *desktopActionTap;
+@property(nonatomic, strong) UILongPressGestureRecognizer *desktopActionHold;
+@property(nonatomic, strong) UISwipeGestureRecognizer *desktopActionSwipe;
+@property(nonatomic, weak) UIView *desktopActionTarget;
+@property(nonatomic, weak) UIView *desktopActionTouchTarget;
+@property(nonatomic, weak) UIView *observedActionTarget;
+@property(nonatomic) CGRect observedActionFrame;
+@property(nonatomic, strong) NFBRail *favoritesRail;
+@property(nonatomic, strong) UIVisualEffectView *favoritesMaterial;
+@property(nonatomic, strong) NSMutableDictionary<NSString *, NFBBubble *> *favoriteButtons;
+@property(nonatomic, copy) NSArray<NSString *> *favoriteApps;
+@property(nonatomic, strong) UILongPressGestureRecognizer *favoriteHold;
+@property(nonatomic, strong) NFBBubble *favoriteDrag;
+@property(nonatomic, strong) NSTimer *favoriteDragTimer;
+@property(nonatomic) CGFloat favoriteGrabOffset;
+@property(nonatomic) CGPoint favoriteDragFingerPoint;
+@property(nonatomic, copy) NSString *lastRailActive;
+@property(nonatomic, copy) NSString *lastFavoritesActive;
+@property(nonatomic) BOOL edgeMode;
+@property(nonatomic) BOOL edgeExpanded;
+@property(nonatomic) NSUInteger notifiedCount;
+@property(nonatomic) BOOL holdsClearedColumn;
+@property(nonatomic) BOOL desktopActionToggle;
+@property(nonatomic) BOOL desktopActionParked;
+@property(nonatomic) BOOL desktopActionHalfHidden;
+@property(nonatomic) CFTimeInterval lastInteractionAt;
+@property(nonatomic, strong) NSMutableDictionary<NSString *, NFBBubble *> *buttons;
+@property(nonatomic, strong) NSTimer *timer;
+@property(nonatomic, strong) NSCache<NSString *, UIImage *> *icons;
+@property(nonatomic,strong) NSMutableDictionary<NSString *,NSNumber *> *imageRetryAfter;
+@property(nonatomic, strong) NSMutableSet<NSString *> *burstApps;
+@property(nonatomic, strong) NSMutableSet<NSString *> *pendingBurstApps;
+@property(nonatomic) BOOL burstRefreshPending;
+@property(nonatomic) BOOL layoutRecording;
+@property(nonatomic) double desktopProbeLateRetry;
+@property(nonatomic) BOOL floatingWatchClassMissing;
+@property(nonatomic) NSObject *probeRoundToken;
+@property(nonatomic) CFTimeInterval lastLayoutAt;
+@property(nonatomic) BOOL lastRefreshComplete;
+@property(nonatomic) BOOL tickForcedRefresh;
+@property(nonatomic) BOOL tickStateValid;
+@property(nonatomic) BOOL lastLocked;
+@property(nonatomic, copy) NSString *tickActiveFloating;
+@property(nonatomic, strong) NSArray<NSString *> *lastSwitcher;
+@property(nonatomic, strong) NSMutableSet<NSString *> *dismissedSwitcher;
+@property(nonatomic, strong) NSMutableSet<NSString *> *closingApps;
+@property(nonatomic) NSUInteger exitEpoch;
+@property(nonatomic,strong) NSMutableDictionary<NSString *,NSNumber *> *retractTokens;
+@property(nonatomic) NSUInteger presentationEpoch;
+@property(nonatomic) BOOL closePreviousSplit, hideInScreenshots;
+@property(nonatomic) BOOL refreshScheduled;
+@property(nonatomic) BOOL columnSliding;
+@property(nonatomic) NSUInteger columnSlideToken;
+@property(nonatomic) BOOL columnTargetOffscreen;
+@property(nonatomic) BOOL preferenceFlushPending;
+@property(nonatomic, strong) UILabel *noticeLabel;
+@property(nonatomic) NSUInteger noticeToken;
+@property(nonatomic) CGFloat favoriteScrollRows;
+@property(nonatomic) BOOL favoriteDragConsumed;
+@property(nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *generations;
+@property(nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *lastBadges;
+@property(nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *badgeCounts;
+@property(nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *lastBadgeVersion;
+@property(nonatomic, strong) NFBRecord *pendingRecord;
+@property(nonatomic) NSTimeInterval pendingUntil;
+@property(nonatomic) NSUInteger emptyReads;
+@property(nonatomic) CGFloat verticalPosition;
+@property(nonatomic, copy) NSString *lastActiveApp;
+@property(nonatomic, strong) NSMutableArray<NSString *> *recentUsedApps;
+@property(nonatomic, copy) NSArray *lastLayoutApps;
+@property(nonatomic) CGFloat iconSize;
+@property(nonatomic) CGFloat iconOpacity;
+@property(nonatomic) BOOL enabled;
+@property(nonatomic) BOOL showLock;
+@property(nonatomic) BOOL showHome;
+@property(nonatomic) BOOL showApps;
+@property(nonatomic) NSTimeInterval lastGestureAt;
+@property(nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *gestureTimes;
+@property(nonatomic, strong) NSMutableSet<NSString *> *retracting;
+@property(nonatomic, strong) NSTimer *floatingWatch;
+@property(nonatomic) CGRect observedSplitFrame;
+@property(nonatomic) CGRect lastSplitFrame;
+@property(nonatomic) BOOL splitRailActive;
+@property(nonatomic) CGFloat splitRailDiameter;
+@property(nonatomic) CGFloat splitRailTop;
+@property(nonatomic) CGFloat splitRailScreenWidth;
+@property(nonatomic) BOOL splitRailMeasured;
+@property(nonatomic, strong) NFBRailStateStore *railStateStore;
+@property(nonatomic) NFBRailMetric restoredRailMetric;
+@property(nonatomic) BOOL restoredRailMetricValid;
+@property(nonatomic) CGFloat restoredRailLastWidth;
+@property(nonatomic) BOOL splitLayout;
+@property(nonatomic, strong) UIVisualEffectView *railMaterial;
+@property(nonatomic, copy) NSString *watchedFloating;
+@property(nonatomic) BOOL keyboardUp;
+@end
+@implementation NFBPerfStateDeclarations
+@end

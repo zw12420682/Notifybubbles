@@ -213,6 +213,29 @@ static void testTickReconcile(void) {
     char front[32] = "com.example.app";
     copy.front = front;
     check(!NFBTickNeedsLayout(&base, &copy, false, false), "equal ids from different storage lay out never");
+
+    // Bounded reconciliation (NFBTickReconcile.h): identical state, but a full
+    // layout is forced at least every NFBTickReconcileInterval seconds, so a badge
+    // that changed outside our records cannot stay stale forever. The bound is
+    // aggressive enough that a 2 Hz tick hits it within a few ticks, and it never
+    // fires below the interval.
+    check(!NFBTickReconcileDue(0.5), "half a second of identical state does not force a layout");
+    check(!NFBTickReconcileDue(1.999), "just under the bound still dedupes");
+    check(NFBTickReconcileDue(NFBTickReconcileInterval), "the bound forces a layout");
+    check(NFBTickReconcileDue(5.0), "a long quiet stretch forces one at every tick after the bound");
+    check(NFBTickReconcileInterval <= 2.0, "the backstop is at most 2s, not a nominal guard");
+    // A quiet stretch: the tick counts from the last real layout, which it stamps
+    // itself when the backstop forces one, so 10 ticks over 5s lay out 2 times
+    // (t=2.0 and t=4.0) instead of 10.
+    int forced = 0;
+    double lastLayout = 0;
+    for (int tick = 1; tick <= 10; ++tick) {
+        double now = tick * 0.5;
+        if (NFBTickReconcileDue(now - lastLayout)) { ++forced; lastLayout = now; }
+    }
+    check(forced == 2, "a 10-tick (5s) quiet stretch forces exactly 2 full layouts");
+    // `forced` (the tick's own dirty state) and the backstop are independent reasons.
+    check(NFBTickNeedsLayout(&base, &base, true, false), "the reconcile reason alone lays out");
 }
 
 int main(void) {

@@ -35,11 +35,18 @@
    tick 漏掉的任何状态就是永远检测不到的状态。现在每次 tick 把布局真正读的状态收进
    一份 `NFBTickState`（`Sources/NFBTickReconcile.h`，纯 C，与测试同一份代码），逐项比较：
    前台 App（全屏 App 进入/离开列）、主屏与否（与"前台读不到"区分，二者不可互相冒充）、
-   未读记录总数（角标在无新通知时变化，例如系统侧撤回只到达图标角标）、锁屏、键盘、
+   未读记录总数（本插件记录之和；系统侧只到图标角标的清除不在其中，由下面的兜底覆盖）、锁屏、键盘、
    展开/收起、分屏、上次布局未完成、隐私截图标记。任何一个变化即跑原来的完整布局；
    第一次 tick 与"仍欠一次折叠"时强制布局。窗口状态每次 tick 重新取一次快照并让
    `-refresh` 重建，不跨 tick 缓存。tick 与 20 Hz 监视器会同步 watcher 记住的分屏帧，
    减少监视器因旧帧反复提交相同布局。
+   **有界对账（真正的兜底，不是"字段对账已覆盖"的说法）**：上面的未读总数只是本插件
+   自己存的记录之和，系统侧清除/撤回角标不经过这些记录，字段比对看不见。为保证与原行为
+   （tick 每 0.5s 都完整布局）在这一点上等价，tick 另有一条与字段无关的兜底：
+   `lastLayoutAt` 只由真正完成布局的 `-refresh` 写入，距上次真实布局 ≥ 2s
+   （`NFBTickReconcileInterval`）时本轮无条件布局；未完成/早退（禁用、锁屏、键盘）的
+   布局不算数，下一轮重试。也就是说最长 2s 内必有一次完整布局重新读角标/未读，
+   字段比对负责把中间的重复布局提交去掉（静默 5s = 10 次 tick 只布局 2 次，原来是 10 次）。
 
 6. **20 Hz 监视器的同轮探测复用**（`NFBProbePolicy.h`）
    一次监视器触发与同轮调度的布局过去各查一次桌面/分屏窗口。现在同轮（同一 turn 的
@@ -51,7 +58,8 @@
 动画/真实变化仍动画；突发在布局前不抖动、布局后按列表顺序执行、闭合的 App 不抖动；
 边缘区才起时钟、边界 44pt 半开、列表不需滚动不起时钟；A,B,C ⇒ C、非法不排程、回到
 已提交值、待写不被非法值覆盖；tick 对账逐字段（前台/主屏/未读/锁屏/键盘/展开/分屏/
-   未完成/隐私，以及 NULL 与空串等价、按值比较）；同轮复用、换轮重新探测、迟到重试
+   未完成/隐私，以及 NULL 与空串等价、按值比较）；2s 有界对账（<2s 不强制、=2s 强制、
+   5s 静默 10 轮恰好 2 次完整布局=原来每 0.5s 的 1/5）；同轮复用、换轮重新探测、迟到重试
    抑制复用。新增
 `scripts/test_policies.py` 用本机 clang/cc 编译并运行 PolicyTests 与便携 RailLayoutTests
 （`Tests/NFBPortableShim.h` 提供 CGRect 类型），CI 增加同名 `-Werror` 步骤。
@@ -60,11 +68,24 @@
 test_package_parser / test_rail_layout / test_policies / test_objc_guards 全部通过；完整
 Objective-C 编译在 CI（macOS clang -Werror）执行：`StoreTests`、`TrollOpen` 各模式、
 `TransitionTests`、`ActionGestureTests`、`InterfaceTests`、`StateLedgerTests`、
-`RailLayoutTests`、`PolicyTests` 均通过。新增 `scripts/test_objc_guards.py`：静态扫描
+`RailLayoutTests`、`PolicyTests` 均通过；本条目的验证结果见下方“0.48.88 优化版 CI 结果”。
+`scripts/test_objc_guards.py`：静态扫描
 "C 结构体被当属性/取地址改字段、对象未 __bridge 传给 const void *、同一类选择器重复定义、
-本次新增却只写不读的状态"，CI 与本地同样运行（不需要编译，也不会放松任何行为断言）。
-iOS 模拟器的桌面宿主用例（`DesktopHostTests`，本次未改动其代码）出现周期性失败（分页
-往返断言），需单独重跑确认。**未在真机验证**，未做功耗或帧率测量，不承诺省电数字。
+只写不读的状态"，CI 与本地同样运行（不需要编译，也不会放松任何行为断言）。规则 4 不再
+依赖 git 基线提交（CI 只检出一层历史，旧字段 `columnSliding`/`wallpaperCount` 曾被误报为
+"新增"）：现在逐文件自证——文件里存了却没人读就是问题，与历史无关。`--self-test` 在一个
+只有单次提交（无历史）的临时克隆里用 `scripts/fixtures/guard_shallow/` 的 fixture 验证
+"旧文件里只写不读不误报、新状态写了就读通过、只写不读/拼错属性必须报出"，CI 同步运行。
+`columnSliding` 的误报随后按真实缺陷修掉（见下方"顺带修复"），不是加进白名单。
+iOS 模拟器的桌面宿主用例（`DesktopHostTests`，本次未改动其代码）此前出现周期性失败
+（分页往返断言），以该次运行日志为准单独判断，未删用例。**未在真机验证**，未做功耗或
+帧率测量，不承诺省电或帧率数字。
+
+**顺带修复**：`-setColumnOffscreen:` 的"已在目标状态"早退没有看滑行状态。滑行未完成时
+一次相反请求被早退吞掉，随后旧滑行的 completion 仍按 `columnSliding` 把列隐藏/露出，
+与当前请求矛盾。现在早退要求 `columnSliding == NO` 且 transform 已归位（真正空闲）；
+滑行中的请求照常执行。普通路径（既未滑行、状态也未变）仍是原来的早退，外观/时长/位置/
+透明度不变。
 
 **0.48.88 实际规模**：减少的是"同一状态下重复调用"（同帧重复动画提交、突发期间每个通知
 一次完整布局、拖动每帧两次移动、20 Hz 每条路径各探测一次窗口），不是减少功能或渲染次数；
@@ -218,4 +239,3 @@ CI 的 test 作业已通过（含 macOS 上编译的 StoreTests、InterfaceTests
 contentSize 跟随）。validate / test_scheme / test_cleanup / test_validator 全部通过。
 
 真机未验证。
-

@@ -267,6 +267,20 @@ NFBProbeStamp desktopProbe;
 // object and therefore the same round. NSObject identity, not a counter: nothing
 // has to be reset between turns.
 @property(nonatomic) NSObject *probeRoundToken;
+// Bounded reconciliation (NFBTickReconcile.h). The tick's state comparison only
+// sees the unread records this plugin stores, so a badge that changed outside
+// SpringBoard's notification path - or any other system-side withdraw - produces
+// no record change here and the comparison would answer "nothing changed"
+// forever. To keep the original behaviour, where the tick submitted a full
+// layout every 0.5s and nothing inside the layout could be stale, the tick now
+// forces one full layout at least every kTickReconcileInterval seconds (see
+// -tickBody). This is a real backstop, not a claim that the field comparison
+// covers it: only the tick is unbounded, while the burst layout, gestures, the
+// probes and the 20 Hz watcher stay deduped exactly as the perf change made them.
+@property(nonatomic) CFTimeInterval lastLayoutAt;
+// Written by -refresh: did this pass actually lay the column out (not disabled /
+// locked / keyboard)? A pass that did not must not refresh lastLayoutAt above.
+@property(nonatomic) BOOL lastRefreshComplete;
 // Tick (2 Hz) dirty state: what a full layout would read, compared in the tick
 // itself so an unchanged state does not submit a 20 Hz layout. NFBTickReconcile.h
 // holds the comparison; `tickStateValid` is NO until the first tick has stored a
@@ -388,6 +402,10 @@ NFBTickState tickState;
 static BOOL edgeRailHugging(BOOL halfHidden, BOOL expanded) {
     return halfHidden && !expanded;
 }
+// Longest a reordering dedupe may postpone a full layout. Short enough that an
+// external badge clear is still gone within one user-visible beat, long enough
+// that the tick stays a 2 Hz state check instead of a 20 Hz layout.
+static const CFTimeInterval kTickReconcileInterval = 2.0;
 + (instancetype)shared {
     static NFBManager *manager;
     static dispatch_once_t once;
@@ -994,15 +1012,31 @@ static NSString *NFBFrontmostAppID(void) {
     // layout. The split watcher keeps its own 20 Hz passes on top of this, and a
     // probe cached inside this round is shared rather than repeated.
     self.probeRoundToken = [NSObject new];
+    // Bounded reconciliation: what the comparison below cannot see (a badge that
+    // changed outside our records, a system-side withdraw) gets a full layout at
+    // least every kTickReconcileInterval. `lastLayoutAt` is written only by a pass
+    // that really laid the column out, so a skipped or early-returned pass cannot
+    // postpone the backstop forever.
+    CFTimeInterval tickNow = CACurrentMediaTime();
+    BOOL reconcileDue = tickNow - self.lastLayoutAt >= kTickReconcileInterval;
+    // A pass that did not really lay the column out (disabled, lock screen,
+    // keyboard) is retried on the next tick: otherwise a coalesced tick could
+    // leave lastLayoutAt fresh over a layout that never happened.
+    BOOL reconcile = reconcileDue || !self.lastRefreshComplete;
+    // Any pass that has actually completed (gesture, burst, watcher, probe) also
+    // counts, so the backstop is "no full layout for 2s" rather than "no tick-
+    // requested layout for 2s": a busy column that lays out every turn needs none.
+    if (self.lastRefreshComplete && tickNow - self.lastLayoutAt < kTickReconcileInterval)
+        reconcile = NO;
     // Auto-fold applies to the expanded fullscreen column only; a split column is
     // driven by the floating window and must never time out.
     BOOL collapseDue = NO;
     // The split guard stays on the stamp itself: nothing is touched while split.
-    if (self.edgeExpanded && !self.splitLayout && CACurrentMediaTime() - self.lastInteractionAt > 5.0) {
+    if (self.edgeExpanded && !self.splitLayout && tickNow - self.lastInteractionAt > 5.0) {
         self.edgeExpanded = NO;
         // Folding is not an interaction, but it ends this countdown: without a
         // fresh stamp the next expand would fold on its very first tick.
-        self.lastInteractionAt = CACurrentMediaTime();
+        self.lastInteractionAt = tickNow;
         [self refresh];
         return;
     }
@@ -1098,9 +1132,10 @@ static NSString *NFBFrontmostAppID(void) {
     current.captureHidden = self.hideInScreenshots;
     // The comparison is the only thing that notices front app / home / badge
     // changes when no notification or gesture arrives: nothing else in the tick
-    // looks at them, so they are part of NFBTickNeedsLayout and tested there.
+    // looks at them, so they are part of NFBTickNeedsLayout and tested there. The
+    // backstop above is the belt to this comparison's braces.
     BOOL needs = NFBTickNeedsLayout(self.tickStateValid ? &_tickState : NULL, &current,
-                                    dirty || self.tickForcedRefresh, NO);
+                                    dirty || self.tickForcedRefresh || reconcile, NO);
     self.tickState = current;
     self.tickStateValid = YES;
     if (needs) {
@@ -1362,8 +1397,17 @@ static NSString *NFBFrontmostAppID(void) {
 - (void)setColumnOffscreen:(BOOL)offscreen {
     UIView *root = self.window ? self.window.rootViewController.view : nil;
     if (!root) { self.window.hidden = offscreen; return; }
-    if (offscreen && self.window.hidden) return;
-    if (!offscreen && !self.window.hidden && CGAffineTransformIsIdentity(root.transform)) return;
+    // A request that asks for the state already on screen is skipped only when no
+    // slide is in flight (`idle`). While one is, the request still has to run: the
+    // completions below commit against `columnSliding`, so a slide and the request
+    // that reverses it must not be short-circuited. This read is also what makes
+    // the flag a decision instead of a write-only field (test_objc_guards.py).
+    BOOL idle = !self.columnSliding && CGAffineTransformIsIdentity(root.transform);
+    if (offscreen && self.window.hidden && idle) return;
+    if (!offscreen && !self.window.hidden && idle) {
+        self.columnSliding = NO;
+        return;
+    }
     BOOL animated = !UIAccessibilityIsReduceMotionEnabled();
     CGFloat width = CGRectGetWidth(root.bounds);
     if (!(width > 0)) width = CGRectGetWidth(UIScreen.mainScreen.bounds);
@@ -1572,6 +1616,10 @@ static NSString *NFBFrontmostAppID(void) {
                 [button removeFromSuperview];
         }];
     }
+    // True only for the paths (disabled / lock / keyboard) that return before the
+    // column is actually laid out. Everything after them sets the no-return case
+    // on the way out, so this one write covers every "did not really lay out".
+    BOOL laidOut = NO;
     if (!self.enabled) {
         NFBUpdateOpenEdgeSplitIconsVisible(NO);
         NSUInteger presentationEpoch=self.presentationEpoch;
@@ -1943,6 +1991,8 @@ static NSString *NFBFrontmostAppID(void) {
     // Collections are laid out; only now do the reminders run, on rows that are
     // really placed (NFBBurstPolicy.h).
     [self runBurstEffects];
+    self.lastRefreshComplete = laidOut;
+    if (laidOut) self.lastLayoutAt = CACurrentMediaTime();
     self.layoutRecording = NO;
 }
 - (void)layoutFavorites:(CGRect)frame diameter:(CGFloat)diameter active:(NSString *)active duration:(NSTimeInterval)duration {

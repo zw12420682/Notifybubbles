@@ -36,12 +36,16 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
+      # History-free guard fixtures: this checkout has no baseline commit, so the
+      # source guards must pass here exactly as they do in a full clone.
       - name: Validate project files
         run: python3 scripts/validate.py
       - name: Test validation for overlay source updates
         run: python3 scripts/test_validator.py
       - name: Test Objective-C source guards (struct state, ARC bridges, duplicate selectors)
-        run: python3 scripts/test_objc_guards.py
+        run: |
+          python3 scripts/test_objc_guards.py
+          python3 scripts/test_objc_guards.py --self-test
       - name: Test retired keyboard cleanup
         run: python3 scripts/test_cleanup.py
       - name: Test scheme switching without a toolchain
