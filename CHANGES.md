@@ -1,3 +1,59 @@
+# 0.48.88 — 六项定向优化（重复工作去除，外观与手感不变）
+
+0.48.87 基础上只减少已证明多余的重复工作。用户可见的 x/y/尺寸/透明度、滑动/长按/单击
+判定、动画时长与曲线、通知清理行为和 respring 后的还原状态均未更改；没有新增设置项，
+没有引入新的大策略。每项的可测规则都抽成 `Sources/NFB*Policy.h` 纯 C 头文件，管理器与
+测试引用同一份代码（不是复制的测试）。
+
+1. **桌面/收纳键布局不再无条件动画**（`NFBDesktopActionPolicy.h`）
+   20 Hz 布局每次都以相同帧、透明度、图标尺寸重新提交同一条 0.16s EaseInOut 动画。
+   现在只有出现（从隐藏/空帧回来）、透明度变化、帧或图标尺寸真正变化时才动画；其余
+   布局只提交模型值并照常置顶。真实移动仍使用原来的时长与曲线。
+
+2. **通知突发合并布局，抖动/滚动延后到气泡就位**（`NFBBurstPolicy.h`）
+   每个 `receiveRequest` 过去各跑一次完整布局，然后对**上一次布局**产生的气泡抖动、
+   滚动。现在同一轮只布局一次（`burstRefreshPending` 合并），记录本批到达的 App，
+   布局末尾 `runBurstEffects` 按行顺序对仍在列表中的 App 执行原来的抖动/滚动判断
+   （分屏才抖动、清除按钮不抖动、减少动态效果仍跳过、行已在可视区不滚动）。
+
+3. **收藏拖动只留一个时钟**（`NFBFavoriteDragPolicy.h`）
+   拖动时每个 Changed 回调与 30 Hz 定时器各调一次 `moveFavorite`（同一帧移动两次）。
+   现在手指移动由 Changed 驱动；定时器只在手指停在 44pt 边缘区且还能滚动时启动，
+   且边缘区内 Changed 把移动让给定时器，保证每帧仍只移动一次、响应不变。列表本身
+   不需要滚动时根本不创建定时器。
+
+4. **轨道几何只在 1s 去抖后写最新值**（`NFBRailMetricQueue.h`，`NFBRailStateStore.m`）
+   去抖块过去写入的是**排程时捕获**的度量：同一窗口内 A、B、C 会写回 A。现在队列保存
+   最新的待写值，最终落盘 C；与磁盘相同、非法（NaN/越界/尺寸不可能）的度量不排程也
+   不取消已有的待写；回到已提交值的处理与原来一致。1s 去抖、避免 20 Hz 写盘保持不变。
+
+5. **2 Hz tick 只在与布局可读状态变化时刷新**
+   tick 仍每 0.5s 检查：折叠时钟（分屏不折叠）、桌面分屏失败、pending 鉴权记录、
+   锁屏、窗口切换器（含外部新增卡片 / 两次空读）、键盘升降、浮动 App 与观测值差异、
+   上一次布局未完成。无变化时不再提交完整布局；有变化仍走同一份完整布局（前台 App、
+   主屏、锁屏、隐私、角标全部由它重新读取，不做跨变化缓存）。tick 与 20 Hz 监视器
+   会同步 watcher 记住的分屏帧，减少监视器因旧帧反复提交相同布局。
+
+6. **20 Hz 监视器的同轮探测复用**（`NFBProbePolicy.h`）
+   一次监视器触发与同轮调度的布局过去各查一次桌面/分屏窗口。现在同轮（同一 turn 的
+   对象标识）内的第二次探测复用第一次的**可用**结果；nil 类/无窗口等不可用结果从不
+   复用，类晚到（`NFBSplitFrameClassUnavailable`）时清除缓存并在下一帧按原 20 Hz
+   重试。20 Hz 周期、显式失效与迟到重试均保留。
+
+**测试**：新增 `Tests/PolicyTests.c`（纯 C，`-Wall -Wextra -Werror`）覆盖：相同目标不
+动画/真实变化仍动画；突发在布局前不抖动、布局后按列表顺序执行、闭合的 App 不抖动；
+边缘区才起时钟、边界 44pt 半开、列表不需滚动不起时钟；A,B,C ⇒ C、非法不排程、回到
+已提交值、待写不被非法值覆盖；同轮复用、换轮重新探测、迟到重试抑制复用。新增
+`scripts/test_policies.py` 用本机 clang/cc 编译并运行 PolicyTests 与便携 RailLayoutTests
+（`Tests/NFBPortableShim.h` 提供 CGRect 类型），CI 增加同名 `-Werror` 步骤。
+
+**验证范围**：本地 validate / test_scheme / test_cleanup / test_validator /
+test_package_parser / test_rail_layout / test_policies 全部通过；完整 Objective-C 编译在
+CI（macOS clang -Werror）执行：`StoreTests`、`TrollOpen` 各模式、`TransitionTests`、
+`ActionGestureTests`、`InterfaceTests`、`StateLedgerTests`、`RailLayoutTests`、
+`PolicyTests` 均通过。iOS 模拟器的桌面宿主用例（`DesktopHostTests`，本次未改动其
+代码）出现周期性失败（分页往返断言），需单独重跑确认。**未在真机验证**，未做功耗或
+帧率测量，不承诺省电数字。
 # 0.48.87 — 收纳键左滑展开、展开态长按清未读（只这两条）
 
 0.48.86 基础上只加两条已确认的手势，其余视觉、尺寸、透明度、动画与性能一律未动。

@@ -1,6 +1,9 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 CGRect NFBSplitFrameInView(UIView *root);
+// True when the split framework classes are not resolvable yet (SpringBoard still
+// starting): the watcher drops its cached probe and asks again next fire.
+BOOL NFBSplitFrameClassUnavailable(void);
 void NFBObserveSplitSwitch(NSString *app, BOOL enabled);
 void NFBObserveSplitPlacement(NSString *app);
 void NFBResetSplitPlacement(void);

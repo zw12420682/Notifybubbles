@@ -79,6 +79,11 @@ jobs:
 
       - name: Test rail layout wiring without a toolchain
         run: python3 scripts/test_rail_layout.py
+      - name: Test layout/burst/drag/metric/probe policies (-Werror)
+        run: |
+          clang -std=c11 -Wall -Wextra -Werror -I Sources Tests/PolicyTests.c -lm -o "$RUNNER_TEMP/test-policies"
+          "$RUNNER_TEMP/test-policies"
+          python3 scripts/test_policies.py
       - name: Test column geometry (split, fullscreen, collapsed, empty)
         run: |
           xcrun --sdk macosx clang -fobjc-arc -fmodules -Wall -Wextra -Werror \

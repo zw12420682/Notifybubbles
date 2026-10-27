@@ -28,6 +28,11 @@ CGRect NFBSplitFrameInView(UIView *root) {
         return [view convertRect:view.bounds toView:root];
     } @catch (__unused NSException *exception) { return CGRectNull; }
 }
+// The class the attachment lookup depends on is still missing (nil, not merely
+// "no window"): a probe taken now answered "nothing" for the wrong reason.
+BOOL NFBSplitFrameClassUnavailable(void) {
+    return NFBTrollFloatingWindowClass() == Nil;
+}
 static NSInteger orientationOf(id window, NSString *name) {
     SEL selector = NSSelectorFromString(name);
     NSMethodSignature *sig = NFBSignature(window, selector);

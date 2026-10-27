@@ -27,6 +27,11 @@
 #import "NFBEdgeLayout.h"
 #import "NFBPrivacy.h"
 #import "NFBContainerLayout.h"
+#import "NFBRailMetricQueue.h"
+#import "NFBProbePolicy.h"
+#import "NFBFavoriteDragPolicy.h"
+#import "NFBBurstPolicy.h"
+#import "NFBDesktopActionPolicy.h"
 
 static const NSTimeInterval NFBMotion = 0.35;
 // No double-tap recognizer: a short tap resolves on release.
@@ -205,6 +210,12 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, strong) NFBBubble *favoriteDrag;
 @property(nonatomic, strong) NSTimer *favoriteDragTimer;
 @property(nonatomic) CGFloat favoriteGrabOffset;
+// Favorite drag: the idle edge-scroll clock and the finger position it last saw.
+@property(nonatomic) BOOL favoriteDragIdleRun;
+@property(nonatomic) CGFloat favoriteDragFingerY;
+- (void)moveFavoriteDriven:(BOOL)fingerDriven;
+- (void)updateFavoriteDragClock;
+- (BOOL)favoriteIdleZoneActive;
 - (void)favoriteHeld:(UILongPressGestureRecognizer *)gesture;
 - (void)moveFavorite;
 - (void)finishFavoriteDrag;
@@ -234,6 +245,31 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, strong) NSCache<NSString *, UIImage *> *icons;
 @property(nonatomic,strong) NSMutableDictionary<NSString *,NSNumber *> *imageRetryAfter;
 @property(nonatomic, strong) NSMutableSet<NSString *> *burstApps;
+// Apps that received a notification in this burst and still owe a shake/scroll.
+@property(nonatomic, strong) NSMutableSet<NSString *> *pendingBurstApps;
+// One burst layout per turn: a request arriving while one is scheduled joins it.
+@property(nonatomic) BOOL burstRefreshPending;
+- (void)runBurstEffects;
+- (void)refreshIfNeeded;
+// The layout pass is running: further requests join it instead of nesting.
+@property(nonatomic) BOOL layoutRecording;
+// Same-round probe reuse on the 20 Hz watcher path (NFBProbePolicy.h).
+@property(nonatomic) NFBProbeStamp floatingProbe;
+@property(nonatomic) NFBProbeStamp desktopProbe;
+@property(nonatomic) double desktopProbeLateRetry;
+@property(nonatomic) BOOL floatingWatchClassMissing;
+// Rounds are the unique object touched by every 20 Hz entry point (watcher,
+// tick, notification request) this turn; a later dispatch block reads the same
+// object and therefore the same round. NSObject identity, not a counter: nothing
+// has to be reset between turns.
+@property(nonatomic) NSObject *probeRoundToken;
+// Tick (2 Hz) dirty state: what a full layout would read, compared in the tick
+// itself so an unchanged state does not submit a 20 Hz layout.
+@property(nonatomic) BOOL tickForcedRefresh;
+@property(nonatomic) BOOL lastLocked;
+@property(nonatomic, copy) NSString *tickActiveFloating;
+- (UIView *)desktopTargetProbe:(BOOL *)probed;
+- (CGRect)splitFrameProbe:(BOOL *)probed;
 @property(nonatomic, strong) NSArray<NSString *> *lastSwitcher;
 @property(nonatomic, strong) NSMutableSet<NSString *> *dismissedSwitcher;
 @property(nonatomic, strong) NSMutableSet<NSString *> *closingApps;
@@ -356,6 +392,7 @@ static BOOL edgeRailHugging(BOOL halfHidden, BOOL expanded) {
         _icons = [NSCache new]; _icons.countLimit = 128;
         _imageRetryAfter=[NSMutableDictionary dictionary];
         _burstApps = [NSMutableSet set];
+        _pendingBurstApps = [NSMutableSet set];
         _retracting = [NSMutableSet set];
         _dismissedSwitcher = [NSMutableSet set];
         _closingApps = [NSMutableSet set];
@@ -460,18 +497,24 @@ static BOOL edgeRailHugging(BOOL halfHidden, BOOL expanded) {
     id image = NFBGet(NFBGet(request, @"content"), @"icon");
     if ([image isKindOfClass:UIImage.class]) [self.icons setObject:image forKey:appID];
     [self startTimer];
-    [self refresh];
-    NFBBubble *updated = self.buttons[appID];
-    if (!self.window.hidden && updated) {
-        // New message while an app sits in the split view: shake that bubble as
-        // a reminder and keep it highlighted, since it is otherwise dimmed.
-        if (NFBTrollVisibleApp().length > 0 && ![appID isEqualToString:NFBClearAllID]) {
-            [self shakeBubble:updated];
-        }
-        UIScrollView *owner = [updated.superview isKindOfClass:UIScrollView.class] ? (UIScrollView *)updated.superview : nil;
-        CGRect row = CGRectMake(0, updated.center.y - updated.bounds.size.height / 2, owner.bounds.size.width, updated.bounds.size.height);
-        [owner scrollRectToVisible:row animated:!UIAccessibilityIsReduceMotionEnabled()];
-    }
+    // A burst posts several requests in a row. Each one used to run its own full
+    // layout and then shake/scroll the bubble the *previous* layout had produced,
+    // so the reminder fought the layout that was still moving the row. The apps
+    // are collected and the burst is laid out once, on the next runloop turn; the
+    // reminder effects then run from that pass, after it has placed the bubbles
+    // (runBurstEffects), so a request arriving mid-layout just joins it.
+    if (![self.pendingBurstApps containsObject:appID]) [self.pendingBurstApps addObject:appID];
+    if (self.burstRefreshPending) return;
+    self.burstRefreshPending = YES;
+    __weak typeof(self) weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        NFBManager *manager = weakSelf;
+        if (!manager) return;
+        manager.burstRefreshPending = NO;
+        // Also runs when the coalesced hook is already pending: it was scheduled
+        // before this request, so it would commit the burst without laying it out.
+        [manager refresh];
+    });
 }
 - (void)withdrawRequest:(id)request {
     NSString *appID = NFBString(NFBGet(request, @"sectionIdentifier"));
@@ -736,20 +779,32 @@ static NSString *NFBFrontmostAppID(void) {
     CGFloat targetAlpha = visible ? (fade ? 0.5 : 1) : 0;
     // On screen (or parked with a visible half) is enough: no desktop target needed.
     button.userInteractionEnabled = NFBToggleIsInteractive(self.enabled, visible, NO);
-    if (visible && (button.alpha < 0.01 || CGRectIsEmpty(button.frame))) button.frame = frame;
+    BOOL appearing = visible && (button.alpha < 0.01 || CGRectIsEmpty(button.frame));
+    if (appearing) button.frame = frame;
     [self.window bringSubviewToFront:button];
-    [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : MAX(0.16, duration)
-        delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseInOut animations:^{
+    CGFloat imageSide = visible ? MAX(1, frame.size.width - 14) : button.imageView.frame.size.width;
+    // The 20 Hz passes used to submit this same curve every time. Only a pass
+    // that really changes an animated value (or brings the control back) animates;
+    // any other pass commits the values without a separate animation, so the style
+    // and timing of a real move are untouched.
+    NFBDesktopActionInput action = {appearing, button.frame.origin.x, button.frame.origin.y,
+        button.frame.size.width, button.frame.size.height, frame.origin.x, frame.origin.y,
+        frame.size.width, frame.size.height, button.alpha, targetAlpha,
+        button.imageView.frame.size.width, imageSide};
+    void (^applyAction)(void) = ^{
         button.alpha = targetAlpha;
         if (visible) {
             button.frame = frame;
-            CGFloat imageSide = MAX(1, frame.size.width - 14);
             button.imageView.frame = CGRectMake(7, 7, imageSide, imageSide);
             // Identical shape in both modes: the toggle occupies the desktop
             // button's slot, so it must read as the same control.
             button.imageView.layer.cornerRadius = imageSide * 0.23;
         }
-    } completion:nil];
+    };
+    if (!NFBDesktopActionNeedsAnimation(action)) { applyAction(); return; }
+    [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : MAX(0.16, duration)
+        delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseInOut animations:applyAction
+    completion:nil];
 }
 - (void)clearAllHeld:(UILongPressGestureRecognizer *)gesture {
     if (gesture.state != UIGestureRecognizerStateBegan || [self isLocked] || ![self acceptGestureForKey:@"clearAllHold"]) return;
@@ -814,6 +869,25 @@ static NSString *NFBFrontmostAppID(void) {
         [self refresh]; // Adopt whichever state TrollOpen actually settled into.
     });
 }
+// Same-round probes (NFBProbePolicy.h). The 20 Hz entry points (watcher, tick,
+// notification request) touch a fresh token for their turn; inside that turn both
+// the entry point and any layout scheduled from it share one answer.
+- (UIView *)desktopTargetProbe:(BOOL *)probed {
+    UIView *target = NFBDesktopActionWindow();
+    if (target) self.desktopProbe = NFBProbeRecord(self.desktopProbe, YES, self.probeRoundToken, CACurrentMediaTime());
+    else { self.desktopProbe = NFBProbeRecord(self.desktopProbe, NO, self.probeRoundToken, CACurrentMediaTime()); }
+    if (probed) *probed = YES;
+    return target;
+}
+- (CGRect)splitFrameProbe:(BOOL *)probed {
+    CGRect frame = NFBSplitFrameInView(self.window.rootViewController.view);
+    BOOL usable = !CGRectIsNull(frame) && !CGRectIsEmpty(frame) && isfinite(CGRectGetMaxX(frame));
+    // A null frame is recorded too: it belongs to this round and must not be
+    // confused with a probe from an earlier one.
+    self.floatingProbe = NFBProbeRecord(self.floatingProbe, usable, self.probeRoundToken, CACurrentMediaTime());
+    if (probed) *probed = YES;
+    return frame;
+}
 // Poll the floating window only while one exists, so a window dismissed outside
 // the plugin (TrollOpen's own bar, app exit, crash) is reflected in about one
 // frame rather than on the next 0.5s poll — with no fast timer the rest of the time.
@@ -832,9 +906,22 @@ static NSString *NFBFrontmostAppID(void) {
     self.floatingWatch.tolerance = 0.015;
     [NSRunLoop.mainRunLoop addTimer:self.floatingWatch forMode:NSRunLoopCommonModes];
 }
+// Split class availability is asked once per fire by floatingWatchFired, which
+// drops every cached probe when the framework is not up yet (late retry); the
+// body then reads that flag instead of asking a second time.
 - (void)floatingWatchFired {
     // 20 Hz entry point on the SpringBoard main thread: one uncaught exception
     // from any private call below takes the whole process down.
+    // A nil split class means the framework was not up yet when the class was
+    // resolved: reset the cached stamp so the next fire probes again (late retry)
+    // instead of reusing an answer that was never taken.
+    BOOL classWasMissing = NFBSplitFrameClassUnavailable();
+    self.floatingWatchClassMissing = classWasMissing;
+    if (classWasMissing) {
+        self.floatingProbe.resolved = NO; self.floatingProbe.usable = NO;
+        self.desktopProbe.resolved = NO; self.desktopProbe.usable = NO;
+        self.desktopProbeLateRetry = CACurrentMediaTime() + NFBProbeLateRetry;
+    }
     @try { [self floatingWatchBody]; }
     @catch (NSException *error) {
         NFBErrorLog(@"floating watch failed: %@", error);
@@ -845,6 +932,11 @@ static NSString *NFBFrontmostAppID(void) {
 - (void)floatingWatchBody {
     [self updatePrivacy];
     NFBUpdateOpenEdge(self.enabled);
+    // One 20 Hz fire is one probe round: a layout submitted from this fire (and
+    // the one running right now) shares these answers instead of probing twice.
+    // The 20 Hz period itself, the explicit invalidation on a nil class and the
+    // late retry are unchanged.
+    self.probeRoundToken = [NSObject new];
     NSString *now = NFBSplitAttachmentApp();
     // syncFloatingWatch only keeps this timer alive while an attachment is
     // reported, so there is no idle rate to save here: arriving without one
@@ -853,19 +945,29 @@ static NSString *NFBFrontmostAppID(void) {
     // Orientation can change while app identity and window frame stay the same.
     NSString *switchApp = [self.retracting containsObject:currentApp ?: @""] ? nil : currentApp;
     NFBObserveSplitSwitch(switchApp, self.enabled && self.closePreviousSplit);
-    CGRect frame = NFBSplitFrameInView(self.window.rootViewController.view);
+    CGRect frame = [self splitFrameProbe:NULL];
     BOOL sameFrame = CGRectEqualToRect(frame, self.observedSplitFrame) ||
         (CGRectIsNull(frame) && CGRectIsNull(self.observedSplitFrame));
-    UIView *actionTarget = currentApp.length ? NFBDesktopActionWindow() : nil;
+    UIView *actionTarget = nil;
+    BOOL reusedDesktop = currentApp.length && NFBProbeReusable(self.desktopProbe, self.probeRoundToken, self.desktopProbeLateRetry,
+        CACurrentMediaTime());
+    if (currentApp.length) {
+        if (reusedDesktop) actionTarget = NFBDesktopActionWindow();
+        else actionTarget = [self desktopTargetProbe:NULL];
+    }
     CGRect actionFrame = NFBWindowFrameInView(actionTarget, self.window.rootViewController.view);
     BOOL sameActionFrame = CGRectEqualToRect(actionFrame, self.observedActionFrame) ||
         (CGRectIsNull(actionFrame) && CGRectIsNull(self.observedActionFrame));
+    if (self.floatingWatchClassMissing) {
+        // Nothing could be read this fire; the next one probes again.
+        return;
+    }
     if ((now == self.watchedFloating || [now isEqualToString:self.watchedFloating]) && sameFrame &&
         actionTarget == self.observedActionTarget && sameActionFrame) return;
     self.observedActionTarget = actionTarget; self.observedActionFrame = actionFrame;
     self.observedSplitFrame = frame;
     self.watchedFloating = now;
-    [self setNeedsRefresh];
+    [self refreshIfNeeded];
 }
 
 - (void)tick {
@@ -876,8 +978,16 @@ static NSString *NFBFrontmostAppID(void) {
     @catch (NSException *error) { NFBErrorLog(@"tick failed: %@", error); }
 }
 - (void)tickBody {
+    // The 2 Hz tick no longer submits a layout when nothing it can see changed;
+    // the full layout stays a real check of every state (front app, home, lock,
+    // privacy, keyboard, badges, pending auth, system switcher) and runs on any
+    // change - but the split watcher still runs its own 20 Hz passes on top of
+    // this, so a probe cached inside this round is shared rather than repeated.
+    self.probeRoundToken = [NSObject new];
     // Auto-fold applies to the expanded fullscreen column only; a split column is
     // driven by the floating window and must never time out.
+    BOOL collapseDue = NO;
+    // The split guard stays on the stamp itself: nothing is touched while split.
     if (self.edgeExpanded && !self.splitLayout && CACurrentMediaTime() - self.lastInteractionAt > 5.0) {
         self.edgeExpanded = NO;
         // Folding is not an interaction, but it ends this countdown: without a
@@ -886,6 +996,12 @@ static NSString *NFBFrontmostAppID(void) {
         [self refresh];
         return;
     }
+    // Once the countdown has run out the fold must still reach a layout that is
+    // submitted, so the layout is requested on every tick until it has folded (an
+    // unchanged state is otherwise allowed to skip the layout).
+    collapseDue = self.edgeExpanded && !self.splitLayout;
+    BOOL locked = [self isLocked];
+    self.tickActiveFloating = NFBTrollVisibleApp();
     NSString *desktopFailure = NFBConsumeDesktopSplitFailure();
     if (desktopFailure.length) [self showOpenNotice:desktopFailure];
     if (self.pendingRecord) {
@@ -894,8 +1010,16 @@ static NSString *NFBFrontmostAppID(void) {
             [self.store consumeRecord:self.pendingRecord]; self.pendingRecord = nil;
         } else if (CACurrentMediaTime() > self.pendingUntil) self.pendingRecord = nil;
     }
+    // What this tick knows that a layout would read. A full layout is only needed
+    // when one of these really changed (or an edge is due); otherwise the state
+    // is still checked here every 0.5s and the layout is reconciled on the next
+    // pass. Nothing is cached across a change: every state below is re-read.
+    BOOL dirty = NO;
+    NSString *watched = self.watchedFloating;
+    NSString *floatingNow = self.tickActiveFloating;
+    if (!(watched && floatingNow && [watched isEqualToString:floatingNow])) dirty = YES;
     // Do not interpret a temporarily inaccessible switcher on the lock screen as empty.
-    if (![self isLocked]) {
+    if (!locked) {
         NSArray *current = NFBReadSwitcherApps();
         if (current) {
             NSSet *set = [NSSet setWithArray:current];
@@ -905,6 +1029,7 @@ static NSString *NFBFrontmostAppID(void) {
                 if (++self.emptyReads >= 2) {
                     [self closeAppsInOrder:[self orderedAppsForRemoval]];
                     self.lastSwitcher = current; self.emptyReads = 0;
+                    dirty = YES;
                 }
             } else {
                 self.emptyReads = 0;
@@ -912,20 +1037,33 @@ static NSString *NFBFrontmostAppID(void) {
                 NSMutableArray *removed = [NSMutableArray array];
                 for (NSString *app in self.store.appIDs)
                     if ([oldSet containsObject:app] && ![set containsObject:app]) [removed addObject:app];
-                if (removed.count) [self closeAppsInOrder:removed];
+                if (removed.count) { [self closeAppsInOrder:removed]; dirty = YES; }
                 for (NSString *app in current) {
+                    // A new card in the switcher is the "external badge" edge: the app
+                    // gained a background card outside the plugin.
+                    if (![oldSet containsObject:app]) dirty = YES;
                     if (![oldSet containsObject:app])
                         self.generations[app] = @([self.generations[app] unsignedIntegerValue] + 1);
                     if (![self.dismissedSwitcher containsObject:app] && ![self.store.appIDs containsObject:app]) {
                         [self.store pinApp:app];
                         self.generations[app] = @([self.generations[app] unsignedIntegerValue] + 1);
+                        dirty = YES;
                     }
                 }
+                if (![current isEqualToArray:self.lastSwitcher ?: @[]]) dirty = YES;
                 self.lastSwitcher = current;
             }
         }
+    } else if (!self.lastLocked) {
+        dirty = YES;   // entered the lock screen: the column must step aside
     }
-    [self setNeedsRefresh];
+    self.lastLocked = locked;
+    if (self.keyboardUp != NFBKeyboardVisible()) dirty = YES;
+    if (self.layoutRecording) dirty = YES;   // a layout that finished incomplete
+    if (dirty || self.tickForcedRefresh || collapseDue) {
+        self.tickForcedRefresh = NO;
+        [self refreshIfNeeded];
+    }
 }
 - (void)closeAppsInOrder:(NSArray<NSString *> *)apps {
     NSDictionary *versions = [self.generations copy];
@@ -1074,7 +1212,7 @@ static NSString *NFBFrontmostAppID(void) {
 // notification-driven and timer-driven updates; keep -refresh for gestures that
 // need same-frame feedback.
 - (void)setNeedsRefresh {
-    if (self.refreshScheduled) return;
+    if (self.refreshScheduled || self.layoutRecording) return;
     self.refreshScheduled = YES;
     __weak typeof(self) weakSelf = self;
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -1083,6 +1221,50 @@ static NSString *NFBFrontmostAppID(void) {
         manager.refreshScheduled = NO;
         [manager refresh];
     });
+}
+// Layout entry point for the 20 Hz callers (watcher, tick, burst): when a full
+// layout is already running this turn the request is satisfied by it, because the
+// next pass checks the same state again.
+- (void)refreshIfNeeded {
+    if (self.layoutRecording) { self.refreshScheduled = YES; return; }
+    [self refresh];
+}
+// Runs after the burst layout placed its bubbles. Membership decides whether the
+// reminder still applies (the app may have been closed by that same pass), and
+// the order follows the row the layout produced, never set enumeration order.
+- (void)runBurstEffects {
+    if (!self.pendingBurstApps.count) return;
+    NSArray<NSString *> *order = [self.lastLayoutApps ?: @[] arrayByAddingObjectsFromArray:self.favoritesApps ?: @[]];
+    NSMutableArray<NSString *> *targets = [NSMutableArray array];
+    // Membership and order are decided first: the scroll below delivers its
+    // Change notification synchronously, and a request delivered from there must
+    // not be able to lose its reminder.
+    for (NSString *app in order)
+        if ([self.pendingBurstApps containsObject:app] && ![targets containsObject:app]) [targets addObject:app];
+    BOOL inSplit = NFBTrollVisibleApp().length > 0;
+    for (NSString *appID in targets) {
+        NFBBubble *button = self.buttons[appID] ?: self.favoriteButtons[appID];
+        UIScrollView *owner = [button.superview isKindOfClass:UIScrollView.class] ? (UIScrollView *)button.superview : nil;
+        CGRect row = owner ? CGRectMake(0, button.center.y - button.bounds.size.height / 2, owner.bounds.size.width, button.bounds.size.height) : CGRectZero;
+        NFBBurstEffectInput in = {
+            !self.window.hidden,
+            button != nil && owner != nil,
+            inSplit,
+            [appID isEqualToString:NFBClearAllID],
+            UIAccessibilityIsReduceMotionEnabled(),
+            owner ? CGRectIntersectsRect(owner.bounds, row) : false
+        };
+        // New message while an app sits in the split view: shake that bubble as
+        // a reminder. Unchanged condition, now on a row that is really placed.
+        if (NFBBurstShouldShake(in)) [self shakeBubble:button];
+        if (!owner) continue;
+        [owner scrollRectToVisible:row animated:!in.reduceMotion];
+    }
+    // Dropped only now, and only the apps this pass handled. An app without a
+    // bubble after the layout (closed meanwhile) has no reminder left either.
+    for (NSString *appID in targets) [self.pendingBurstApps removeObject:appID];
+    for (NSString *appID in [self.pendingBurstApps allObjects])
+        if (!self.buttons[appID] && !self.favoriteButtons[appID]) [self.pendingBurstApps removeObject:appID];
 }
 // Single source of truth for the unread badge: anchored to the icon's top-right,
 // sized from the actual glyph width, never wider than the icon itself.
@@ -1187,6 +1369,8 @@ static NSString *NFBFrontmostAppID(void) {
 
 - (void)refresh {
     NSAssert(NSThread.isMainThread, @"UI must be on main thread");
+    self.refreshScheduled = NO;
+    self.layoutRecording = YES;
     [self updatePrivacy];
     NFBUpdateOpenEdge(self.enabled);
     // A dismissed app (long-press exit or one-click clear) is only marked
@@ -1226,6 +1410,16 @@ static NSString *NFBFrontmostAppID(void) {
     // Continue observing orientation even when a lone landscape window has no
     // portrait attachment target and its rail has returned to the screen edge.
     [self syncFloatingWatch:floatingApp ?: NFBTrollVisibleApp()];
+    // The column is being laid out now, so the frame the watcher remembers must be
+    // this pass's, not the one from before it. Only a usable frame is stored: a
+    // missing split frame stays NULL so the watcher asks again next fire instead of
+    // treating a transient absence as "known". The target is not touched here - a
+    // nil lookup may be a window being rebuilt, and the watcher must retry it.
+    if (floatingApp.length) {
+        CGRect probedFrame = NFBSplitFrameInView(self.window.rootViewController.view);
+        self.observedSplitFrame = (!CGRectIsNull(probedFrame) && !CGRectIsEmpty(probedFrame))
+            ? probedFrame : CGRectNull;
+    }
     // A keyboard outranks everything else: typing is the one moment the bubbles
     // must be out of the way, so it pulls them all back in no matter what. The
     // ones it pulled in are remembered and popped back out the moment typing
@@ -1343,15 +1537,21 @@ static NSString *NFBFrontmostAppID(void) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.65 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             if (self.presentationEpoch==presentationEpoch && !self.enabled) self.window.hidden = YES;
         });
+        self.layoutRecording = NO;
         return;
     }
-    if (![self shouldShow]) { NFBUpdateOpenEdgeSplitIconsVisible(NO); self.window.hidden = YES; return; }
+    if (![self shouldShow]) {
+        NFBUpdateOpenEdgeSplitIconsVisible(NO); self.window.hidden = YES;
+        self.layoutRecording = NO;
+        return;
+    }
     // A keyboard owns the space this column would occupy. Letting it stay on
     // screen left the material strip painted in the top-right corner while the
     // icons themselves collapsed, which reads as a stray shadow, so the column
     // slides out while typing and slides back when the keyboard goes away.
     if (keyboardUp) {
         [self setColumnOffscreen:YES];
+        self.layoutRecording = NO;
         return;
     }
     [self ensureWindow];
@@ -1462,7 +1662,15 @@ static NSString *NFBFrontmostAppID(void) {
     self.edgeMode = edgeMode;
     NSUInteger rowCount = columnRows;
     CGFloat contentHeight = rowCount ? (rowCount - 1) * step + side : 0;
-    UIView *actionTarget = floatingApp.length ? NFBDesktopActionWindow() : nil;
+    // Same-round reuse: when the watcher already probed in this round, this pass
+    // reads its answer instead of asking SpringBoard again.
+    BOOL reusedDesktop = NFBProbeReusable(self.desktopProbe, self.probeRoundToken, self.desktopProbeLateRetry,
+        CACurrentMediaTime());
+    UIView *actionTarget = nil;
+    if (floatingApp.length) {
+        if (reusedDesktop) actionTarget = NFBDesktopActionWindow();
+        else actionTarget = [self desktopTargetProbe:NULL];
+    }
     // Both modes own the same top slot; the house button shows while a desktop
     // target exists, otherwise the collapse control covers it. The slot rect is
     // no longer zero in a split, which used to make the button disappear.
@@ -1690,6 +1898,10 @@ static NSString *NFBFrontmostAppID(void) {
             }
         }
     }];
+    // Collections are laid out; only now do the reminders run, on rows that are
+    // really placed (NFBBurstPolicy.h).
+    [self runBurstEffects];
+    self.layoutRecording = NO;
 }
 - (void)layoutFavorites:(CGRect)frame diameter:(CGFloat)diameter active:(NSString *)active duration:(NSTimeInterval)duration {
     UIView *root = self.window.rootViewController.view;
@@ -1805,6 +2017,7 @@ static NSString *NFBFrontmostAppID(void) {
 }
 - (void)finishFavoriteDrag {
     [self.favoriteDragTimer invalidate]; self.favoriteDragTimer = nil;
+    self.favoriteDragIdleRun = NO;
     if (!self.favoriteDrag) return;
     // Fold the two preference writes below into one flush instead of two
     // synchronous, cross-process synchronises on the frame the drag is released.
@@ -1833,14 +2046,75 @@ static NSString *NFBFrontmostAppID(void) {
         self.favoriteGrabOffset = point.y - self.favoriteDrag.center.y;
         self.favoritesRail.scrollEnabled = NO;
         self.favoriteDrag.layer.zPosition = 10;
-        __weak typeof(self) weakSelf = self;
-        self.favoriteDragTimer = [NSTimer scheduledTimerWithTimeInterval:1.0/30.0 repeats:YES block:^(__unused NSTimer *timer) { [weakSelf moveFavorite]; }];
+        // No clock at pickup: the finger's own Changed callbacks drive the row.
+        self.favoriteDragIdleRun = NO;
+        self.favoriteDragFingerY = point.y;
+        [self updateFavoriteDragClock];
     } else if (gesture.state == UIGestureRecognizerStateChanged) {
         if (self.favoriteDrag) self.favoriteDragConsumed = YES;
-        [self moveFavorite];
+        // The finger is the clock here; the timer never moves the row on its own.
+        [self moveFavoriteDriven:YES];
+        [self updateFavoriteDragClock];
     } else {
         [self finishFavoriteDrag]; [self refresh];
     }
+}
+// Runs the move at most once per frame source.
+- (void)moveFavorite {
+    [self moveFavoriteDriven:NO];
+}
+// The 30 Hz drag clock. It used to run for the whole drag and repeat the exact
+// move the finger callback had just done; now it exists only for edge
+// auto-scrolling, and inside that zone the finger callback leaves the move to it,
+// so every frame still moves the row exactly once (NFBFavoriteDragPolicy.h).
+- (void)updateFavoriteDragClock {
+    BOOL needed = self.favoriteDrag != nil && !self.favoriteDragIdleRun &&
+        [self favoriteIdleZoneActive];
+    if (!needed) {
+        [self.favoriteDragTimer invalidate]; self.favoriteDragTimer = nil;
+        return;
+    }
+    if (self.favoriteDragTimer) return;
+    __weak typeof(self) weakSelf = self;
+    self.favoriteDragTimer = [NSTimer timerWithTimeInterval:1.0/30.0 repeats:YES block:^(__unused NSTimer *timer) {
+        NFBManager *manager = weakSelf;
+        if (!manager) return;
+        [manager moveFavoriteDriven:NO];
+    }];
+    [NSRunLoop.mainRunLoop addTimer:self.favoriteDragTimer forMode:NSRunLoopCommonModes];
+}
+- (BOOL)favoriteIdleZoneActive {
+    UIScrollView *rail = self.favoritesRail;
+    if (!self.favoriteDrag || !rail) return false;
+    if (rail.contentSize.width < 8 || rail.contentSize.height < 8) return false;
+    CGPoint point = [self.favoriteHold locationInView:rail];
+    NFBFavoriteDragInput in = {
+        true, point.y - rail.contentOffset.y, rail.bounds.size.height, rail.contentSize.height,
+        rail.contentOffset.y, false
+    };
+    return NFBFavoriteIdleClockActive(in, 44.0);
+}
+- (void)moveFavoriteDriven:(BOOL)fingerDriven {
+    NFBBubble *button = self.favoriteDrag;
+    if (!button) return;
+    CGPoint point = [self.favoriteHold locationInView:self.favoritesRail];
+    // The clock may only re-run a move when the edge scroll really changed
+    // something or the finger moved; a resting finger outside the edge zone is
+    // the finger callback's frame, not the timer's.
+    if (!fingerDriven) {
+        if (![self favoriteIdleZoneActive]) return;
+        double gap = point.y - self.favoriteDragFingerY;
+        if (gap < 0) gap = -gap;
+        NFBFavoriteDragInput in = {
+            true, point.y - self.favoritesRail.contentOffset.y, self.favoritesRail.bounds.size.height,
+            self.favoritesRail.contentSize.height, self.favoritesRail.contentOffset.y, gap > 0.0001
+        };
+        if (!NFBFavoriteEdgeNeedsMove(in)) return;
+    }
+    self.favoriteDragIdleRun = !fingerDriven;
+    self.favoriteDragFingerY = point.y;
+    [self moveFavorite];
+    self.favoriteDragIdleRun = NO;
 }
 - (void)moveFavorite {
     NFBBubble *button = self.favoriteDrag;
