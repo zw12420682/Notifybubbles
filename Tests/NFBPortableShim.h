@@ -1,17 +1,22 @@
 #pragma once
-// Portable geometry shim for the plain-C smoke build of RailLayoutTests.m on a
-// host without CoreGraphics (iSH Alpine):
-//   clang -DNFB_RAIL_PORT=1 -I Sources -I Tests -include Tests/NFBPortableShim.h \
-//         Tests/RailLayoutTests.m -lm -o t
-// On a host that does have CoreGraphics (macOS CI) the test already declares the
-// types itself, so this header then only narrows the supported toolchain below
-// and defines nothing. macOS guards CoreGraphics behind the __CGBASE__ marker.
-#ifndef __CGBASE__
+// The platform chooses the geometry backend in this test-only header.
+// Apple uses the SDK types, imported before any test/plan header is parsed;
+// other hosts use the small portable geometry subset below. No production
+// UIKit header includes this shim.
+#if defined(__APPLE__)
+#include <CoreGraphics/CoreGraphics.h>
+#else
+
 #include <stdbool.h>
 
-typedef struct { double x, y; } CGPoint;
-typedef struct { double width, height; } CGSize;
-typedef struct { CGPoint origin; CGSize size; } CGRect;
+// Plain structs, same layout as CoreGraphics' (two doubles per point/size).
+struct CGPoint { double x, y; };
+struct CGSize { double width, height; };
+struct CGRect { struct CGPoint origin; struct CGSize size; };
+
+typedef struct CGPoint CGPoint;
+typedef struct CGSize CGSize;
+typedef struct CGRect CGRect;
 
 static inline double CGRectGetMinX(CGRect r) { return r.origin.x; }
 static inline double CGRectGetMinY(CGRect r) { return r.origin.y; }
@@ -38,8 +43,10 @@ static inline bool CGRectIsNull(CGRect r) {
 static inline CGPoint CGPointMake(double x, double y) { CGPoint p; p.x = x; p.y = y; return p; }
 static inline CGSize CGSizeMake(double w, double h) { CGSize s; s.width = w; s.height = h; return s; }
 
-// The two named rectangles the plan uses. CGRectNull keeps CoreGraphics' shape
-// (an infinite origin with a zero size) so CGRectIsNull above recognises it.
+// Named rectangles with CoreGraphics' shapes: CGRectZero is all zero, CGRectNull
+// keeps an infinite origin + zero size so CGRectIsNull above recognises it. These
+// are macros only where no CoreGraphics header declares the real constants.
 #define CGRectZero CGRectMake(0, 0, 0, 0)
 #define CGRectNull CGRectMake(__builtin_inf(), __builtin_inf(), 0, 0)
-#endif
+
+#endif  // !__APPLE__

@@ -32,6 +32,7 @@
 #import "NFBFavoriteDragPolicy.h"
 #import "NFBBurstPolicy.h"
 #import "NFBDesktopActionPolicy.h"
+#import "NFBTickReconcile.h"
 
 static const NSTimeInterval NFBMotion = 0.35;
 // No double-tap recognizer: a short tap resolves on release.
@@ -264,8 +265,12 @@ static double NFBNumber(NSString *key, double fallback) {
 // has to be reset between turns.
 @property(nonatomic) NSObject *probeRoundToken;
 // Tick (2 Hz) dirty state: what a full layout would read, compared in the tick
-// itself so an unchanged state does not submit a 20 Hz layout.
+// itself so an unchanged state does not submit a 20 Hz layout. NFBTickReconcile.h
+// holds the comparison; `tickStateValid` is NO until the first tick has stored a
+// baseline, so the first comparison always lays out.
 @property(nonatomic) BOOL tickForcedRefresh;
+@property(nonatomic) BOOL tickStateValid;
+@property(nonatomic) NFBTickState tickState;
 @property(nonatomic) BOOL lastLocked;
 @property(nonatomic, copy) NSString *tickActiveFloating;
 - (UIView *)desktopTargetProbe:(BOOL *)probed;
@@ -978,11 +983,11 @@ static NSString *NFBFrontmostAppID(void) {
     @catch (NSException *error) { NFBErrorLog(@"tick failed: %@", error); }
 }
 - (void)tickBody {
-    // The 2 Hz tick no longer submits a layout when nothing it can see changed;
-    // the full layout stays a real check of every state (front app, home, lock,
-    // privacy, keyboard, badges, pending auth, system switcher) and runs on any
-    // change - but the split watcher still runs its own 20 Hz passes on top of
-    // this, so a probe cached inside this round is shared rather than repeated.
+    // The 2 Hz tick no longer submits a layout when nothing it can see changed.
+    // Every state the layout reads is gathered below into one NFBTickState and
+    // compared by NFBTickNeedsLayout; a change there still runs the same full
+    // layout. The split watcher keeps its own 20 Hz passes on top of this, and a
+    // probe cached inside this round is shared rather than repeated.
     self.probeRoundToken = [NSObject new];
     // Auto-fold applies to the expanded fullscreen column only; a split column is
     // driven by the floating window and must never time out.
@@ -1000,8 +1005,20 @@ static NSString *NFBFrontmostAppID(void) {
     // submitted, so the layout is requested on every tick until it has folded (an
     // unchanged state is otherwise allowed to skip the layout).
     collapseDue = self.edgeExpanded && !self.splitLayout;
+    // `dirty` starts as exactly that: the fold still owed, which no state
+    // comparison can see (this tick's own edgeExpanded is already folded).
+    BOOL dirty = collapseDue;
     BOOL locked = [self isLocked];
     self.tickActiveFloating = NFBTrollVisibleApp();
+    // Resolve the window state once per tick: the frontmost app, the home screen
+    // and the split all come from the same main-queue snapshot, so an unreadable
+    // front app can never be reported as "home" by a second lookup. The snapshot
+    // only lives for this runloop turn and -refresh rebuilds it, so nothing is
+    // cached across ticks.
+    NFBInvalidateWindowState();
+    NFBWindowState *tickWindow = NFBCurrentWindowState();
+    long tickUnread = 0;
+    for (NSString *appID in self.store.appIDs) tickUnread += (long)[self.store countForApp:appID];
     NSString *desktopFailure = NFBConsumeDesktopSplitFailure();
     if (desktopFailure.length) [self showOpenNotice:desktopFailure];
     if (self.pendingRecord) {
@@ -1012,9 +1029,9 @@ static NSString *NFBFrontmostAppID(void) {
     }
     // What this tick knows that a layout would read. A full layout is only needed
     // when one of these really changed (or an edge is due); otherwise the state
-    // is still checked here every 0.5s and the layout is reconciled on the next
-    // pass. Nothing is cached across a change: every state below is re-read.
-    BOOL dirty = NO;
+    // is still checked here every 0.5s. Nothing is cached across a change: every
+    // state below is re-read, and the ones not re-read here are in NFBTickState.
+    // Note `dirty` already holds the owed fold from above.
     NSString *watched = self.watchedFloating;
     NSString *floatingNow = self.tickActiveFloating;
     if (!(watched && floatingNow && [watched isEqualToString:floatingNow])) dirty = YES;
@@ -1058,9 +1075,30 @@ static NSString *NFBFrontmostAppID(void) {
         dirty = YES;   // entered the lock screen: the column must step aside
     }
     self.lastLocked = locked;
-    if (self.keyboardUp != NFBKeyboardVisible()) dirty = YES;
-    if (self.layoutRecording) dirty = YES;   // a layout that finished incomplete
-    if (dirty || self.tickForcedRefresh || collapseDue) {
+    // A keyboard pulls the whole column offscreen, so its state is compared
+    // explicitly instead of guessing from the property the last layout stored.
+    BOOL keyboard = NFBKeyboardVisible();
+    NSString *tickFront = tickWindow ? tickWindow.frontApp : NFBFrontmostAppID();
+    NFBTickState current;
+    current.front = tickFront.UTF8String;
+    // Only a real home-screen read counts as home; an unreadable state is not one.
+    current.home = tickWindow && tickWindow.home;
+    current.unread = tickUnread;
+    current.locked = locked;
+    current.keyboard = keyboard;
+    current.expanded = self.edgeExpanded;
+    current.split = self.splitLayout;
+    current.incomplete = self.layoutRecording;
+    // Same value the capture flag was last written with (see -refresh).
+    current.captureHidden = self.hideInScreenshots;
+    // The comparison is the only thing that notices front app / home / badge
+    // changes when no notification or gesture arrives: nothing else in the tick
+    // looks at them, so they are part of NFBTickNeedsLayout and tested there.
+    BOOL needs = NFBTickNeedsLayout(self.tickStateValid ? &_tickState : NULL, &current,
+                                    dirty || self.tickForcedRefresh, NO);
+    self.tickState = current;
+    self.tickStateValid = YES;
+    if (needs) {
         self.tickForcedRefresh = NO;
         [self refreshIfNeeded];
     }
@@ -2059,10 +2097,6 @@ static NSString *NFBFrontmostAppID(void) {
         [self finishFavoriteDrag]; [self refresh];
     }
 }
-// Runs the move at most once per frame source.
-- (void)moveFavorite {
-    [self moveFavoriteDriven:NO];
-}
 // The 30 Hz drag clock. It used to run for the whole drag and repeat the exact
 // move the finger callback had just done; now it exists only for edge
 // auto-scrolling, and inside that zone the finger callback leaves the move to it,
@@ -2116,6 +2150,8 @@ static NSString *NFBFrontmostAppID(void) {
     [self moveFavorite];
     self.favoriteDragIdleRun = NO;
 }
+// Runs the move at most once per frame source: -updateFavoriteDragClock's timer
+// and the finger callback both reach the move through this one method.
 - (void)moveFavorite {
     NFBBubble *button = self.favoriteDrag;
     if (!button) return;

@@ -11,11 +11,13 @@ Steps:
   1. Tests/PolicyTests.c against the policy headers the manager includes
      (layout animation, burst ordering, favorite drag clock, latest pending rail
      metric, same-round probe reuse).
-  2. Tests/RailLayoutTests.m in its portable mode (NFB_RAIL_PORT) against the
-     same plan headers the tweak lays out from, using Tests/NFBPortableShim.h for
-     the CoreGraphics types the host lacks.
+  2. Tests/RailLayoutTests.m against the same plan headers the tweak lays out
+     from. One command shape everywhere: Tests/NFBPortableShim.h is force-
+     included and imports real CoreGraphics on Apple hosts, before the test
+     imports Foundation. Off Apple it defines portable geometry. Objective-C
+     mode permits the test's existing Foundation import on macOS; frameworks
+     are linked explicitly there. Production UIKit sources are unchanged.
 """
-import os
 import pathlib
 import shutil
 import subprocess
@@ -28,18 +30,19 @@ if not cc:
     print("SKIP: no C compiler, policy tests not exercised")
     raise SystemExit(0)
 
+frameworks = ["-framework", "Foundation", "-framework", "CoreGraphics"] if sys.platform == "darwin" else []
+
 steps = [
     ("policy tests", [cc, "-std=c11", "-Wall", "-Wextra", "-Werror", "-ISources",
-                      "Tests/PolicyTests.c", "-lm", "-o", "{out}/policy"], ""),
-    ("rail layout (portable)", [cc, "-std=c11", "-DNFB_RAIL_PORT=1", "-Wall", "-Wextra", "-Werror",
-                                "-ISources", "-ITests", "-include", "Tests/NFBPortableShim.h",
-                                "Tests/RailLayoutTests.m", "-lm", "-o", "{out}/rail"], ""),
+                      "Tests/PolicyTests.c", "-lm", "-o", "{out}/policy"]),
+    ("rail layout", [cc, "-x", "objective-c", "-Wall", "-Wextra", "-Werror",
+                     "-ISources", "-ITests", "-include", "Tests/NFBPortableShim.h",
+                     "Tests/RailLayoutTests.m", *frameworks, "-lm", "-o", "{out}/rail"]),
 ]
 
 failures = 0
 with tempfile.TemporaryDirectory(prefix="nfb-policies-") as directory:
-    for name, command, _ in steps:
-        binary = None
+    for name, command in steps:
         build = [part.format(out=directory) for part in command]
         result = subprocess.run(build, cwd=root, capture_output=True, text=True)
         if result.returncode != 0:

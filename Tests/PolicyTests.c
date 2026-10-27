@@ -16,6 +16,7 @@ static int debug_line;
 #include "NFBFavoriteDragPolicy.h"
 #include "NFBProbePolicy.h"
 #include "NFBRailMetricQueue.h"
+#include "NFBTickReconcile.h"
 
 static int failures;
 
@@ -172,16 +173,59 @@ static void testProbeReuse(void) {
     check(!NFBProbeReusable(nilAnswer, &roundA, 0, now), "a nil answer is never reused");
 }
 
+static void testTickReconcile(void) {
+    NFBTickState base = {"com.example.app", false, 2, false, false, false, false, false, true};
+    check(!NFBTickNeedsLayout(&base, &base, false, false), "an unchanged tick must not lay out");
+    check(NFBTickNeedsLayout(&base, &base, true, false), "a forced refresh always lays out");
+    check(NFBTickNeedsLayout(NULL, &base, false, false), "no previous state lays out once");
+    check(NFBTickNeedsLayout(&base, &base, false, true), "the first tick lays out");
+    // The frontmost app alone is an edge: entering or leaving the column.
+    NFBTickState other = base; other.front = "com.example.other";
+    check(NFBTickNeedsLayout(&base, &other, false, false), "a front app change lays out");
+    NFBTickState none = base; none.front = NULL;
+    check(NFBTickNeedsLayout(&base, &none, false, false), "front app -> no front app lays out");
+    NFBTickState empty = base; empty.front = "";
+    check(!NFBTickNeedsLayout(&none, &empty, false, false), "NULL and empty read as the same");
+    // Home screen is state even when the front app is unreadable (NULL/empty).
+    NFBTickState home = none; home.home = true;
+    check(NFBTickNeedsLayout(&none, &home, false, false), "home appearing lays out");
+    check(NFBTickNeedsLayout(&home, &none, false, false), "leaving home lays out");
+    // A badge count that changes without a new record.
+    NFBTickState badge = base; badge.unread = 3;
+    check(NFBTickNeedsLayout(&base, &badge, false, false), "an unread count change lays out");
+    NFBTickState zero = base; zero.unread = 0;
+    check(NFBTickNeedsLayout(&base, &zero, false, false), "clearing unread lays out");
+    // Every remaining field is compared, not assumed.
+    NFBTickState lock = base; lock.locked = true;
+    check(NFBTickNeedsLayout(&base, &lock, false, false), "lock lays out");
+    NFBTickState keyboard = base; keyboard.keyboard = true;
+    check(NFBTickNeedsLayout(&base, &keyboard, false, false), "keyboard lays out");
+    NFBTickState expanded = base; expanded.expanded = true;
+    check(NFBTickNeedsLayout(&base, &expanded, false, false), "expand/fold lays out");
+    NFBTickState split = base; split.split = true;
+    check(NFBTickNeedsLayout(&base, &split, false, false), "split lays out");
+    NFBTickState incomplete = base; incomplete.incomplete = true;
+    check(NFBTickNeedsLayout(&base, &incomplete, false, false), "an incomplete layout lays out");
+    NFBTickState capture = base; capture.captureHidden = false;
+    check(NFBTickNeedsLayout(&base, &capture, false, false), "a privacy change lays out");
+    // An identical *copy* (different storage) is still equal: by value, not by pointer.
+    NFBTickState copy = base;
+    char front[32] = "com.example.app";
+    copy.front = front;
+    check(!NFBTickNeedsLayout(&base, &copy, false, false), "equal ids from different storage lay out never");
+}
+
 int main(void) {
     testDesktopActionAnimation();
     testBurst();
     testFavoriteDrag();
     testLatestPendingMetric();
+    testTickReconcile();
     testProbeReuse();
     if (failures) {
         printf("FAIL: %d policy checks\n", failures);
         return 1;
     }
-    printf("PASS: layout/burst/drag/metric/probe policies\n");
+    printf("PASS: layout/burst/drag/metric/tick/probe policies\n");
     return 0;
 }
