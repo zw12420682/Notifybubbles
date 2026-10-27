@@ -57,12 +57,18 @@
 （`Tests/NFBPortableShim.h` 提供 CGRect 类型），CI 增加同名 `-Werror` 步骤。
 
 **验证范围**：本地 validate / test_scheme / test_cleanup / test_validator /
-test_package_parser / test_rail_layout / test_policies 全部通过；完整 Objective-C 编译在
-CI（macOS clang -Werror）执行：`StoreTests`、`TrollOpen` 各模式、`TransitionTests`、
-`ActionGestureTests`、`InterfaceTests`、`StateLedgerTests`、`RailLayoutTests`、
-`PolicyTests` 均通过。iOS 模拟器的桌面宿主用例（`DesktopHostTests`，本次未改动其
-代码）出现周期性失败（分页往返断言），需单独重跑确认。**未在真机验证**，未做功耗或
-帧率测量，不承诺省电数字。
+test_package_parser / test_rail_layout / test_policies / test_objc_guards 全部通过；完整
+Objective-C 编译在 CI（macOS clang -Werror）执行：`StoreTests`、`TrollOpen` 各模式、
+`TransitionTests`、`ActionGestureTests`、`InterfaceTests`、`StateLedgerTests`、
+`RailLayoutTests`、`PolicyTests` 均通过。新增 `scripts/test_objc_guards.py`：静态扫描
+"C 结构体被当属性/取地址改字段、对象未 __bridge 传给 const void *、同一类选择器重复定义、
+本次新增却只写不读的状态"，CI 与本地同样运行（不需要编译，也不会放松任何行为断言）。
+iOS 模拟器的桌面宿主用例（`DesktopHostTests`，本次未改动其代码）出现周期性失败（分页
+往返断言），需单独重跑确认。**未在真机验证**，未做功耗或帧率测量，不承诺省电数字。
+
+**0.48.88 实际规模**：减少的是"同一状态下重复调用"（同帧重复动画提交、突发期间每个通知
+一次完整布局、拖动每帧两次移动、20 Hz 每条路径各探测一次窗口），不是减少功能或渲染次数；
+唯一新增的常驻工作是 2 Hz tick 的一次状态比较（约 10 个字段 + 一次未读计数求和）。
 # 0.48.87 — 收纳键左滑展开、展开态长按清未读（只这两条）
 
 0.48.86 基础上只加两条已确认的手势，其余视觉、尺寸、透明度、动画与性能一律未动。

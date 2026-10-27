@@ -13,7 +13,9 @@ static const NSInteger NFBRailStateVersion = 1;
 // Main-thread confined: the newest geometry still waiting for the debounce, plus
 // what is on disk, so repeated identical layouts (the split refresh runs
 // continuously) never touch the disk. NFBRailMetricQueue.h owns the rules.
-@property(nonatomic) NFBRailMetricQueue queue;
+// A C struct kept as an ivar: &self.queue would be the address of a property
+// getter's temporary, so draining would lose the state it just updated.
+NFBRailMetricQueue queue;
 @end
 
 @implementation NFBRailStateStore
@@ -83,7 +85,7 @@ static const NSInteger NFBRailStateVersion = 1;
 // pending without a timer behind it).
 - (void)flushScheduledMetric {
     NFBRailMetric pending = NFBRailMetricNoRecord();
-    if (!NFBRailMetricQueueDrain(&self.queue, &pending)) return;
+    if (!NFBRailMetricQueueDrain(&_queue, &pending)) return;
     [self saveMetric:pending];
 }
 @end

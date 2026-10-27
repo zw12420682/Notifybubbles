@@ -212,8 +212,9 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, strong) NSTimer *favoriteDragTimer;
 @property(nonatomic) CGFloat favoriteGrabOffset;
 // Favorite drag: the idle edge-scroll clock and the finger position it last saw.
-@property(nonatomic) BOOL favoriteDragIdleRun;
-@property(nonatomic) CGFloat favoriteDragFingerY;
+// The 30 Hz timer never moves the row on its own; it only repeats the move while
+// the finger rests in a 44pt edge zone (NFBFavoriteDragPolicy.h).
+@property(nonatomic) CGPoint favoriteDragFingerPoint;
 - (void)moveFavoriteDriven:(BOOL)fingerDriven;
 - (void)updateFavoriteDragClock;
 - (BOOL)favoriteIdleZoneActive;
@@ -232,7 +233,6 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic) BOOL edgeMode;
 @property(nonatomic) BOOL edgeExpanded;
 @property(nonatomic) NSUInteger notifiedCount;
-@property(nonatomic) BOOL showClearAll;
 // One layout after a clear unread: keep the expanded column's app rows.
 @property(nonatomic) BOOL holdsClearedColumn;
 @property(nonatomic) BOOL desktopActionToggle;
@@ -255,8 +255,11 @@ static double NFBNumber(NSString *key, double fallback) {
 // The layout pass is running: further requests join it instead of nesting.
 @property(nonatomic) BOOL layoutRecording;
 // Same-round probe reuse on the 20 Hz watcher path (NFBProbePolicy.h).
-@property(nonatomic) NFBProbeStamp floatingProbe;
-@property(nonatomic) NFBProbeStamp desktopProbe;
+// C structs, not properties: a property getter returns a temporary, so
+// `self.x.resolved = NO` would not compile. Plain ivars keep the same
+// sizeof/state and are zero-initialised like every object.
+NFBProbeStamp floatingProbe;
+NFBProbeStamp desktopProbe;
 @property(nonatomic) double desktopProbeLateRetry;
 @property(nonatomic) BOOL floatingWatchClassMissing;
 // Rounds are the unique object touched by every 20 Hz entry point (watcher,
@@ -267,10 +270,11 @@ static double NFBNumber(NSString *key, double fallback) {
 // Tick (2 Hz) dirty state: what a full layout would read, compared in the tick
 // itself so an unchanged state does not submit a 20 Hz layout. NFBTickReconcile.h
 // holds the comparison; `tickStateValid` is NO until the first tick has stored a
-// baseline, so the first comparison always lays out.
+// baseline, so the first comparison always lays out. The baseline is a C struct
+// and therefore an ivar: a synthsized property would hand out a temporary.
 @property(nonatomic) BOOL tickForcedRefresh;
 @property(nonatomic) BOOL tickStateValid;
-@property(nonatomic) NFBTickState tickState;
+NFBTickState tickState;
 @property(nonatomic) BOOL lastLocked;
 @property(nonatomic, copy) NSString *tickActiveFloating;
 - (UIView *)desktopTargetProbe:(BOOL *)probed;
@@ -879,8 +883,8 @@ static NSString *NFBFrontmostAppID(void) {
 // the entry point and any layout scheduled from it share one answer.
 - (UIView *)desktopTargetProbe:(BOOL *)probed {
     UIView *target = NFBDesktopActionWindow();
-    if (target) self.desktopProbe = NFBProbeRecord(self.desktopProbe, YES, self.probeRoundToken, CACurrentMediaTime());
-    else { self.desktopProbe = NFBProbeRecord(self.desktopProbe, NO, self.probeRoundToken, CACurrentMediaTime()); }
+    if (target) self.desktopProbe = NFBProbeRecord(self.desktopProbe, YES, (__bridge const void *)self.probeRoundToken, CACurrentMediaTime());
+    else { self.desktopProbe = NFBProbeRecord(self.desktopProbe, NO, (__bridge const void *)self.probeRoundToken, CACurrentMediaTime()); }
     if (probed) *probed = YES;
     return target;
 }
@@ -889,7 +893,7 @@ static NSString *NFBFrontmostAppID(void) {
     BOOL usable = !CGRectIsNull(frame) && !CGRectIsEmpty(frame) && isfinite(CGRectGetMaxX(frame));
     // A null frame is recorded too: it belongs to this round and must not be
     // confused with a probe from an earlier one.
-    self.floatingProbe = NFBProbeRecord(self.floatingProbe, usable, self.probeRoundToken, CACurrentMediaTime());
+    self.floatingProbe = NFBProbeRecord(self.floatingProbe, usable, (__bridge const void *)self.probeRoundToken, CACurrentMediaTime());
     if (probed) *probed = YES;
     return frame;
 }
@@ -924,7 +928,7 @@ static NSString *NFBFrontmostAppID(void) {
     self.floatingWatchClassMissing = classWasMissing;
     if (classWasMissing) {
         self.floatingProbe.resolved = NO; self.floatingProbe.usable = NO;
-        self.desktopProbe.resolved = NO; self.desktopProbe.usable = NO;
+        self.desktopProbe.resolved = NO; self.desktopProbe.usable = NO; // both are ivars now
         self.desktopProbeLateRetry = CACurrentMediaTime() + NFBProbeLateRetry;
     }
     @try { [self floatingWatchBody]; }
@@ -954,8 +958,9 @@ static NSString *NFBFrontmostAppID(void) {
     BOOL sameFrame = CGRectEqualToRect(frame, self.observedSplitFrame) ||
         (CGRectIsNull(frame) && CGRectIsNull(self.observedSplitFrame));
     UIView *actionTarget = nil;
-    BOOL reusedDesktop = currentApp.length && NFBProbeReusable(self.desktopProbe, self.probeRoundToken, self.desktopProbeLateRetry,
-        CACurrentMediaTime());
+    const void *round = (__bridge const void *)self.probeRoundToken;
+    BOOL reusedDesktop = currentApp.length &&
+        NFBProbeReusable(self.desktopProbe, round, self.desktopProbeLateRetry, CACurrentMediaTime());
     if (currentApp.length) {
         if (reusedDesktop) actionTarget = NFBDesktopActionWindow();
         else actionTarget = [self desktopTargetProbe:NULL];
@@ -1272,7 +1277,7 @@ static NSString *NFBFrontmostAppID(void) {
 // the order follows the row the layout produced, never set enumeration order.
 - (void)runBurstEffects {
     if (!self.pendingBurstApps.count) return;
-    NSArray<NSString *> *order = [self.lastLayoutApps ?: @[] arrayByAddingObjectsFromArray:self.favoritesApps ?: @[]];
+    NSArray<NSString *> *order = [self.lastLayoutApps ?: @[] arrayByAddingObjectsFromArray:self.favoriteApps ?: @[]];
     NSMutableArray<NSString *> *targets = [NSMutableArray array];
     // Membership and order are decided first: the scroll below delivers its
     // Change notification synchronously, and a request delivered from there must
@@ -1540,7 +1545,6 @@ static NSString *NFBFrontmostAppID(void) {
     // the unread apps and the collapse control remain.
     BOOL showClearAll = split || (self.edgeExpanded && notified.count > 0);
     if (showClearAll) [displayApps addObject:NFBClearAllID];
-    self.showClearAll = showClearAll;
     BOOL orderChanged = ![self.lastLayoutApps isEqualToArray:displayApps];
     self.lastLayoutApps = [displayApps copy];
     for (NSString *appID in self.buttons.allKeys) {
@@ -1702,8 +1706,8 @@ static NSString *NFBFrontmostAppID(void) {
     CGFloat contentHeight = rowCount ? (rowCount - 1) * step + side : 0;
     // Same-round reuse: when the watcher already probed in this round, this pass
     // reads its answer instead of asking SpringBoard again.
-    BOOL reusedDesktop = NFBProbeReusable(self.desktopProbe, self.probeRoundToken, self.desktopProbeLateRetry,
-        CACurrentMediaTime());
+    BOOL reusedDesktop = NFBProbeReusable(self.desktopProbe, (__bridge const void *)self.probeRoundToken,
+        self.desktopProbeLateRetry, CACurrentMediaTime());
     UIView *actionTarget = nil;
     if (floatingApp.length) {
         if (reusedDesktop) actionTarget = NFBDesktopActionWindow();
@@ -2055,7 +2059,6 @@ static NSString *NFBFrontmostAppID(void) {
 }
 - (void)finishFavoriteDrag {
     [self.favoriteDragTimer invalidate]; self.favoriteDragTimer = nil;
-    self.favoriteDragIdleRun = NO;
     if (!self.favoriteDrag) return;
     // Fold the two preference writes below into one flush instead of two
     // synchronous, cross-process synchronises on the frame the drag is released.
@@ -2085,8 +2088,7 @@ static NSString *NFBFrontmostAppID(void) {
         self.favoritesRail.scrollEnabled = NO;
         self.favoriteDrag.layer.zPosition = 10;
         // No clock at pickup: the finger's own Changed callbacks drive the row.
-        self.favoriteDragIdleRun = NO;
-        self.favoriteDragFingerY = point.y;
+        self.favoriteDragFingerPoint = point;
         [self updateFavoriteDragClock];
     } else if (gesture.state == UIGestureRecognizerStateChanged) {
         if (self.favoriteDrag) self.favoriteDragConsumed = YES;
@@ -2102,8 +2104,7 @@ static NSString *NFBFrontmostAppID(void) {
 // auto-scrolling, and inside that zone the finger callback leaves the move to it,
 // so every frame still moves the row exactly once (NFBFavoriteDragPolicy.h).
 - (void)updateFavoriteDragClock {
-    BOOL needed = self.favoriteDrag != nil && !self.favoriteDragIdleRun &&
-        [self favoriteIdleZoneActive];
+    BOOL needed = self.favoriteDrag != nil && [self favoriteIdleZoneActive];
     if (!needed) {
         [self.favoriteDragTimer invalidate]; self.favoriteDragTimer = nil;
         return;
@@ -2137,7 +2138,7 @@ static NSString *NFBFrontmostAppID(void) {
     // the finger callback's frame, not the timer's.
     if (!fingerDriven) {
         if (![self favoriteIdleZoneActive]) return;
-        double gap = point.y - self.favoriteDragFingerY;
+        double gap = point.y - self.favoriteDragFingerPoint.y;
         if (gap < 0) gap = -gap;
         NFBFavoriteDragInput in = {
             true, point.y - self.favoritesRail.contentOffset.y, self.favoritesRail.bounds.size.height,
@@ -2145,10 +2146,8 @@ static NSString *NFBFrontmostAppID(void) {
         };
         if (!NFBFavoriteEdgeNeedsMove(in)) return;
     }
-    self.favoriteDragIdleRun = !fingerDriven;
-    self.favoriteDragFingerY = point.y;
+    self.favoriteDragFingerPoint = point;
     [self moveFavorite];
-    self.favoriteDragIdleRun = NO;
 }
 // Runs the move at most once per frame source: -updateFavoriteDragClock's timer
 // and the finger callback both reach the move through this one method.

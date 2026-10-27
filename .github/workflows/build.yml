@@ -40,6 +40,8 @@ jobs:
         run: python3 scripts/validate.py
       - name: Test validation for overlay source updates
         run: python3 scripts/test_validator.py
+      - name: Test Objective-C source guards (struct state, ARC bridges, duplicate selectors)
+        run: python3 scripts/test_objc_guards.py
       - name: Test retired keyboard cleanup
         run: python3 scripts/test_cleanup.py
       - name: Test scheme switching without a toolchain
