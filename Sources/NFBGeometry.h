@@ -10,21 +10,83 @@ static inline double NFBOpacity(double value) {
 // exactly onto that edge when retracted, exposing half of the circular image.
 static inline double NFBRetraction(double diameter) { return diameter / 2 + 7; }
 
-// Collapsed, non-split column while a fullscreen app is in use. That app gets a
-// row of its own even without a notification, and it is the only row (plus the
-// collapse control) that shows just its left half: those two views move right by
-// their own half width until the image centre sits exactly on the screen edge.
-// Everything else keeps the original collapsed rule (full icon, original x).
-// Both conditions are required, so a split (whose column has the same x) and a
-// parked empty column never half-hide anything but the control.
+// Collapsed, non-split column while a fullscreen app is in use. The fullscreen
+// app keeps a row even without a notification, and *every* visible image (the
+// unread rows, the fullscreen row, the collapse control) shows only its left half
+// at alpha 0.5. Nothing stays fully visible and no extra control is added.
 static inline bool NFBExpandedAppHalfHidden(bool collapsed, bool split, bool frontAppPresent) {
     return collapsed && !split && frontAppPresent;
 }
-// Same x as NFBRetraction puts the expanded image, mirrored: the image is inset 7
-// points inside the bubble, so this makes the bubble's image centre equal the
-// screen width. Fixed: independent of how many unread icons share the column.
-static inline double NFBHalfHiddenBubbleX(double diameter) {
-    return isfinite(diameter) ? diameter / 2 - 7 : 0;
+
+// --- half-hidden column, screen-space geometry ---------------------------
+//
+// Goal: in the collapsed fullscreen state every visible image centre sits exactly
+// on the screen's right edge, so only the left half of each circle is on screen.
+//
+// The manager hangs a row (a `side` x `side` bubble) on the *centre* side/2 inside
+// the rail, and the icon is inset 7pt; the rail of a collapsed column starts at
+// screenWidth - side - margin, so with a 0 origin the icon centre is
+//     (screenWidth - side - margin) + side/2 + 7 + diameter/2
+//   = screenWidth - margin - diameter/2
+// Moving the rail (and the control, a root-view sibling with the shared origin
+// NFBPlainRailFrameX) so its frame origin becomes screenWidth - (margin + side/2)
+// puts every image centre on the edge, for any diameter and any unread count:
+//     origin + 7 + d/2 = (W - (margin + side/2) + margin) + 7 + d/2 = W
+// The distance moved is margin + side/2, i.e. the old per-row `diameter/2 - 7`
+// (which was 20pt short of the edge for a 48pt icon); only the coordinate it is
+// applied in changed: the whole column (rail frame origin and the control frame)
+// moves once, and every row keeps the plain side/2 centre. No row carries a second offset and
+// no transform is used. Tests/RailLayoutTests.m asserts the screen coordinate for
+// 32/44/48/56/80pt plus a squeezed split.
+static inline double NFBHalfHiddenShift(double diameter) {
+    if (!isfinite(diameter) || diameter <= 0) return 0;
+    return 4 + (diameter + 14) / 2;
+}
+
+// Origin x of the half-hidden rail and of the collapse control (root sibling).
+// The column keeps its width, so the right overhang of the icon image past the
+// screen edge is exactly half the diameter and the rail/window ends before the
+// hidden right half: only the screen cuts it.
+// `margin` is the collapsed column's screen margin (4pt), the one
+// NFBCollapsedRailFrameX() subtracts; the same number must be used for both the
+// plain and the half-hidden origin, so it is a parameter, not a constant.
+static inline double NFBHalfHiddenBubbleOriginX(double screenWidth, double diameter, double margin) {
+    if (!isfinite(screenWidth) || !isfinite(diameter) || !isfinite(margin) || diameter <= 0) return 0;
+    return screenWidth - NFBHalfHiddenShift(diameter) + margin;
+}
+
+// Badge rect inside one icon. The unread count sits inside the icon's own frame
+// so it can never spill out of the image (the previous top-right anchor put it
+// partly on top of the icon and, on a half-hidden row, over the screen edge).
+// `image` is the icon's rect in the bubble's coordinate space (7,7,d,d). The
+// width follows the text but is clamped between the pill height and the icon
+// diameter, so long counts shrink instead of squashing the icon.
+typedef struct { double x, y, width, height; } NFBBadgeRect;
+static inline NFBBadgeRect NFBBadgeFrame(double imageX, double imageY, double imageSide,
+        double diameter, double textWidth, bool hasText) {
+    NFBBadgeRect rect = {imageX, imageY, 0, 0};
+    if (!isfinite(imageX) || !isfinite(imageY) || !isfinite(diameter) || diameter <= 0) return rect;
+    double side = (isfinite(imageSide) && imageSide > 1) ? imageSide : diameter;
+    double height = fmin(20, fmax(14, diameter * 0.42));
+    height = fmin(height, side);
+    double width = height;
+    if (hasText && isfinite(textWidth) && textWidth > 0)
+        width = fmax(height, fmin(side, ceil(textWidth) + 10));
+    if (width > side) width = side;
+    if (width <= 0) width = height;
+    double x = imageX + 1, y = imageY + 1;
+    if (x + width > imageX + side) x = imageX + side - width;
+    if (y + height > imageY + side) y = imageY + side - height;
+    if (x < imageX) x = imageX;
+    if (y < imageY) y = imageY;
+    rect.x = x; rect.y = y; rect.width = width; rect.height = height;
+    return rect;
+}
+static inline bool NFBBadgeInsideImage(NFBBadgeRect badge, double imageX, double imageY, double imageSide) {
+    if (!isfinite(badge.width) || !isfinite(badge.height) || badge.width <= 0 || badge.height <= 0) return false;
+    return badge.x >= imageX - 0.01 && badge.y >= imageY - 0.01 &&
+        badge.x + badge.width <= imageX + imageSide + 0.01 &&
+        badge.y + badge.height <= imageY + imageSide + 0.01;
 }
 
 static inline double NFBPosition(double value) { return isfinite(value) ? fmax(0, fmin(1, value)) : 0.7; }
@@ -85,16 +147,13 @@ static inline double NFBCollapsedRailFrameX(double screenWidth, double railWidth
     if (!isfinite(screenWidth) || !isfinite(railWidth) || !isfinite(margin)) return 0;
     return fmax(0, screenWidth - railWidth - margin);
 }
-
-// Collapsed column that carries a half-hidden row: the viewport widens by one
-// bubble so its right edge reaches the physical screen edge. Rows are laid out
-// from the view's left edge, so every row (regular ones included) moves together
-// and keeps its original x inside the column; only the exception row and the
-// toggle add NFBHalfHiddenBubbleX on top. The extra width is plain on-screen
-// space (no parent clipping), so the moved views are not cut.
-static inline double NFBCollapsedEdgeRailFrameX(double screenWidth, double railWidth, double margin) {
+// Collapsed column x that keeps the icon image 7pt inside the padding allowance:
+// the bubble is inset 7pt in its side-wide frame, so the rail has to start
+// 2 * margin + 7 before the screen edge for the icon to end at screenWidth -
+// margin - 7. This is the plain (fully visible) column's x.
+static inline double NFBPlainRailFrameX(double screenWidth, double railWidth, double margin) {
     if (!isfinite(screenWidth) || !isfinite(railWidth) || !isfinite(margin)) return 0;
-    return NFBCollapsedRailFrameX(screenWidth, railWidth + margin + 7, margin);
+    return fmax(0, NFBCollapsedRailFrameX(screenWidth, railWidth, margin) - 7);
 }
 
 // Half-hidden toggle: the image's center belongs exactly on the screen edge, so
@@ -109,7 +168,8 @@ static inline bool NFBShouldParkToggle(bool collapsed, bool split, unsigned long
     return collapsed && !split && notifiedCount == 0;
 }
 
-// An expanded column never parks, even when it has nothing to show.
-static inline bool NFBToggleShouldFade(bool parked, bool collapsed) {
-    return parked && collapsed;
+// Half-hidden control (collapsed fullscreen column): the zero-notification column
+// keeps the control at alpha 0.5 and does not park it any further.
+static inline bool NFBToggleShouldFade(bool parked, bool halfHidden) {
+    return halfHidden || parked;
 }

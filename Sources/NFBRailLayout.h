@@ -22,8 +22,11 @@ typedef struct {
     double toggleTop;
     double clearCenterY;
     double diameter;
-    bool edgeRail;      // collapsed before a fullscreen app: viewport widened to the edge
-    double railViewportWidth; // icon column width inside the (possibly widened) rail frame
+    bool edgeRail;      // collapsed before a fullscreen app: column moved once to its half-hidden x
+    double railViewportWidth; // icon column width inside the rail frame (always one bubble wide)
+    double rowInset;    // extra x every row adds on top of its column offset (always 0)
+    double clearInset;  // same for the clear action (always 0)
+    double halfHiddenShift; // how far the rail (and its control) moved right to hug the edge
     double railTop;
     double rowsTop;     // content top, one row below toggleTop
     bool parked;
@@ -39,12 +42,25 @@ typedef struct {
 // Fullscreen (and the hidden state) reuses the split column: same icon diameter
 // as the split measured, and the same absolute row position. Only the horizontal
 // placement changes (hug the right screen edge).
+// `collapsed` is the column state. `halfHidden` (collapsed && !split && a
+// fullscreen app is in use) is the only state that shows just the left half of
+// its icons and control; `parked` (collapsed && !split && no notifications, see
+// NFBShouldParkToggle below) only moves and fades the control.
+//
+// Horizontal truth for the half-hidden state: every visible image's centre must be
+// exactly the screen width, with only its left half on screen. The rail keeps its
+// column width and its x semantics (rows stay at side/2 inside it) and *moves once*
+// to NFBHalfHiddenBubbleOriginX() = screenWidth - (margin + side/2); the collapse
+// control, a root-view sibling at the rail's x, takes that same frame origin in
+// the manager. `halfHiddenShift` is the distance moved and is applied exactly
+// once: the plan does not add it to any row inset, and the manager never adds it
+// to a row centre (doing both put 0.48.82 rows at screenWidth + shift).
 static inline NFBRailPlan NFBPlanRail(double screenWidth, double screenHeight,
         NFBRailInsets safe, double top, double settingsDiameter, double splitPosition,
         bool split, CGRect splitFrame, bool usableSplit, double currentPosition,
         bool collapsed, unsigned long favorites, unsigned long rows, unsigned long notifiedCount,
         double lastSplitTop, double lastSplitDiameter, double lastSplitScreenWidth,
-        bool measured, bool edgeRail) {
+        bool measured, bool halfHidden) {
     NFBRailPlan plan;
     memset(&plan, 0, sizeof(plan));
     plan.rail = CGRectZero;
@@ -77,16 +93,21 @@ static inline NFBRailPlan NFBPlanRail(double screenWidth, double screenHeight,
     double railY = anchor + (step - side / 2) + padding - height;
     railY = fmax(top, fmin(screenHeight - fmax(safe.bottom, 20) - 20 - height, railY));
     double railWidth = side;
-    // Collapsed column with a half-hidden fullscreen row: keep the y/size budget
-    // untouched and only widen the clipped viewport to the physical edge (the
-    // left edge stays put, so regular rows keep their x). Any other mode keeps
-    // the original frame exactly.
-    bool edge = edgeRail && collapsed && !split;
-    double railX = edge ? NFBCollapsedEdgeRailFrameX(screenWidth, railWidth, screenMargin)
-                        : NFBCollapsedRailFrameX(screenWidth, railWidth, screenMargin);
-    double frameWidth = edge ? screenWidth - railX : railWidth;
+    // Collapsed fullscreen column, half hidden: the column keeps its width, its
+    // row budget, its diameter and every row offset; the rail and the collapse
+    // control move right together by NFBHalfHiddenShift(), which puts every image
+    // centre exactly on the screen's right edge. The rail's own right edge moves
+    // with it, so nothing crops the visible half before the screen edge.
+    bool edge = halfHidden && collapsed && !split;
+    double plainX = NFBPlainRailFrameX(screenWidth, railWidth, screenMargin);
+    double railX = edge ? NFBHalfHiddenBubbleOriginX(screenWidth, diameter, screenMargin) : plainX;
+    double shift = railX - plainX;
+    double frameWidth = railWidth;
     CGRect rail = CGRectMake(railX, railY, frameWidth, height);
     plan.railViewportWidth = railWidth;
+    plan.rowInset = 0;
+    plan.clearInset = 0;
+    plan.halfHiddenShift = shift;
     if (split && usableSplit) {
         double y = fmax(safe.top, CGRectGetMinY(splitFrame));
         double bottom = fmin(screenHeight - safe.bottom, CGRectGetMaxY(splitFrame));
@@ -158,7 +179,12 @@ static inline NFBRailPlan NFBPlanRail(double screenWidth, double screenHeight,
 
     plan.toggleVisible = CGRectGetWidth(plan.toggle) > 0;
     plan.parked = NFBShouldParkToggle(collapsed, split, notifiedCount);
-    if (plan.parked) {
+    // Half-hidden control: a root-view sibling with the same origin as the rail,
+    // so it takes the rail's half-hidden x (not `shift` added to a second time).
+    // `parked` only fades it; the parked x moved the control right, away from the
+    // icon column, which is why it read as a full icon with only its alpha lowered.
+    if (edge && plan.toggleVisible) plan.toggle.origin.x = railX;
+    else if (plan.parked) {
         double parkedX = NFBParkedToggleX(screenWidth, diameter);
         if (isfinite(parkedX)) plan.toggle.origin.x = parkedX;
     }

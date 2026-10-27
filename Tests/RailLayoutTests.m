@@ -37,6 +37,7 @@
 #include "NFBContainerLayout.h"
 #include "NFBRailLayout.h"
 #include "NFBRailState.h"
+#include "NFBHitPolicy.h"
 
 // Rects overlap on both axes (touching edges do not count).
 static bool overlap(CGRect a, CGRect b) {
@@ -56,10 +57,30 @@ static void check(bool condition, const char *message) {
     exit(1);
 }
 
-// Right edge a regular row's image reaches inside the (possibly widened) rail.
-static double regularRightX(NFBRailPlan plan) {
-    return plan.rail.origin.x + plan.diameter + 14 - 7;
+// Bubble frame origin inside the rail for a row of this plan. The manager gives
+// the bubble bounds (0, 0, side, side) and sets its *centre* to (side/2, rowY);
+// the frame origin is therefore 0 on x, not side/2. Mixing the two put this test
+// 31pt off (413 vs 390) while the layout code was right.
+static double rowFrameX(const NFBRailPlan *plan) { return plan ? 0 : 0; }
+
+// Screen x of a row's image centre, written the way the manager lays it out:
+// rail origin + contentOffset.x (always 0) + bubble frame x (0) + imageView.x (7)
+// + diameter/2. A row must therefore stay at rail.origin.x + 7 + diameter/2.
+static double rowImageCenterX(NFBRailPlan plan) {
+    return plan.rail.origin.x + rowFrameX(&plan) + 7 + plan.diameter / 2;
 }
+// The collapse control is a root-view sibling: its frame origin is the plan's
+// toggle origin and the icon is inset 7pt inside the side-wide button.
+static double toggleImageCenterX(NFBRailPlan plan) {
+    return plan.toggle.origin.x + 7 + plan.diameter / 2;
+}
+// Right edge a regular row's image reaches.
+static double regularRightX(NFBRailPlan plan) {
+    return rowImageCenterX(plan) + plan.diameter / 2;
+}
+
+// Bubble centre the manager sets (for the "rows keep their column offset" check).
+static double rowCenterX(NFBRailPlan plan) { return (plan.diameter + 14) / 2 + plan.rowInset; }
 
 static void close_(double a, double b, const char *message) {
     if (!(isfinite(a) && isfinite(b) && fabs(a - b) < 0.51)) {
@@ -144,7 +165,7 @@ int main(void) {
     close_(open.toggle.origin.y, split.toggleTop, "expanded top equals the split slot anchor");
     close_(CGRectGetWidth(open.toggle), CGRectGetWidth(split.toggle), "expanded control keeps the split slot size");
     check(open.toggleVisible, "expanded control is visible");
-    close_(open.toggle.origin.x, W - 62 - 4, "expanded control hugs the right edge");
+    close_(open.toggle.origin.x, NFBPlainRailFrameX(W, 62, 4), "expanded control hugs the right edge");
     check(open.rail.origin.y > open.toggle.origin.y, "expanded rail sits below the control");
     check(open.favoritesVisible && open.favoriteHeight > 0, "expanded favorites visible");
     check(!open.parked, "expanded column never parks");
@@ -178,7 +199,10 @@ int main(void) {
     check(!col.favoritesVisible && col.favoriteHeight == 0, "collapsed hides favorites");
     // Fullscreen (non-split) column hugs the right screen edge, never the split
     // window edge, and it is a vertical column (one icon wide), not a bar.
-    close_(col.rail.origin.x, W - CGRectGetWidth(col.rail) - 4, "fullscreen column hugs the right edge");
+    // The 7pt icon inset inside the bubble is why the plain column starts
+    // 2 * margin + 7 before the edge (see NFBPlainRailFrameX).
+    close_(col.rail.origin.x, NFBPlainRailFrameX(W, CGRectGetWidth(col.rail), 4),
+            "fullscreen column hugs the right edge");
     check(col.rail.origin.x > split.rail.origin.x, "fullscreen column is not at the split window");
     check(CGRectGetWidth(col.rail) < 80 && CGRectGetHeight(col.rail) > CGRectGetWidth(col.rail),
           "fullscreen column is a column, not a bar");
@@ -189,7 +213,7 @@ int main(void) {
             false, 0.7, true, 0, 0, 0, split.toggleTop, split.diameter, W, true, false);
     close_(emp.toggle.origin.y, col.toggle.origin.y, "empty y equals collapsed y");
     close_(emp.toggle.origin.x, col.toggle.origin.x, "empty x equals collapsed x");
-    check(emp.parked && NFBToggleShouldFade(emp.parked, true), "empty column fades");
+    check(emp.parked && NFBToggleShouldFade(emp.parked, emp.edgeRail), "empty column fades");
     finiteRect(emp.rail, "empty rail finite");
     check(emp.rail.size.width > 0, "empty rail keeps the half-visible column");
 
@@ -201,16 +225,16 @@ int main(void) {
     // --- collapsed with notifications: stays on screen, does not park
     NFBRailPlan notified = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, false, CGRectZero,
             false, 0.7, true, 0, 2, 2, split.toggleTop, split.diameter, W, true, false);
-    close_(notified.toggle.origin.x, NFBCollapsedRailFrameX(W, col.diameter + 14, 4),
+    close_(notified.toggle.origin.x, NFBPlainRailFrameX(W, col.diameter + 14, 4),
             "notified collapsed column stays fully on screen");
-    check(!notified.parked && !NFBToggleShouldFade(notified.parked, true),
+    check(!notified.parked && !NFBToggleShouldFade(notified.parked, notified.edgeRail),
             "notified collapsed column stays fully visible");
 
     // --- expanded with zero regular rows still shows the control on the right
     NFBRailPlan oe = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, false, CGRectZero,
             false, 0.7, false, 3, 3, 0, split.toggleTop, split.diameter, W, true, false);
-    check(!oe.parked && !NFBToggleShouldFade(oe.parked, true), "expanded never fades");
-    close_(oe.toggle.origin.x, NFBCollapsedRailFrameX(W, 62, 4), "expanded control on screen");
+    check(!oe.parked && !NFBToggleShouldFade(oe.parked, oe.edgeRail), "expanded never fades");
+    close_(oe.toggle.origin.x, NFBPlainRailFrameX(W, 62, 4), "expanded control on screen");
     check(CGRectGetHeight(oe.rail) >= 62, "expanded rail not crushed by favorites");
     check(!overlap(oe.toggle, oe.rail), "expanded toggle does not overlap the rail");
     if (oe.favoritesVisible) {
@@ -278,7 +302,7 @@ int main(void) {
     close_(relaunch.toggle.origin.y, 200 + 422 * 0.05, "relaunch keeps the toggle top");
     close_(relaunch.toggle.origin.x, col.toggle.origin.x, "relaunch keeps the parked x");
     close_(relaunch.diameter, split.diameter, "relaunch keeps the split diameter");
-    check(relaunch.parked && NFBToggleShouldFade(relaunch.parked, true), "relaunch keeps the half-off fade");
+    check(relaunch.parked && NFBToggleShouldFade(relaunch.parked, relaunch.edgeRail), "relaunch keeps the half-off fade");
     // Half-off rule: the image centre sits exactly on the screen edge, i.e.
     // origin.x = W - 7 - diameter/2 = W - NFBRetraction(diameter).
     close_(relaunch.toggle.origin.x, W - NFBRetraction(relaunch.diameter),
@@ -355,90 +379,161 @@ int main(void) {
     check(!overlap(tiny.toggle, tiny.rail), "short split keeps the toggle off the rail");
     finiteRect(tiny.rail, "short split rail finite");
 
-    // --- collapsed column while a fullscreen app is in use (edge rail)
+    // --- collapsed column while a fullscreen app is in use: half hidden in SCREEN
+    // coordinates. 0.48.82 only asserted local x values, so an icon whose centre
+    // still sat 20pt inside the screen passed on device. Every number below is the
+    // one the manager applies:
+    //   screenX(image centre) = railX + contentOffset.x(0) + bubbleX
+    //                           + imageView.x(7) + diameter/2
     const double margin = 4, inset = 7;
-    // Exception row = the fullscreen app (shown even without a notification) and
-    // the collapse control: two views only. Both shift right by diameter/2 - 7 so
-    // the image centre lands on the screen edge; unread rows keep the original
-    // collapsed rule (full icon). The clipped viewport is widened to the edge so
-    // nothing is cut by the parent, and it starts 11pt further left, which leaves
-    // every row's offset inside the column unchanged.
-    NFBRailPlan edge = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, false, CGRectZero,
-            false, 0.7, true, 0, 2, 0, split.toggleTop, split.diameter, W, true, true);
-    finiteRect(edge.rail, "edge rail finite");
-    check(edge.edgeRail && NFBExpandedAppHalfHidden(true, false, true),
-            "collapsed non-split fullscreen column is an edge rail");
-    double halfX = NFBHalfHiddenBubbleX(edge.diameter);
-    close_(halfX, edge.diameter / 2 - inset, "half-hidden x is a fixed partial offset");
-    close_(CGRectGetMaxX(edge.rail), W, "edge rail viewport reaches the screen edge");
-    close_(CGRectGetWidth(edge.rail), 77, "edge rail widens the viewport to the edge");
-    close_(CGRectGetWidth(col.rail), 62, "plain collapsed rail keeps the icon column width");
-    close_(edge.rail.origin.x, 313, "edge rail viewport starts one inset+margin further left");
-    close_(col.rail.origin.x, W - 62 - margin, "plain collapsed rail keeps its x");
-    close_(edge.rail.origin.x, col.rail.origin.x - (inset + margin),
-            "edge rail only moves left by the extra width");
-    close_(edge.railViewportWidth, col.railViewportWidth, "edge rail keeps the icon column width");
-    close_(CGRectGetHeight(edge.rail), CGRectGetHeight(col.rail), "edge rail keeps the row budget");
-    close_(edge.diameter, col.diameter, "edge rail keeps the icon diameter");
-    close_(edge.toggle.origin.y, col.toggle.origin.y, "edge rail keeps the control row");
-    close_(edge.clearCenterY, col.clearCenterY, "edge rail keeps the clear row");
-    close_(edge.toggle.origin.x, col.toggle.origin.x, "edge rail keeps the control x");
-    check(edge.parked, "a lone fullscreen app without notifications leaves the control parked");
-    // Same y and spacing as any other row: only the x of the two exceptions moves.
-    close_(NFBRowCenter(2, 0, edge.diameter + 9, edge.diameter + 14),
-            NFBRowCenter(2, 0, col.diameter + 9, col.diameter + 14),
-            "exception row centre is unchanged by the widening");
-    close_(halfX + inset + edge.diameter / 2, edge.diameter,
-            "half-hidden centre is the bubble half width");
-    close_(halfX + inset - edge.diameter / 2, 0,
-            "half-hidden offset is mirrored from the image inset");
-    close_(regularRightX(edge), W - 22,
-            "unread rows keep their column offset with a full icon");
-    check(edge.rail.origin.x + halfX + edge.diameter + inset <= CGRectGetMaxX(edge.rail) + 0.51,
-            "half-hidden bubble is not clipped by the rail");
+    double widths[] = { 390, 430, 844 };          // portrait, wide, landscape
+    double diams[] = { 32, 44, 48, 56, 80 };
+    for (unsigned w = 0; w < sizeof widths / sizeof widths[0]; w++) {
+        double sw = widths[w], sh = w == 2 ? 390 : 844;
+        for (unsigned d = 0; d < sizeof diams / sizeof diams[0]; d++) {
+            NFBRailPlan hh = NFBPlanRail(sw, sh, safe, TOP, diams[d], splitPosition, false, CGRectZero,
+                    false, 0.7, true, 0, 2, 1, TOP + 30, diams[d], sw, true, true);
+            double side = hh.diameter + 14;
+            check(hh.edgeRail, "collapsed fullscreen column is half hidden");
+            check(fabs(hh.diameter - diams[d]) < 0.01, "half-hidden column keeps the requested diameter");
+            // The rail keeps its column width; only its right overhang changes.
+            close_(CGRectGetWidth(hh.rail), side, "half-hidden rail keeps the icon column width");
+            // The rail keeps its column width and its own right edge moves with it:
+            // the icon centre sits on the screen edge, so the screen itself crops the
+            // right half. Nothing may be clipped before the edge (the rail must cover
+            // image.x + 7 + d/2) and the rail/window may overhang past the screen by
+            // at most the invisible right half.
+            close_(CGRectGetMaxX(hh.rail),
+                    NFBHalfHiddenBubbleOriginX(sw, hh.diameter, margin) + hh.diameter + 14,
+                    "half-hidden rail keeps its column width");
+            // The rail moves by exactly the gap between the plain and the
+            // half-hidden column origin, computed independently of the helper.
+            close_(hh.halfHiddenShift, (4 + side / 2) + 7,
+                    "the whole column moves by margin + half the bubble + the icon inset, once");
+            check(CGRectGetMaxX(hh.rail) >= sw, "the rail is not clipped before the screen edge");
+            check(CGRectGetMaxX(hh.rail) <= sw + hh.diameter + 7, "the overhang is at most the hidden right half");
+            close_(hh.rail.origin.x, NFBHalfHiddenBubbleOriginX(sw, hh.diameter, margin),
+                    "half-hidden rail sits at its half-hidden x");
+            close_(hh.rail.origin.x, NFBPlainRailFrameX(sw, side, margin) + hh.halfHiddenShift,
+                    "the rail moved right by its own half-hidden shift, applied once");
+            close_(hh.halfHiddenShift, side / 2 + 11, "the column moves by half its bubble + margin + inset");
+            // Every row (unread or not) and the control use the plain column offset.
+            check(!hh.rowInset || hh.rowInset == 0, "no extra row inset is needed");
+            check(fabs(rowCenterX(hh) - side / 2) < 0.01, "rows keep their column offset");
+            close_(rowImageCenterX(hh), sw, "row image centre is exactly the screen edge");
+            close_(toggleImageCenterX(hh), sw, "collapse control image centre is the screen edge");
+            close_(hh.toggle.origin.x, hh.rail.origin.x, "the control keeps the column x");
+            // Only the left half is on screen; nothing is a full icon and nothing
+            // is cut before the screen edge (the rail extends past it).
+            close_(rowImageCenterX(hh) - hh.diameter / 2, sw - hh.diameter / 2,
+                    "the visible half starts half a diameter inside the screen");
+            check(rowImageCenterX(hh) + hh.diameter / 2 > sw, "the right half is past the screen edge");
+            check(hh.rail.origin.x + rowCenterX(hh) + inset - hh.diameter / 2 >= 0,
+                    "the visible half is inside the rail");
+            check(hh.rail.origin.x + rowCenterX(hh) + inset + hh.diameter / 2 <= CGRectGetMaxX(hh.rail) + 0.01,
+                    "the icon is not clipped by the rail before the screen edge");
+            // Touch: the visible half reacts, the empty corners do not.
+            // The view's frame origin is the rail x, so the on-screen part starts at
+            // screenWidth - origin in its own space (half the bubble + margin).
+            double visibleMinX = NFBVisibleMinX(hh.rail.origin.x, side, sw);
+            close_(visibleMinX, sw - hh.rail.origin.x, "visible part of the control starts at the screen edge");
+            check(visibleMinX > 0 && visibleMinX < side / 2 + 6, "about half of the bubble is off screen");
+            check(NFBHalfHiddenAcceptsTouch(visibleMinX + 1, side / 2, side, visibleMinX),
+                    "visible half of the control is tappable");
+            // The icon of this size (>= 32pt) already gives a >= 22pt radius, so
+            // the tap target is the circle: its top and bottom of the visible half
+            // are inside, its square corners are not.
+            check(NFBHalfHiddenAcceptsTouch(side / 2, side / 2 - (hh.diameter / 2 - 1), side, visibleMinX),
+                    "the visible half is tappable at the top of the icon");
+            // dx = 1pt from the centre: inside the square, outside the circle.
+            check(!NFBHalfHiddenAcceptsTouch(side / 2 + 22 + 3, side - 1, side, visibleMinX),
+                    "the circle's edge refuses the square corner");
+            check(!NFBHalfHiddenAcceptsTouch(visibleMinX - 6, side / 2, side, visibleMinX),
+                    "the half off screen is not a target");
+            check(!NFBHalfHiddenAcceptsTouch(visibleMinX + 1, 0.5, side, visibleMinX),
+                    "a square corner outside the circle is not stolen");
+            // A touch well to the left of the control belongs to the app behind.
+            check(!NFBHalfHiddenAcceptsTouch(visibleMinX - 30, side / 2, side, visibleMinX),
+                    "a touch left of the control is never captured");
+            // Badge rect stays inside the icon for every diameter and a long count.
+            double textWidths[] = { 0, 8, 16, 30 };
+            for (unsigned t = 0; t < 4; t++) {
+                NFBBadgeRect badge = NFBBadgeFrame(inset, inset, hh.diameter, hh.diameter, textWidths[t], t > 0);
+                check(NFBBadgeInsideImage(badge, inset, inset, hh.diameter), "badge stays inside the icon");
+            }
+        }
+    }
+    // A squeezed split's smaller diameter is reused by the fullscreen column and
+    // still lands exactly on the edge.
+    NFBRailPlan squeezed = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, true, CGRectMake(0, 422, 340, 422),
+            true, 0.7, false, 2, 3, 0, 0, 0, 0, false, false);
+    check(squeezed.diameter < 48, "squeezed split really shrinks the icons");
+    NFBRailPlan squeezedHalf = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, false, CGRectZero,
+            false, 0.7, true, 0, 2, 0, squeezed.toggleTop, squeezed.diameter, W, true, true);
+    close_(squeezedHalf.diameter, squeezed.diameter, "half-hidden column reuses the split diameter");
+    close_(rowImageCenterX(squeezedHalf), W, "squeezed split diameter also lands on the screen edge");
+    close_(toggleImageCenterX(squeezedHalf), W, "control follows the squeezed diameter");
 
-    // Notified unread apps also present: same exception geometry, the unread rows
-    // are not moved and stay fully visible (no whole-column transform).
-    NFBRailPlan edgeNotified = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, false, CGRectZero,
-            false, 0.7, true, 2, 3, 2, split.toggleTop, split.diameter, W, true, true);
-    close_(edgeNotified.rail.origin.x, edge.rail.origin.x, "unread rows share the exception left edge");
-    close_(edgeNotified.railViewportWidth, 62, "unread rows keep the original column width");
-    close_(CGRectGetMaxX(edgeNotified.rail), W, "widened viewport reaches the screen edge");
-    close_(regularRightX(edgeNotified), W - 22,
-           "unread rows stay fully on screen inside the widened viewport");
-    check(!edgeNotified.parked, "unread apps keep the column on screen");
-    close_(edgeNotified.toggle.origin.x, edgeNotified.rail.origin.x, "control x stays on the column, never offset for the exception");
-    // No whole-column transform: the regular row centres are identical in both
-    // columns, only the exception row and the toggle are offset.
-    close_(NFBRowCenter(3, 1, edgeNotified.diameter + 9, edgeNotified.diameter + 14),
-            NFBRowCenter(3, 1, edge.diameter + 9, edge.diameter + 14) + 0,
-            "unread row y is unchanged by the exception");
-    check(NFBExpandedAppHalfHidden(true, false, true) && !edgeNotified.parked,
-            "edge rail keeps half-hiding while unread apps share the column");
+    // Many unread apps: same rule, same numbers (one width, one inset).
+    NFBRailPlan manyHalf = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, false, CGRectZero,
+            false, 0.7, true, 5, 5, 5, split.toggleTop, 48, W, true, true);
+    close_(rowImageCenterX(manyHalf), W, "every unread row centre is the screen edge");
+    close_(toggleImageCenterX(manyHalf), W, "control centre with unread rows on the edge");
+    close_(CGRectGetWidth(manyHalf.rail), 62, "unread rows do not widen the column");
+    close_(NFBHalfHiddenShift(48), 4 + 31, "shift is margin + half bubble for 48pt");
 
-    // Split is untouched by the flag, and never half-hides its icons.
+    // Only the collapsed fullscreen state half-hides: split, expanded, the plain
+    // unread column and the empty (home) column keep the original geometry.
+    NFBRailPlan hhSplit = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, true, splitFrame, true,
+            0.7, false, 2, 3, 2, 0, 0, 0, false, true);
+    check(!hhSplit.edgeRail && hhSplit.rowInset == 0, "split ignores the half-hidden state");
+    close_(CGRectGetWidth(hhSplit.rail), CGRectGetWidth(split.rail), "split viewport unchanged");
+    close_(hhSplit.rail.origin.x, split.rail.origin.x, "split x unchanged");
+    close_(hhSplit.toggle.origin.x, split.toggle.origin.x, "split control unchanged");
+    NFBRailPlan hhExpanded = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, false, CGRectZero,
+            false, 0.7, false, 2, 3, 2, split.toggleTop, split.diameter, W, true, true);
+    check(!hhExpanded.edgeRail && hhExpanded.rowInset == 0, "expanded ignores the half-hidden state");
+    close_(CGRectGetWidth(hhExpanded.rail), CGRectGetWidth(open.rail), "expanded viewport unchanged");
+    // The column starts 2 * margin + 7 before the edge so the icon (inset 7pt in
+    // its bubble) ends margin + 7 before it: expanded stays clear of the edge.
+    // Right edge = plain x + side = (W - 2 * margin - 7 - side) + side.
+    close_(CGRectGetMaxX(hhExpanded.rail),
+            NFBPlainRailFrameX(W, hhExpanded.diameter + 14, margin) + hhExpanded.diameter + 14,
+            "expanded rail keeps the plain column x (icon inset 7pt, margin 4pt)");
+    NFBRailPlan plainUnread = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, false, CGRectZero,
+            false, 0.7, true, 0, 2, 2, split.toggleTop, split.diameter, W, true, false);
+    check(!plainUnread.edgeRail && plainUnread.rowInset == 0, "plain unread column keeps its geometry");
+    close_(CGRectGetWidth(plainUnread.rail), 62, "plain unread column keeps the icon column width");
+    // Unchanged original rule: the icon ends 7pt before the physical edge.
+    close_(regularRightX(plainUnread), W - inset - 4 - 7, "plain unread icon keeps its original right edge");
+    close_(regularRightX(plainUnread), NFBPlainRailFrameX(W, plainUnread.diameter + 14, margin) + inset + plainUnread.diameter,
+            "plain icon right edge from the one column x");
+    // ...which is rail x + 7 + d/2 = W - margin - d/2 (not a second 7pt inset).
+    close_(rowImageCenterX(plainUnread), W - inset - margin - inset - plainUnread.diameter / 2,
+            "plain unread centre is not on the edge (icon ends margin + inset before it)");
+    check(rowImageCenterX(plainUnread) < W - 2, "plain unread icon stays fully on screen");
+    close_(toggleImageCenterX(plainUnread), rowImageCenterX(plainUnread), "plain control shares the row centre");
+    // Empty column (no notifications, to the home screen): the control parks and
+    // the column geometry is untouched.
+    NFBRailPlan emptyToggle = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, false, CGRectZero,
+            false, 0.7, true, 0, 0, 0, split.toggleTop, split.diameter, W, true, false);
+    check(emptyToggle.parked && emptyToggle.rowInset == 0, "empty toggle still parks");
+    close_(emptyToggle.toggle.origin.x, W - 7 - 24, "parked control keeps its original x");
+
+    // Policy: the half-hidden rule and the fade/priority rules around it.
+    check(NFBExpandedAppHalfHidden(true, false, true), "collapsed + fullscreen app: half hidden");
     check(!NFBExpandedAppHalfHidden(false, true, true), "split never half-hides");
     check(!NFBExpandedAppHalfHidden(false, false, true), "expanded never half-hides");
-    check(!NFBExpandedAppHalfHidden(true, false, false), "no fullscreen app, no exception");
-    NFBRailPlan edgeSplit = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, true, splitFrame, true,
-            0.7, false, 2, 3, 2, 0, 0, 0, false, true);
-    check(!edgeSplit.edgeRail, "split ignores the edge rail flag");
-    close_(CGRectGetWidth(edgeSplit.rail), CGRectGetWidth(split.rail), "split viewport unchanged");
-    close_(edgeSplit.rail.origin.x, split.rail.origin.x, "split x unchanged");
-    close_(edgeSplit.toggle.origin.x, split.toggle.origin.x, "split control unchanged");
-    NFBRailPlan edgeExpanded = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, false, CGRectZero,
-            false, 0.7, false, 2, 3, 2, split.toggleTop, split.diameter, W, true, true);
-    check(!edgeExpanded.edgeRail, "expanded ignores the edge rail flag");
-    close_(CGRectGetWidth(edgeExpanded.rail), CGRectGetWidth(open.rail), "expanded viewport unchanged");
-
-    // Rotated screen: the image centre still lands on the new right edge.
-    NFBRailPlan edgeLand = NFBPlanRail(H, W, safe, TOP, 52, splitPosition, false, CGRectZero,
-            false, 0.7, true, 0, 2, 0, 0, 0, 0, false, true);
-    close_(NFBHalfHiddenBubbleX(edgeLand.diameter) + 7 + edgeLand.diameter / 2,
-            edgeLand.diameter, "landscape edge rail puts the image centre on the column right edge");
-    finiteRect(edgeLand.rail, "landscape edge rail finite");
+    check(!NFBExpandedAppHalfHidden(true, false, false), "no fullscreen app, no half hide");
+    check(NFBToggleShouldFade(false, true), "half-hidden control fades even with unread rows");
+    check(NFBToggleShouldFade(true, false), "parked control still fades");
+    check(!NFBToggleShouldFade(false, false), "expanded control is opaque");
+    // Fullscreen collapse control: interactive without any desktop target.
+    check(NFBToggleIsInteractive(true, true, false), "collapsed fullscreen toggle is interactive");
+    check(!NFBToggleIsInteractive(true, false, true), "a hidden toggle takes no touches");
+    check(!NFBToggleIsInteractive(false, true, false), "a disabled column takes no touches");
 
     printf("PASS: column geometry (split -> fullscreen expanded -> collapsed -> empty)\n");
-    printf("PASS: hidden fullscreen exception (half-hidden row, full unread rows)\n");
+    printf("PASS: hidden fullscreen exception (screen-space half hide, all rows + control)\n");
     return 0;
 }

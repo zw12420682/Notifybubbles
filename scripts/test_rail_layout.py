@@ -29,7 +29,7 @@ problems = []
 
 # 1. The fullscreen first row must come from the remembered split row, never
 #    from the rail frame that the fullscreen position slider recomputed.
-if "railFrame.origin.y" in manager:
+if "NFBRowCenter(rowCount, rowIndex, step, side) + railFrame" in manager:
     problems.append("NFBManager still derives a row from the fullscreen rail frame")
 if "NFBSplitRailTop(CGRectGetMinY(splitFrame)" not in plan:
     problems.append("split row top must still be derived from the split window")
@@ -117,40 +117,110 @@ if "NFBPlanRail" not in tests:
 if "RailLayoutTests.m" not in workflow:
     problems.append("CI must run RailLayoutTests.m")
 
-# 10. Collapsed column with a fullscreen app: one exception row inside the same
-#     column, half-hidden by x (never by a whole-column transform or clipping).
+# 10. Collapsed column with a fullscreen app: the whole visible column half hides
+#     (rail + every row + the control shift together), screen-space truth lives in
+#     one helper, and the collapse control is tappable without a desktop target.
 geometry = read("Sources/NFBGeometry.h")
-for helper in ["NFBExpandedAppHalfHidden", "NFBHalfHiddenBubbleX", "NFBCollapsedEdgeRailFrameX"]:
+for helper in ["NFBExpandedAppHalfHidden", "NFBHalfHiddenShift", "NFBHalfHiddenBubbleOriginX"]:
     if helper not in geometry:
         problems.append("missing geometry helper: " + helper)
 if "return collapsed && !split && frontAppPresent;" not in geometry:
-    problems.append("the half-hidden exception must require collapsed && !split && a fullscreen app")
-if "return isfinite(diameter) ? diameter / 2 - 7 : 0;" not in geometry:
-    problems.append("half-hidden x must be diameter/2 - 7 (image centre on the edge)")
-if "self.railExceptionApp" not in manager:
-    problems.append("the manager must track the exception row")
+    problems.append("the half-hidden state must require collapsed && !split && a fullscreen app")
+if "return 4 + (diameter + 14) / 2;" not in geometry:
+    problems.append("the half-hidden shift must put the image centre on the screen edge "
+                    "(margin + half bubble, independent of the unread count)")
+if "static inline double NFBHalfHiddenBubbleOriginX(" not in geometry:
+    problems.append("the half-hidden column x must come from one helper")
+if "return screenWidth - NFBHalfHiddenShift(diameter) + margin;" not in geometry:
+    problems.append("the half-hidden column x must be screenWidth - (margin + side/2)")
+if "NFBHalfHiddenBubbleX" in geometry or "NFBCollapsedEdgeRailFrameX" in geometry:
+    problems.append("the old local-x half-hide helpers must be gone")
+if "NFBExpandedAppHalfHidden(collapsed, split, fullscreenApp.length > 0)" not in manager:
+    problems.append("the manager must track the fullscreen app of the column")
 if "if (exceptionApp && ![columnApps containsObject:fullscreenApp]) [columnApps addObject:fullscreenApp];" not in manager:
-    problems.append("the exception app must join the same column and never duplicate a notified app")
+    problems.append("the fullscreen app must join the same column and never duplicate a notified app")
 if "windowState.fullscreen" not in manager or "NFBCurrentWindowState()" not in manager:
     problems.append("the front app must come from the shared NFBWindowState, not a new tree scan")
-if "self.railExceptionApp.length > 0" not in manager or "toggleFrame.origin.x += NFBHalfHiddenBubbleX(diameter);" not in manager:
-    problems.append("the collapse control must take the same half-hidden x")
-# The exception row moves through its centre; the column itself is never shifted.
-if "CGFloat rowX = side / 2 + (exceptionRow ? NFBHalfHiddenBubbleX(diameter) : 0);" not in manager:
-    problems.append("the exception row must be offset through its own centre")
+# The manager must pass the half-hidden state to the plan (not a local x guess).
+if "self.splitRailMeasured, exceptionApp);" not in manager:
+    problems.append("the plan must receive the half-hidden state")
+# The move is applied exactly once: no row carries an offset, and the control
+# takes the rail's x instead of adding the shift a second time.
+if "CGFloat rowX = side / 2;" not in manager:
+    problems.append("rows must keep the plain side/2 offset (the column moves once)")
+for stale in ["rowInset", "clearInset", "+ plan.halfHiddenShift", "NFBHalfHiddenBubbleX"]:
+    if stale in manager:
+        problems.append("the half-hidden offset is applied twice: " + stale)
+if "toggleFrame.origin.x = CGRectGetMinX(railFrame);" not in manager:
+    problems.append("the control shares the rail's half-hidden x")
+# Whole-column fade: no per-row exception alpha, the column dims as one.
+if "CGFloat columnAlpha = exceptionApp ? 0.5 : 1;" not in manager:
+    problems.append("the collapsed fullscreen column must fade as a whole")
+if "if (exceptionRow) alpha = 0.5;" in manager:
+    problems.append("only the fullscreen row must not be dimmed individually")
 if "transform.origin.x" in manager or "self.rail.transform = CGAffineTransform" in manager:
-    problems.append("the exception must move by row x, never by a column transform")
-    problems.append("the exception must move by row x, never by a column transform")
-if "railViewportWidth" not in plan:
-    problems.append("the plan must expose the icon column width inside the widened frame")
-if "CGSizeMake(railFrameWidth, contentHeight)" not in manager:
-    problems.append("the rail content size must follow the widened frame")
+    problems.append("the column must move by its frame, never by a transform")
 if "exceptionSlot" in manager:
     problems.append("no separate exception slot may be created")
-if "NFBExpandedAppHalfHidden(" not in tests:
-    problems.append("RailLayoutTests must cover the half-hidden policy")
+if "CGSizeMake(railFrameWidth, contentHeight)" not in manager:
+    problems.append("the rail content size must follow its frame")
+
+# 11. Interaction of the half-hidden control and rows.
+hit = read("Sources/NFBHitPolicy.h")
+if "NFBHalfHiddenAcceptsTouch" not in hit or "NFBMinimumTouchRadius" not in hit:
+    problems.append("a shared touch helper is required for half-hidden views")
+if "NFBToggleIsInteractive" not in hit:
+    problems.append("toggle interactivity must not depend on a desktop target")
+if "requireGestureRecognizerToFail:self.desktopActionHold" not in manager:
+    problems.append("the collapse control keeps its own tap/long-press pairing")
+if "if (self.desktopActionToggle) {" not in manager or "return self.desktopActionTouchTarget != nil;" not in manager:
+    problems.append("toggle mode must be accepted before the desktop target gate")
+# The half-hidden hit fix must stay local: no circle test that would change the
+# square bubble everywhere, and no manual descent from the window.
+if "- (BOOL)pointInside:(CGPoint)point withEvent:(UIEvent *)event" in manager:
+    problems.append("a bubble-wide pointInside would change every icon's hit area")
+if "hit = [root hitTest:" in manager:
+    problems.append("the window must not hand touches to a narrower root by hand")
+if "NFBVisibleMinX(" not in hit:
+    problems.append("the on-screen part of a half-hidden view must be computed once")
+if "- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event" not in manager:
+    problems.append("the rail must offer the on-screen half of a row that hangs past it")
+if "self.rail.clipsToBounds = NO;" not in manager:
+    problems.append("the rail must not clip a half-hidden row before the screen edge")
+if "[self.window addSubview:button];" not in manager:
+    problems.append("the collapse control must not be disabled by HideInScreenshots")
+
+# 12. Transitions: interruption-safe, no restart of identical animations, badge
+#     only on content change, programmatic scrolling never resets the idle timer.
+policy = read("Sources/NFBTransitionPolicy.h")
+motion = read("Sources/NFBMotionPolicy.h")
+for helper in ["NFBMotionNeedsAnimation", "NFBMotionCompletionIsCurrent", "NFBBadgeNeedsAnimation"]:
+    if helper not in motion:
+        problems.append("missing transition helper: " + helper)
+if "columnSlideToken" not in manager:
+    problems.append("column slides need a token so a stale completion cannot hide them")
+if "beginFromCurrentState" in manager and "BeginFromCurrentState" not in manager:
+    problems.append("animations must use UIViewAnimationOptionBeginFromCurrentState")
+if "badgeContentVersion" not in manager:
+    problems.append("the badge may only animate when its content changed")
+if "if (!isClearAll) [self layoutBadge:button diameter:diameter];" not in manager:
+    problems.append("the badge must be laid out after the icon geometry")
+if "NFBBadgeFrame(" not in manager:
+    problems.append("the badge rect must come from the shared inside-the-icon helper")
+if "self.lastInteractionAt = CACurrentMediaTime();" in manager and "if (self.edgeExpanded) self.lastInteractionAt" in manager:
+    problems.append("touch stamps must not be gated on edgeExpanded")
+
+# 13. Tests must assert screen coordinates, not only local values.
+if "rowImageCenterX" not in tests or "toggleImageCenterX" not in tests:
+    problems.append("RailLayoutTests must assert image centres in screen coordinates")
+if "NFBHalfHiddenAcceptsTouch" not in tests:
+    problems.append("RailLayoutTests must cover the half-hidden hit test")
+if "NFBBadgeInsideImage" not in tests:
+    problems.append("RailLayoutTests must assert the badge stays inside the icon")
+if "NFBHalfHiddenBubbleX" in tests:
+    problems.append("RailLayoutTests still asserts the old local-x formula")
 
 if problems:
     print("FAIL: rail layout checks\n - " + "\n - ".join(problems))
     sys.exit(1)
-print("PASS: rail layout wiring (single geometry source, no hidden favorites, explicit split state, half-hidden exception row)")
+print("PASS: rail layout wiring (single geometry source, half-hidden whole column, screen-space assertions)")

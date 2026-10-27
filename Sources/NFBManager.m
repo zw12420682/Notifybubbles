@@ -5,6 +5,8 @@
 #import "NFBOpenConsole.h"
 #import "NFBWindowState.h"
 #import "NFBTransitionPolicy.h"
+#import "NFBMotionPolicy.h"
+#import "NFBHitPolicy.h"
 #import "NFBIcon.h"
 #import "NFBManager.h"
 #import "NFBPrivate.h"
@@ -56,8 +58,22 @@ static double NFBNumber(NSString *key, double fallback) {
 }
 
 // Both active rails are ordinary interactive scroll containers.
-@interface NFBRail : UIScrollView @end
-@implementation NFBRail @end
+@class NFBRail;
+@class NFBManager;
+@interface NFBRail : UIScrollView
+@property(nonatomic, weak) NFBManager *nfbHitDelegate;
+@end
+@implementation NFBRail
+// A half-hidden row hangs past this scroll view's right edge, and UIKit refuses a
+// touch outside a view's bounds before any gesture sees it. Only rows that really
+// have an on-screen part outside the rail are offered here; everything inside is
+// untouched, and the manager refuses the part that is off screen.
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    UIView *hit = [super hitTest:point withEvent:event];
+    if (hit && hit != self) return hit;
+    return [self.nfbHitDelegate rail:self bubbleAtPoint:point withEvent:event] ?: hit;
+}
+@end
 
 @interface NFBWindow : UIWindow
 @end
@@ -76,6 +92,10 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, copy) void (^tapHandler)(void);
 @property(nonatomic, strong) UILabel *badge;
 @property(nonatomic, strong) UIView *activeMark;
+// Bumped only when the badge content changes, so a refresh that repeats the same
+// count never restarts the badge animation (and an interrupted removal can tell
+// whether it still owns the view).
+@property(nonatomic) unsigned long long badgeContentVersion;
 - (void)updateActiveMark:(BOOL)active diameter:(CGFloat)diameter duration:(NSTimeInterval)duration;
 @property(nonatomic) BOOL opening;
 @end
@@ -103,6 +123,9 @@ static double NFBNumber(NSString *key, double fallback) {
     CGRect frame = CGRectMake(7 + diameter * 0.30, 7 + diameter + 2, diameter * 0.40, 3);
     CGFloat alpha = active ? 1 : 0;
     if (CGRectEqualToRect(self.activeMark.frame, frame) && self.activeMark.alpha == alpha) return;
+    // Half-hidden rows are clipped at the screen edge: the mark may only be drawn
+    // while the icon it belongs to is visible.
+    self.activeMark.hidden = !active;
     [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : duration
         delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{
         self.activeMark.frame = frame;
@@ -187,6 +210,8 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic) BOOL showClearAll;
 @property(nonatomic) BOOL desktopActionToggle;
 @property(nonatomic) BOOL desktopActionParked;
+// Collapsed fullscreen column: the control shares the rows' shift and alpha.
+@property(nonatomic) BOOL desktopActionHalfHidden;
 @property(nonatomic) CFTimeInterval lastInteractionAt;
 - (void)closeBubble:(NFBBubble *)button;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NFBBubble *> *buttons;
@@ -203,6 +228,8 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic) BOOL closePreviousSplit, hideInScreenshots;
 @property(nonatomic) BOOL refreshScheduled;
 @property(nonatomic) BOOL columnSliding;
+// Bumped on every column slide so a stale completion cannot hide a newer state.
+@property(nonatomic) NSUInteger columnSlideToken;
 @property(nonatomic) BOOL columnTargetOffscreen;
 @property(nonatomic) BOOL preferenceFlushPending;
 @property(nonatomic, strong) UILabel *noticeLabel;
@@ -211,15 +238,19 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic) BOOL favoriteDragConsumed;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *generations;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *lastBadges;
+// Unread count each button showed last, so the badge only animates on change.
+@property(nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *badgeCounts;
+// Badge content version last animated per app, so an unchanged count never
+// restarts the pop animation on the next 20 Hz pass.
+@property(nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *lastBadgeVersion;
 @property(nonatomic, strong) NFBRecord *pendingRecord;
 @property(nonatomic) NSTimeInterval pendingUntil;
 @property(nonatomic) NSUInteger emptyReads;
 @property(nonatomic) CGFloat verticalPosition;
 @property(nonatomic, copy) NSString *lastActiveApp;
-// The fullscreen app the collapsed column shows as a half-hidden exception row
-// even without a notification; nil unless the column is collapsed, not split and
-// an app really is frontmost. Kept so the move animates from the current spot.
-@property(nonatomic, copy) NSString *railExceptionApp;
+// The fullscreen app the collapsed column keeps as its own row even without a
+// notification; nil unless the column is collapsed, not split and an app really is
+// frontmost. That state dims the whole column and shows the left half of it.
 @property(nonatomic, strong) NSMutableArray<NSString *> *recentUsedApps;
 @property(nonatomic, copy) NSArray *lastLayoutApps;
 @property(nonatomic) CGFloat iconSize;
@@ -278,7 +309,8 @@ static double NFBNumber(NSString *key, double fallback) {
 - (BOOL)executeRecord:(NFBRecord *)record;
 - (BOOL)executeRecord:(NFBRecord *)record authentication:(BOOL)authentication;
 - (void)tick;
-- (void)tickBody;
+- (void)tick;
+- (UIView *)rail:(NFBRail *)rail bubbleAtPoint:(CGPoint)point withEvent:(UIEvent *)event;
 - (void)startTimer;
 - (void)closeAppsInOrder:(NSArray<NSString *> *)apps;
 - (void)openApp:(NSString *)app;
@@ -310,6 +342,8 @@ static double NFBNumber(NSString *key, double fallback) {
         _closingApps = [NSMutableSet set];
         _generations = [NSMutableDictionary dictionary];
         _lastBadges = [NSMutableDictionary dictionary];
+        _badgeCounts = [NSMutableDictionary dictionary];
+        _lastBadgeVersion = [NSMutableDictionary dictionary];
         _gestureTimes = [NSMutableDictionary dictionary];
         _retractTokens=[NSMutableDictionary dictionary];
         _railStateStore = [NFBRailStateStore new];
@@ -569,7 +603,13 @@ static NSString *NFBFrontmostAppID(void) {
         [button addGestureRecognizer:self.desktopActionTap];
         button.alpha = 0;
         self.desktopActionButton = button;
-        [self.window.rootViewController.view addSubview:button];
+        // The control is carried by the window itself, not by the root view:
+        // HideInScreenshots disables the whole root view's interaction (its alpha
+        // is untouched), which silently swallowed every tap on the control. The
+        // window's own hit test already drops touches that reach neither the
+        // control nor a view of the root.
+        [self.window addSubview:button];
+        [self.window bringSubviewToFront:button];
     }
     NFBBubble *button = self.desktopActionButton;
     static UIImage *houseIcon, *chevronLeftIcon, *chevronRightIcon;
@@ -598,11 +638,14 @@ static NSString *NFBFrontmostAppID(void) {
     // Parked: nothing else is on screen so the hidden column keeps only the
     // control, half off the right edge (origin.x = width - 7 - diameter/2) at half
     // opacity. An expanded column never parks, even with nothing to show.
-    BOOL fade = NFBToggleShouldFade(self.desktopActionParked, toggleMode);
+    // Half hidden (collapsed fullscreen column): the control shares the rows'
+    // shift and alpha, so the whole column reads as one state.
+    BOOL fade = NFBToggleShouldFade(self.desktopActionParked, self.desktopActionHalfHidden);
     CGFloat targetAlpha = visible ? (fade ? 0.5 : 1) : 0;
-    button.userInteractionEnabled = visible;
-    if (visible && button.alpha < 0.01) button.frame = frame;
-    [self.window.rootViewController.view bringSubviewToFront:button];
+    // On screen (or parked with a visible half) is enough: no desktop target needed.
+    button.userInteractionEnabled = NFBToggleIsInteractive(self.enabled, visible, NO);
+    if (visible && (button.alpha < 0.01 || CGRectIsEmpty(button.frame))) button.frame = frame;
+    [self.window bringSubviewToFront:button];
     [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : MAX(0.16, duration)
         delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseInOut animations:^{
         button.alpha = targetAlpha;
@@ -745,6 +788,9 @@ static NSString *NFBFrontmostAppID(void) {
     // driven by the floating window and must never time out.
     if (self.edgeExpanded && !self.splitLayout && CACurrentMediaTime() - self.lastInteractionAt > 5.0) {
         self.edgeExpanded = NO;
+        // Folding is not an interaction, but it ends this countdown: without a
+        // fresh stamp the next expand would fold on its very first tick.
+        self.lastInteractionAt = CACurrentMediaTime();
         [self refresh];
         return;
     }
@@ -835,8 +881,13 @@ static NSString *NFBFrontmostAppID(void) {
     self.window.rootViewController = [UIViewController new];
     self.window.rootViewController.view.backgroundColor = UIColor.clearColor;
     self.rail = [NFBRail new];
-    self.rail.clipsToBounds = YES;
+    // A half-hidden row hangs past the clip; the rail must still offer that row's
+    // on-screen part to hit testing (see -rail:bubbleAtPoint:withEvent:).
+    self.rail.clipsToBounds = NO;
+    self.rail.nfbHitDelegate = self;
     self.rail.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
+    // The window is the full screen, so this clip is the physical screen edge: a
+    // half-hidden column may extend past it and is cropped there, never earlier.
     self.window.clipsToBounds = YES;
     self.rail.backgroundColor = UIColor.clearColor;
     self.rail.delegate = self;
@@ -880,8 +931,15 @@ static NSString *NFBFrontmostAppID(void) {
     // the moment the record is consumed — i.e. when the app is opened.
     NSUInteger unread = [self.store countForApp:button.appID];
     NSString *text = unread > 0 ? [NSString stringWithFormat:@"%lu", (unsigned long)unread] : nil;
-    button.badge.hidden = !text.length;
     // Text only: -layoutBadge:diameter: owns the geometry for all call sites.
+    // The version changes only with the content, so a 20 Hz pass that repeats the
+    // same count never restarts the badge animation.
+    NSNumber *previousCount = self.badgeCounts[button.appID];
+    if (NFBBadgeNeedsAnimation(button.badge.text.length > 0, text.length > 0,
+            previousCount ? previousCount.doubleValue : NAN, (double)unread))
+        button.badgeContentVersion++;
+    self.badgeCounts[button.appID] = @(unread);
+    button.badge.hidden = !text.length;
     if (![button.badge.text isEqual:text]) button.badge.text = text;
     NSString *name = NFBString(NFBGet(icon, @"displayName")) ?: button.appID;
     NSString *label = [NSString stringWithFormat:@"%@，%@", name, text ?: (record ? @"有通知" : @"暂无新通知")];
@@ -939,17 +997,30 @@ static NSString *NFBFrontmostAppID(void) {
 - (void)layoutBadge:(NFBBubble *)button diameter:(CGFloat)diameter {
     UILabel *badge = button.badge;
     if (!badge) return;
-    CGFloat height = MIN(20, MAX(14, diameter * 0.42));
-    CGFloat width = height;
-    if (badge.text.length) {
-        CGSize text = [badge.text sizeWithAttributes:@{NSFontAttributeName: badge.font ?: [UIFont boldSystemFontOfSize:12]}];
-        width = MAX(height, MIN(diameter, ceil(text.width) + 10));
+    // The count sits inside the icon's own top-left corner. The rect is derived
+    // from imageView.frame, so it can never leave the image (and therefore never
+    // hangs over the screen edge on a half-hidden row), and the width is clamped to
+    // the diameter: a long count shrinks the text, it never squashes the icon.
+    CGRect image = button.imageView.frame;
+    CGFloat side = fmin(CGRectGetWidth(image), CGRectGetHeight(image));
+    if (!(side > 1)) {
+        image = CGRectMake(7, 7, diameter, diameter);
+        side = diameter;
     }
-    badge.frame = CGRectMake(7 + diameter - width * 0.62, 7 - height * 0.28, width, height);
-    badge.layer.cornerRadius = height / 2;
-    badge.font = [UIFont boldSystemFontOfSize:MIN(12, height * 0.62)];
-    badge.adjustsFontSizeToFitWidth = YES;
-    badge.minimumScaleFactor = 0.6;
+    CGSize text = CGSizeZero;
+    if (badge.text.length)
+        text = [badge.text sizeWithAttributes:@{NSFontAttributeName: badge.font ?: [UIFont boldSystemFontOfSize:12]}];
+    NFBBadgeRect layout = NFBBadgeFrame(CGRectGetMinX(image), CGRectGetMinY(image), side, diameter,
+        text.width, badge.text.length > 0);
+    CGRect frame = CGRectMake(layout.x, layout.y, layout.width, layout.height);
+    if (CGRectGetWidth(frame) <= 0 || CGRectGetHeight(frame) <= 0) return;
+    if (!CGRectEqualToRect(badge.frame, frame)) badge.frame = frame;
+    CGFloat radius = frame.size.height / 2;
+    if (fabs(badge.layer.cornerRadius - radius) > 0.01) badge.layer.cornerRadius = radius;
+    UIFont *font = [UIFont boldSystemFontOfSize:MIN(12, frame.size.height * 0.62)];
+    if (fabs(badge.font.pointSize - font.pointSize) > 0.01) badge.font = font;
+    if (!badge.adjustsFontSizeToFitWidth) badge.adjustsFontSizeToFitWidth = YES;
+    if (fabs(badge.minimumScaleFactor - 0.6) > 0.001) badge.minimumScaleFactor = 0.6;
 }
 // The column is a window, so `hidden` cannot be animated (it switches the render
 // tree off between frames). Translate the root view instead and only flip
@@ -962,10 +1033,13 @@ static NSString *NFBFrontmostAppID(void) {
 }
 // Every genuine touch on the column restarts the five-second countdown.
 - (void)touchColumn {
-    if (self.edgeExpanded) self.lastInteractionAt = CACurrentMediaTime();
+    // Stamped unconditionally: a touch in the very frame that expands the column
+    // ran before edgeExpanded flipped, so the guard dropped its stamp and the
+    // column folded again on the next tick.
+    self.lastInteractionAt = CACurrentMediaTime();
 }
 - (void)resetAutoCollapseTimer {
-    if (self.edgeExpanded) self.lastInteractionAt = CACurrentMediaTime();
+    self.lastInteractionAt = CACurrentMediaTime();
 }
 
 - (void)setColumnOffscreen:(BOOL)offscreen {
@@ -985,14 +1059,18 @@ static NSString *NFBFrontmostAppID(void) {
     }
     self.columnSliding = YES;
     self.columnTargetOffscreen = offscreen;
+    // Interruption-safe: a completion from an earlier slide must never hide or
+    // reveal the column the current slide is moving.
+    NSUInteger token = ++self.columnSlideToken;
     if (offscreen) {
         [UIView animateWithDuration:0.24 delay:0
             options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseIn
             animations:^{ root.transform = away; }
             completion:^(__unused BOOL done) {
-                // Only commit the hide if the column is still meant to be away;
-                // a keyboard that came back mid-slide must keep it on screen.
-                if (self.columnTargetOffscreen) {
+                // Only commit the hide if the column is still meant to be away and
+                // no newer slide took over; a keyboard that came back mid-slide
+                // must keep it on screen.
+                if (NFBMotionCompletionIsCurrent(token, self.columnSlideToken) && self.columnTargetOffscreen) {
                     root.transform = CGAffineTransformIdentity;
                     self.window.hidden = YES;
                     self.columnSliding = NO;
@@ -1008,6 +1086,7 @@ static NSString *NFBFrontmostAppID(void) {
             options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseOut
             animations:^{ root.transform = CGAffineTransformIdentity; }
             completion:^(__unused BOOL done) {
+                if (!NFBMotionCompletionIsCurrent(token, self.columnSlideToken)) return;
                 self.window.hidden = NO;
                 self.columnSliding = NO;
             }];
@@ -1075,10 +1154,9 @@ static NSString *NFBFrontmostAppID(void) {
     if (NFBIsSystemDesktop(fullscreenApp)) fullscreenApp = nil;
     if ([self.closingApps containsObject:fullscreenApp ?: @""] || [self.dismissedSwitcher containsObject:fullscreenApp ?: @""])
         fullscreenApp = nil;
-    // Collapsed column only: the exception row exists to keep the current app
-    // reachable while the column is folded; expanding shows everything anyway.
+    // Collapsed column only: that row exists to keep the current app reachable
+    // while the column is folded; expanding shows everything fully again.
     BOOL exceptionApp = NFBExpandedAppHalfHidden(collapsed, split, fullscreenApp.length > 0);
-    self.railExceptionApp = exceptionApp ? fullscreenApp : nil;
     NSString *active = NFBTrollVisibleApp() ?: floatingApp ?: (home ? nil : windowState.frontApp);
     if (NFBIsSystemDesktop(active)) active = nil;
     // Recency decides membership, never a forced jump of an existing icon.
@@ -1115,10 +1193,10 @@ static NSString *NFBFrontmostAppID(void) {
             if ([self.lastSwitcher containsObject:app] || [app isEqual:active]) [background addObject:app];
         [columnApps addObjectsFromArray:NFBRecentBackgroundThree(background, history.array, self.favoriteApps)];
     }
-    // The half-hidden exception row joins the same column - no separate floating
-    // view. It is appended last so it never reshuffles the unread order, and it is
-    // skipped when that app already has a notification: then the original full
-    // rule applies and the app appears exactly once.
+    // The fullscreen app joins the same column - no separate floating view. It is
+    // appended last so it never reshuffles the unread order, and it is skipped when
+    // that app already has a notification: then the unread row already keeps it
+    // reachable and the app must appear exactly once.
     if (exceptionApp && ![columnApps containsObject:fullscreenApp]) [columnApps addObject:fullscreenApp];
     NSArray<NSString *> *railApps = columnApps.array;
     NSMutableArray<NSString *> *displayApps = [railApps mutableCopy];
@@ -1135,6 +1213,8 @@ static NSString *NFBFrontmostAppID(void) {
         NFBBubble *button = self.buttons[appID];
         [self.buttons removeObjectForKey:appID];
         button.userInteractionEnabled = NO;
+        unsigned long long removalToken = button.badgeContentVersion + 1;
+        button.badgeContentVersion = removalToken;
         if (![self.favoriteApps containsObject:appID]) [self.icons removeObjectForKey:appID];
         if ([self.burstApps containsObject:appID]) {
             [self.burstApps removeObject:appID];
@@ -1146,8 +1226,11 @@ static NSString *NFBFrontmostAppID(void) {
             button.alpha = 0; button.transform = CGAffineTransformMakeTranslation(self.iconSize + 20, 0);
         } completion:^(__unused BOOL done) {
             // Only tear down if nothing re-adopted this app in the meantime,
-            // otherwise a returning notification authors a second bubble.
-            if (self.buttons[appID] != button) [button removeFromSuperview];
+            // otherwise a returning notification authors a second bubble. The
+            // token additionally protects an interrupted removal that was reused.
+            if (self.buttons[appID] == button || self.favoriteButtons[appID] == button ||
+                NFBMotionCompletionIsCurrent(removalToken, button.badgeContentVersion) == NO)
+                [button removeFromSuperview];
         }];
     }
     if (!self.enabled) {
@@ -1238,7 +1321,7 @@ static NSString *NFBFrontmostAppID(void) {
         NFBFloatingPosition, splitNow, splitA, splitUsable, self.verticalPosition, collapse,
         hideFavorites ? 0 : self.favoriteApps.count, (unsigned long)columnRows, (unsigned long)notifiedCount,
         (double)self.splitRailTop, (double)self.splitRailDiameter, (double)self.splitRailScreenWidth,
-        self.splitRailMeasured, self.railExceptionApp.length > 0);
+        self.splitRailMeasured, exceptionApp);
     BOOL railMeasuredNow = NO;
     if (splitNow && plan.toggleTop > 0) {
         // A genuinely laid-out split column is the reference the fullscreen column
@@ -1261,8 +1344,7 @@ static NSString *NFBFrontmostAppID(void) {
     CGRect favoritesFrame = plan.favoritesVisible ? plan.favorites : CGRectZero;
     CGFloat clearCenterY = plan.clearCenterY;
     CGFloat railWidth = side;
-    // Widened when the exception row is present: rows keep their offsets from the
-    // view's left edge, so every regular icon stays where it was.
+    // One column width: the rail never widens, every row stays at side/2 in it.
     CGFloat railFrameWidth = CGRectGetWidth(railFrame);
     NSTimeInterval layoutDuration = UIAccessibilityIsReduceMotionEnabled() ? 0 : (attachmentChanged ? 0.35 : (splitNow ? 0.16 : NFBMotion));
     BOOL edgeMode = collapse;
@@ -1275,14 +1357,15 @@ static NSString *NFBFrontmostAppID(void) {
     // no longer zero in a split, which used to make the button disappear.
     CGRect desktopActionFrame = (splitNow && actionTarget) ? plan.toggle : CGRectNull;
     CGRect toggleFrame = (plan.toggleVisible && !splitNow) ? plan.toggle : CGRectNull;
-    // The collapse control joins the exception row: same x as the fullscreen
-    // app's bubble, so both show their left half on the screen edge. It only
-    // moves in that mode; a split, an expanded column or a parked-only column keep
-    // the plain slot.
-    if (self.railExceptionApp.length > 0 && !splitNow && !CGRectIsNull(toggleFrame) && toggleFrame.size.width > 0)
-        toggleFrame.origin.x += NFBHalfHiddenBubbleX(diameter);
+    // The collapse control is a root-view sibling, not a rail child, so the plan's
+    // shift for the rail has to be applied to it here: same shift as the rows, so
+    // its image centre is the screen edge too. A split, an expanded column or a
+    // parked-only column keep the plain slot.
+    if (exceptionApp && !splitNow && !CGRectIsNull(toggleFrame) && toggleFrame.size.width > 0)
+        toggleFrame.origin.x = CGRectGetMinX(railFrame);
     BOOL parked = plan.parked && !self.edgeExpanded;
     self.desktopActionParked = parked;
+    self.desktopActionHalfHidden = exceptionApp && !splitNow && !CGRectIsNull(toggleFrame);
     // A changing clipped viewport must not race independently animated child
     // sizes and scroll bounds. Commit resize geometry together, then keep the
     // normal animation timing for subsequent moves within a stable viewport.
@@ -1297,30 +1380,51 @@ static NSString *NFBFrontmostAppID(void) {
     BOOL viewportResized = !CGSizeEqualToSize(self.rail.bounds.size, railFrame.size) ||
         !CGSizeEqualToSize(self.favoritesRail.bounds.size, favoritesFrame.size);
     CGFloat childDuration = viewportResized ? (UIAccessibilityIsReduceMotionEnabled() ? 0 : 0.22) : layoutDuration;
-    [self layoutFavorites:favoritesFrame diameter:diameter active:active duration:childDuration];
-    [self layoutDesktopAction:desktopActionFrame target:actionTarget split:splitNow
-                  toggleFrame:toggleFrame duration:childDuration];
     BOOL hideEdgeIcons = NO;
     self.rail.hidden = rowCount == 0;
     self.railMaterial.hidden = rowCount == 0;
+    // The whole visible column - unread rows included - is half hidden in the
+    // collapsed fullscreen state: the rail, every row and the control share the
+    // same shift and the same 0.5 alpha, so no unread icon stays fully visible.
+    CGFloat columnAlpha = exceptionApp ? 0.5 : 1;
+    CGFloat targetRailAlpha = rowCount ? columnAlpha : 0;
+    CGFloat targetMaterialAlpha = rowCount && height > 0 ? 0.55 * columnAlpha : 0;
     BOOL railSizeChanged = !CGSizeEqualToSize(self.rail.bounds.size, railFrame.size);
-    // Narrow only the visible edge material. Retain the padded hit/clip area
-    // so icon edges, shadows and the external unread badges stay intact.
+    // Narrow only the visible edge material. Keep the rail's padded area so icon
+    // edges, shadows and the unread badges inside the icon stay intact.
     CGRect materialFrame = edgeMode ? CGRectInset(railFrame, 5, 0) : railFrame;
     self.rail.alwaysBounceVertical = contentHeight > height;
     self.rail.showsVerticalScrollIndicator = NO;
-    if (!CGRectEqualToRect(self.rail.frame, railFrame) || self.railMaterial.alpha != (rowCount && height > 0 ? 0.55 : 0)) {
+    // Only a real change starts an animation: re-submitting the same frame/alpha
+    // on every refresh restarted the curve and made the move look like a jump.
+    BOOL railFrameChanged = NFBMotionRectMoved(self.rail.frame.origin.x, self.rail.frame.origin.y,
+        self.rail.frame.size.width, self.rail.frame.size.height,
+        railFrame.origin.x, railFrame.origin.y, railFrame.size.width, railFrame.size.height);
+    if (railFrameChanged || NFBMotionNeedsAnimation(self.rail.alpha, targetRailAlpha) ||
+        NFBMotionNeedsAnimation(self.railMaterial.alpha, targetMaterialAlpha)) {
         if (CGRectIsEmpty(self.rail.frame)) self.rail.frame = railFrame;
         [UIView animateWithDuration:layoutDuration delay:0
             options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseInOut
             animations:^{
                 self.rail.frame = railFrame;
+                self.rail.alpha = targetRailAlpha;
                 self.rail.layer.cornerRadius = MIN(14, railWidth / 4);
                 self.railMaterial.layer.cornerRadius = MIN(14, railWidth / 4);
                 self.railMaterial.frame = materialFrame;
-                self.railMaterial.alpha = rowCount && height > 0 ? 0.55 : 0;
+                self.railMaterial.alpha = targetMaterialAlpha;
             } completion:nil];
+    } else {
+        // No real change: nothing to animate, but a first layout (empty frame,
+        // alpha 0) or a value set outside the animation still has to be committed.
+        if (CGRectIsEmpty(self.rail.frame)) self.rail.frame = railFrame;
+        if (self.rail.alpha != targetRailAlpha) self.rail.alpha = targetRailAlpha;
+        if (self.railMaterial.alpha != targetMaterialAlpha) self.railMaterial.alpha = targetMaterialAlpha;
     }
+    // The control is laid out after the column's own state (half-hidden flag,
+    // alpha, frame) is known, so its fade and shift follow the same pass.
+    [self layoutFavorites:favoritesFrame diameter:diameter active:active duration:childDuration];
+    [self layoutDesktopAction:desktopActionFrame target:actionTarget split:splitNow
+                  toggleFrame:toggleFrame duration:childDuration];
     self.rail.contentSize = CGSizeMake(railFrameWidth, contentHeight);
     CGFloat maxOffset = MAX(0, self.rail.contentSize.height - height);
     if (!self.rail.dragging && !self.rail.decelerating) {
@@ -1387,7 +1491,6 @@ static NSString *NFBFrontmostAppID(void) {
 
         }
         else [self updateBubble:button record:[self.store latestForApp:appID]];
-        if (!isClearAll) [self layoutBadge:button diameter:diameter];
         // A bubble we already started retracting must not be re-expanded by the
         // stale "window still visible" reading taken mid-transition.
         // edgeMode hides the rail and every bubble; animating them is pure cost and
@@ -1400,11 +1503,10 @@ static NSString *NFBFrontmostAppID(void) {
         // The clear action is appended last and therefore stays above all apps.
         CGFloat rowY = isClearAll ? side / 2 : NFBRowCenter(rowCount, rowIndex, step, side);
         CGFloat corner = !isClearAll ? diameter * 0.23 : diameter / 2;
-        // Only the exception row (and never a whole-column transform) is moved:
-        // the fullscreen app's bubble, and the toggle in layoutDesktopAction.
-        BOOL exceptionRow = !isClearAll && self.railExceptionApp.length > 0 &&
-            [appID isEqualToString:self.railExceptionApp];
-        CGFloat rowX = side / 2 + (exceptionRow ? NFBHalfHiddenBubbleX(diameter) : 0);
+        // Rows are always placed at side/2 inside the column. The half-hidden
+        // state moves the rail frame (and the control) once; adding a per-row
+        // offset on top of that is what put rows at screenWidth + shift.
+        CGFloat rowX = side / 2;
         CGPoint targetCenter = isClearAll ? CGPointMake(CGRectGetMidX(railFrame), clearCenterY) : CGPointMake(rowX, rowY);
         if (fresh) {
             button.bounds = targetBounds;
@@ -1417,15 +1519,14 @@ static NSString *NFBFrontmostAppID(void) {
         }
         // The clear-all bubble is an action, not an app: keep it fully opaque so
         // it stays discoverable, unlike the dimmed background bubbles around it.
-        // The exception row keeps the half opacity; an app that has its own
-        // notification is not the exception, so it keeps the regular opacity.
+        // Every row keeps its own opacity; the half-hidden state dims the whole
+        // column (self.rail.alpha) instead, so no unread icon stays fully visible.
         CGFloat alpha = self.iconOpacity;
         if (isClearAll) {
             alpha = 1.0;
         } else if ([active isEqualToString:appID]) {
             alpha = 1.0;
         }
-        if (exceptionRow) alpha = 0.5;
         BOOL changed = fresh || fabs(button.imageView.layer.cornerRadius - corner) > 0.01 || !CGRectEqualToRect(button.bounds, targetBounds) ||
             !CGPointEqualToPoint(button.center, targetCenter) ||
             !CGAffineTransformEqualToTransform(button.transform, target) ||
@@ -1456,6 +1557,23 @@ static NSString *NFBFrontmostAppID(void) {
                 delay:0 usingSpringWithDamping:1.0 initialSpringVelocity:0
                 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
                 animations:apply completion:nil];
+        }
+        // Geometry first: the badge is derived from imageView.frame, so laying it
+        // out before the icon size is committed put it outside the icon.
+        if (!isClearAll) [self layoutBadge:button diameter:diameter];
+        if (!isClearAll) {
+            unsigned long long version = button.badgeContentVersion;
+            if (version != self.lastBadgeVersion[appID] && button.badge.text.length) {
+                self.lastBadgeVersion[appID] = @(version);
+                if (!UIAccessibilityIsReduceMotionEnabled()) {
+                    CABasicAnimation *pop = [CABasicAnimation animationWithKeyPath:@"transform.scale"];
+                    pop.fromValue = @1.25; pop.toValue = @1; pop.duration = 0.22;
+                    pop.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut];
+                    [button.badge.layer addAnimation:pop forKey:@"NFBBadgePop"];
+                }
+            } else if (!button.badge.text.length) {
+                [self.lastBadgeVersion removeObjectForKey:appID];
+            }
         }
     }];
 }
@@ -1539,7 +1657,6 @@ static NSString *NFBFrontmostAppID(void) {
         }
         [self updateBubble:button record:[self.store latestForApp:app]];
         [button updateActiveMark:[app isEqual:active] diameter:diameter duration:duration];
-        [self layoutBadge:button diameter:diameter];
         CGPoint targetCenter = CGPointMake(side / 2, NFBRowCenter(self.favoriteApps.count, index, step, side));
         BOOL changed = !CGRectEqualToRect(button.bounds, CGRectMake(0,0,side,side)) || (button != self.favoriteDrag && !CGPointEqualToPoint(button.center, targetCenter)) || !CGRectEqualToRect(button.imageView.frame, CGRectMake(7,7,diameter,diameter)) || button.imageView.layer.cornerRadius != diameter * 0.23 || button.alpha != ([app isEqual:active] ? 1 : self.iconOpacity);
         if (changed) [UIView animateWithDuration:duration delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{
@@ -1549,6 +1666,8 @@ static NSString *NFBFrontmostAppID(void) {
             button.imageView.layer.cornerRadius = diameter * 0.23;
             button.alpha = [app isEqual:active] ? 1 : self.iconOpacity;
         } completion:nil];
+        // Same rule as the main column: the badge follows the icon geometry.
+        [self layoutBadge:button diameter:diameter];
     }];
 }
 // One synchronise per burst of preference writes, off the drag-release frame.
@@ -1765,15 +1884,52 @@ static NSString *NFBFrontmostAppID(void) {
     } completion:^(__unused BOOL done) { [button removeFromSuperview]; }];
 }
 
+// Whether a point given in a view's own space lies on the part of it that is
+// really on screen. A half-hidden column / control extends past the physical
+// edge, so only this test may extend its own hit area; the part behind the edge
+// and the area left of the control never take a touch.
+- (BOOL)view:(UIView *)view containsVisiblePoint:(CGPoint)local {
+    if (!view || !view.window || view.hidden || view.alpha < 0.01) return NO;
+    CGRect frame = [view convertRect:view.bounds toView:view.window];
+    if (CGRectGetWidth(frame) <= 0 || CGRectGetHeight(frame) <= 0) return NO;
+    double visibleMinX = NFBVisibleMinX(CGRectGetMinX(frame), CGRectGetWidth(frame),
+        CGRectGetWidth(view.window.bounds));
+    return NFBHalfHiddenAcceptsTouch(local.x, local.y, CGRectGetWidth(frame), visibleMinX);
+}
+// Screen-space touch for the collapse control while it is half hidden or parked.
+- (BOOL)visibleHalfContainsTouch:(UITouch *)touch forView:(UIView *)view {
+    return [self view:view containsVisiblePoint:[touch locationInView:view]];
+}
+- (UIView *)rail:(NFBRail *)rail bubbleAtPoint:(CGPoint)point withEvent:(UIEvent *)event {
+    for (UIView *candidate in rail.subviews.reverseObjectEnumerator) {
+        if (![candidate isKindOfClass:NFBBubble.class] || candidate.hidden ||
+            candidate.alpha < 0.01 || !candidate.userInteractionEnabled) continue;
+        CGPoint local = [rail convertPoint:point toView:candidate];
+        // Fully inside the rail the normal hit test already reaches the row;
+        // only an on-screen part hanging past the scroll view's bounds is offered
+        // here, and the row's own geometry still decides the rest.
+        if (CGRectContainsPoint(rail.bounds, point)) continue;
+        if ([self view:candidate containsVisiblePoint:local]) return candidate;
+    }
+    return nil;
+}
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldReceiveTouch:(UITouch *)touch {
     if (gesture == self.desktopActionTap || gesture == self.desktopActionHold) {
         self.desktopActionTouchTarget = self.desktopActionTarget;
         if (!self.enabled || [self isLocked]) return NO;
         // Toggle mode has no desktop target by design; requiring one here was why
         // the collapse control never responded to a tap.
-        if (self.desktopActionToggle) return YES;
+        if (self.desktopActionToggle) {
+            // Half hidden: accept the visible half where it lies outside the
+            // bubble's bounds (bounds-only testing is the 0.48.82 bug).
+            if (self.desktopActionHalfHidden || self.desktopActionParked)
+                return [self visibleHalfContainsTouch:touch forView:self.desktopActionButton];
+            return YES;
+        }
         return self.desktopActionTouchTarget != nil;
     }
+    // Rows need no special case here: the rail offers the on-screen half of a row
+    // that hangs past it, and the row keeps its normal gesture handling.
     return YES;
 }
 - (void)appHeld:(UILongPressGestureRecognizer *)gesture {

@@ -1,3 +1,38 @@
+# 0.48.83 — 收纳态整列半露、左半个可点、5 秒真实无操作收纳（修正 0.48.82）
+
+0.48.82 只在列的右缘（屏幕右缘 - 4）露出全屏 App 和收纳键的左半，其余未读图标仍完整；
+半露又只靠“列内单行偏移”实现，屏幕坐标（`rowImageCenterX` / `toggleImageCenterX`）
+在 `Tests/RailLayoutTests.m` 里是 413 / 417，而目标 390。本版按屏幕坐标重做：
+
+1. **整列半露**：收纳且非分屏时，行内的未读 App、无通知的全屏 App、收纳键**全部**只露左半，
+   `alpha 0.5`（`self.rail.alpha` / 收纳键 alpha 同一值，rail 的毛玻璃底也按 0.55 × 0.5）。
+   没有通知、没有全屏 App 时仍是原来的 parked 收纳键；展开后恢复完整列与 1.0 alpha。
+2. **屏幕坐标推导（唯一公式，只作用一次）**
+   - 普通列：`NFBPlainRailFrameX(W, side, 4) = W - side - 4 - 7`（气泡内的 7pt 图标内缩），
+     所以图标中心在 `W - 4 - 7 - d/2`，图标右缘在 `W - 4 - 7`。
+   - 半露列：整条 rail 的 frame 原点改为 `NFBHalfHiddenBubbleOriginX(W, d, 4) = W - (4 + side/2) + 4`，
+     收纳键（root/window 的直接子视图，与 rail 同一原点）用同一个 x。
+     行仍在列内 `side/2`，故屏幕坐标 = `railX + 7 + d/2 = W`，左右任何直径、任何未读数量都一样。
+   - 列宽不变、不做 transform、不给单行加第二次偏移；列右缘随之外移，
+     `rail.clipsToBounds = NO`，屏幕（窗口宽 = 屏宽）才是唯一的裁切边界。
+3. **左半个可点**：半露列的行有一半在 rail 的 bounds 之外，UIKit 在 gesture 之前就按 bounds 拒绝，
+   所以 rail 的 `-hitTest:withEvent:` 对“点在 rail bounds 之外、且该行确实有屏幕内部分”的行
+   返回它（`NFBVisibleMinX` + `NFBHalfHiddenAcceptsTouch`：只接受屏幕内的那半，半径不少于 22pt，
+   圆外方角不接管）；rail 内的点仍走原 hitTest，窗口的命中逻辑不变。
+   收纳键仍由自己的 tap/长按手势处理，半露/parked 时用同一策略只接受屏幕内那半。
+   没有新增边缘控件，没有全屏透明接管。
+4. **收纳键不再被 HideInScreenshots 吞掉点击**：该开关只禁用窗口根视图的交互（不改 alpha），
+   而收纳键原先是根视图的子视图，于是外观正常但所有点击都丢失。现改为窗口的直接子视图
+   （`initWithFrame` + `window addSubview:`），并去掉“开启时把根视图交互重新打开”的做法。
+5. **过渡**：rail 只在 frame/alpha 真正变化时才起动画（20Hz 刷新不再每帧重置曲线），
+   未变化时直接赋值（首帧也能落位）；所有动画保留 `BeginFromCurrentState` 且在
+   ReduceMotion 下时长为 0；角标只在数量变化时弹一次，位置按图标几何计算（在图标左上角、
+   不越出图标），图标/角标/透明度随同一次布局过渡。
+6. **5 秒收纳只认真实操作**：`touchColumn` / `resetAutoCollapseTimer` 不再以 `edgeExpanded` 为前提，
+   展开当帧的触摸也会盖章；`tickBody` 自动收纳后重新盖章，下次展开不会立刻被收；
+   `scrollViewDidScroll` 只在 `tracking / dragging / decelerating` 时算操作，
+   程序化 `contentOffset`（布局动画、`NFBSettleRailOffset`）不重置计时。
+
 # 0.48.82 — 收纳态显示当前全屏 App（同列半露）
 
 只改这一项需求，其余美化、分屏、点击/长按、行距字号、收纳键原规则未动。
