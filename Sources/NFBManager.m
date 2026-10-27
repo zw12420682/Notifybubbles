@@ -1893,14 +1893,18 @@ static NSString *NFBFrontmostAppID(void) {
 // Whether a point given in a view's own space lies on the part of it that is
 // really on screen. A half-hidden column / control extends past the physical
 // edge, so only this test may extend its own hit area; the part behind the edge
-// and the area left of the control never take a touch.
+// and the area left of the control never take a touch. The on-screen range is
+// [0, NFBVisibleMaxX] in the view's own space (a moved-right view keeps its left
+// edge, which is local x 0, on screen).
 - (BOOL)view:(UIView *)view containsVisiblePoint:(CGPoint)local {
     if (!view || !view.window || view.hidden || view.alpha < 0.01) return NO;
     CGRect frame = [view convertRect:view.bounds toView:view.window];
     if (CGRectGetWidth(frame) <= 0 || CGRectGetHeight(frame) <= 0) return NO;
-    double visibleMinX = NFBVisibleMinX(CGRectGetMinX(frame), CGRectGetWidth(frame),
+    double visibleMaxX = NFBVisibleMaxX(CGRectGetMinX(frame), CGRectGetWidth(frame),
         CGRectGetWidth(view.window.bounds));
-    return NFBHalfHiddenAcceptsTouch(local.x, local.y, CGRectGetWidth(frame), visibleMinX);
+    // Local x grows rightwards with the frame, so the on-screen part ends at the
+    // same distance from the left edge (view transform is identity here).
+    return NFBHalfHiddenAcceptsTouch(local.x, local.y, CGRectGetWidth(frame), visibleMaxX);
 }
 // Screen-space touch for the collapse control while it is half hidden or parked.
 - (BOOL)visibleHalfContainsTouch:(UITouch *)touch forView:(UIView *)view {

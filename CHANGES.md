@@ -1,3 +1,33 @@
+# 0.48.84 — 收纳键半露时左右判反（0.48.83 半露左半球点不动，桌面/全屏共同路径）
+
+0.48.83 真机：全屏收纳态、桌面（parked）收纳态下，半露的收纳键点不动。读代码定位到
+**半露命中策略把左右判反**（不是视觉、透明度或手势接线）：
+
+- 生产 frame：`origin.x = W - 7 - d/2`，`bounds side = d + 14`，`image` 起点 7，图标中心
+  local `side/2`（屏幕坐标 `W`）。真正在屏内的是**左半**，local x 区间 `[0, W - origin.x]`（≈ `side/2`）。
+- `NFBVisibleMinX` 返回的 `W - origin.x` 是屏幕内部分的**宽度**，却被当成“可见区间起点”：
+  `localX < visibleMinX` 即拒绝，于是屏内左半全被拒、屏外右半反被接受（手指永远到不了）。
+- `shouldReceiveTouch` 在 toggle 且 `halfHidden || parked` 时调用 `visibleHalfContainsTouch`，
+  桌面与全屏共用，所以两处一起失效。
+
+修复（只动命中策略与调用点；位置、尺寸、透明度、角标、动画、分屏房子按钮均不改）：
+
+1. `NFBVisibleMinX` → `NFBVisibleMaxX`：同一式子，名字改为其真实含义（屏内最后一个 local x），
+   区间恒为 `[0, maxX]`（视图只右移，local 0 永在屏内）。
+2. `NFBHalfHiddenAcceptsTouch`：frame 外（local < 0 或 > side）或超过 `visibleMaxX` 不接；
+   其余仍按圆形（半径 = 图标半径，下限 22pt），不抢其他 App 的空白区域。
+3. `-view:containsVisiblePoint:` 改用 `NFBVisibleMaxX`。
+4. 旧测试中依赖错误方向的断言按真实屏幕几何改写（不是迁就代码）；新增生产公式用例：
+   390 屏、d=32/48/62、全屏/分屏/桌面 parked/展开，屏内左半中点 `7 + d*0.25` 命中，
+   `localX > W - origin` 拒绝，上下界外、NaN、零尺寸拒绝。
+5. 逐层核对：`NFBWindow -hitTest:` 只丢弃根视图自身命中；`NFBBubble` 无 `pointInside:` 覆写；
+   控件是窗口直接子视图并置顶；tap/hold 保持 `requireGestureRecognizerToFail` 配对（toggle 下
+   hold 禁用，原样保留）；`shouldReceiveTouch` 是唯一 gate；`desktopActionTapped:` 在 toggle 模式
+   翻转 `edgeExpanded` 并 refresh。没有第二处拦截。
+6. 验证范围：静态逻辑测试 + 平台测试（validate / test_scheme / test_rail_layout / test_validator /
+   test_cleanup / test_package_parser / transition）。**未在真机验证**，也未新增 UIKit 点按 fixture
+   （需 macOS/Xcode）；真机是否彻底解决仍需设备确认。
+
 # 0.48.83 — 收纳态整列半露、左半个可点、5 秒真实无操作收纳（修正 0.48.82）
 
 0.48.82 只在列的右缘（屏幕右缘 - 4）露出全屏 App 和收纳键的左半，其余未读图标仍完整；

@@ -10,15 +10,25 @@
 // point on the *visible* half then falls outside the view's bounds for a view that
 // was moved by more than half its width (or a row hanging out of the rail), so
 // UIKit's bounds-based -hitTest:withEvent: / -pointInside:withEvent: refused it
-// before any gesture saw it. Nothing here widens the hit area beyond the visible
-// half: the rules are
+// before any gesture saw it. The shared half-hidden helper answers that, and the
+// rules are
 //   1. a control/row the user can see must be tappable;
 //   2. a touch that is not on the visible half must never be stolen from the app
 //      underneath (no full-screen invisible capture, no square corners swallowing
 //      touches on a circle);
 //   3. the minimum comfortable target is 44pt (HIG), which a half circle of a
 //      32pt icon (16pt wide) does not reach: the visible half keeps a 22pt radius
-//      from its centre so the part on screen is still comfortably tappable.
+//      from its centre so the part on screen is still comfortably tappable. Past
+//      the view's own frame edge (or the screen edge) nothing is taken.
+//
+// 0.48.84 device report: the control still did not respond in desktop or
+// fullscreen. Root cause: the visible range was computed as
+// `screenWidth - frameOriginX` (the *width* of the on-screen part, ~side/2) and
+// then treated as its *left* local edge, so the helper refused every point of the
+// real on-screen left half and accepted the half behind the physical edge, which
+// no touch can ever reach. `NFBVisibleMaxX` is that same number, now named for
+// what it is: the last local x that is on screen. The visible range is always
+// [0, maxX] - the view is only ever moved right, never left.
 
 // 44 / 2: half of the HIG minimum target, used as the radius floor.
 #define NFBMinimumTouchRadius 22.0
@@ -26,28 +36,31 @@
 #define NFBBubbleInset 7.0
 
 // Whether a control may take a touch at `localX/localY` (its own coordinate
-// space). `visibleMinX` is the local x where the on-screen part begins; pass 0 for
-// a fully visible control. Outside the circle is refused, and so is the part
-// before `visibleMinX` (the part past the physical screen edge).
-static inline bool NFBHalfHiddenAcceptsTouch(double localX, double localY, double side, double visibleMinX) {
-    if (!isfinite(localX) || !isfinite(localY) || !isfinite(side) || !isfinite(visibleMinX)) return false;
-    if (side <= 0) return false;
-    if (localX < visibleMinX - 0.01) return false;
+// space): on the visible half, inside the square bubble and no further than the
+// icon's radius. Outside the square is refused, and so is the part past
+// `visibleMaxX` (the part behind the physical screen edge).
+static inline bool NFBHalfHiddenAcceptsTouch(double localX, double localY, double side, double visibleMaxX) {
+    if (!isfinite(localX) || !isfinite(localY) || !isfinite(side) || !isfinite(visibleMaxX)) return false;
+    if (side <= 0 || visibleMaxX <= 0) return false;
+    if (localX < 0 || localX > side) return false;
+    if (localY < 0 || localY > side) return false;
+    if (localX > fmin(visibleMaxX, side)) return false;
+    // The radius floor keeps the visible half comfortable (44pt target); a bubble
+    // that is mostly past the edge only keeps the part on screen.
     double radius = fmax((side - 2 * NFBBubbleInset) / 2, NFBMinimumTouchRadius);
     double dx = localX - side / 2, dy = localY - side / 2;
-    if (dx * dx + dy * dy > radius * radius) return false;
-    return localY >= 0 && localY <= side;
+    return dx * dx + dy * dy <= radius * radius;
 }
 
-// Local x at which the on-screen part starts for a view whose frame is
-// `frameOriginX` wide `side` inside a window of `screenWidth`. 0 when the whole
-// view is on screen.
-static inline double NFBVisibleMinX(double frameOriginX, double side, double screenWidth) {
-    if (!isfinite(frameOriginX) || !isfinite(side) || !isfinite(screenWidth) || side <= 0) return 0;
-    double minX = screenWidth - frameOriginX;
-    if (minX < 0) return 0;
-    if (minX > side) return side;
-    return minX;
+// Last local x that is on screen for a view whose frame is `frameOriginX` wide
+// `side` inside a window of `screenWidth` (its on-screen width). `side` when the
+// whole view is on screen, 0 when it is entirely behind the edge.
+static inline double NFBVisibleMaxX(double frameOriginX, double side, double screenWidth) {
+    if (!isfinite(frameOriginX) || !isfinite(side) || !isfinite(screenWidth) || side <= 0 || screenWidth <= 0) return 0;
+    double maxX = screenWidth - frameOriginX;
+    if (maxX < 0) return 0;
+    if (maxX > side) return side;
+    return maxX;
 }
 
 // A collapse/expand cluster is interactive whenever it is on screen, independent

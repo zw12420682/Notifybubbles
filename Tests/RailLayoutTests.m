@@ -432,29 +432,34 @@ int main(void) {
                     "the visible half is inside the rail");
             check(hh.rail.origin.x + rowCenterX(hh) + inset + hh.diameter / 2 <= CGRectGetMaxX(hh.rail) + 0.01,
                     "the icon is not clipped by the rail before the screen edge");
-            // Touch: the visible half reacts, the empty corners do not.
-            // The view's frame origin is the rail x, so the on-screen part starts at
-            // screenWidth - origin in its own space (half the bubble + margin).
-            double visibleMinX = NFBVisibleMinX(hh.rail.origin.x, side, sw);
-            close_(visibleMinX, sw - hh.rail.origin.x, "visible part of the control starts at the screen edge");
-            check(visibleMinX > 0 && visibleMinX < side / 2 + 6, "about half of the bubble is off screen");
-            check(NFBHalfHiddenAcceptsTouch(visibleMinX + 1, side / 2, side, visibleMinX),
+            // Touch: only the on-screen half reacts, the empty corners do not.
+            // The control's frame origin is the rail x, so its on-screen range is
+            // local x [0, screenWidth - origin]: the part left of local 0 and the
+            // part past the physical edge are not targets.
+            double visibleMaxX = NFBVisibleMaxX(hh.toggle.origin.x, side, sw);
+            close_(visibleMaxX, sw - hh.rail.origin.x, "visible part of the control ends at the screen edge");
+            check(visibleMaxX > 0 && visibleMaxX < side / 2 + 6, "about half of the bubble is off screen");
+            // The tap on the visible half's middle (the icon's centre height) lands:
+            // this is the exact point UIKit now lets through to the control.
+            check(NFBHalfHiddenAcceptsTouch(7 + hh.diameter * 0.25, side / 2, side, visibleMaxX),
                     "visible half of the control is tappable");
-            // The icon of this size (>= 32pt) already gives a >= 22pt radius, so
-            // the tap target is the circle: its top and bottom of the visible half
-            // are inside, its square corners are not.
-            check(NFBHalfHiddenAcceptsTouch(side / 2, side / 2 - (hh.diameter / 2 - 1), side, visibleMinX),
-                    "the visible half is tappable at the top of the icon");
-            // dx = 1pt from the centre: inside the square, outside the circle.
-            check(!NFBHalfHiddenAcceptsTouch(side / 2 + 22 + 3, side - 1, side, visibleMinX),
-                    "the circle's edge refuses the square corner");
-            check(!NFBHalfHiddenAcceptsTouch(visibleMinX - 6, side / 2, side, visibleMinX),
-                    "the half off screen is not a target");
-            check(!NFBHalfHiddenAcceptsTouch(visibleMinX + 1, 0.5, side, visibleMinX),
+            check(NFBHalfHiddenAcceptsTouch(visibleMaxX - 1, side / 2, side, visibleMaxX),
+                    "the last on-screen column of the control is tappable");
+            check(NFBHalfHiddenAcceptsTouch(7, side / 2, side, visibleMaxX),
+                    "the image's on-screen left edge is tappable");
+            // The icon is a circle: its top on the visible half is inside, a square
+            // corner outside the circle is not.
+            check(NFBHalfHiddenAcceptsTouch(7 + hh.diameter * 0.25, 7 + hh.diameter * 0.25, side, visibleMaxX),
+                    "the visible half is tappable above the icon's horizontal centre");
+            check(!NFBHalfHiddenAcceptsTouch(side / 2 + 22 + 3, 0.5, side, visibleMaxX),
                     "a square corner outside the circle is not stolen");
-            // A touch well to the left of the control belongs to the app behind.
-            check(!NFBHalfHiddenAcceptsTouch(visibleMinX - 30, side / 2, side, visibleMinX),
+            check(!NFBHalfHiddenAcceptsTouch(visibleMaxX + 1, side / 2, side, visibleMaxX),
+                    "the half behind the physical edge is not a target");
+            // A touch off the control belongs to the app behind.
+            check(!NFBHalfHiddenAcceptsTouch(-2, side / 2, side, visibleMaxX),
                     "a touch left of the control is never captured");
+            check(!NFBHalfHiddenAcceptsTouch(visibleMaxX - 1, -2, side, visibleMaxX),
+                    "a touch above the control is never captured");
             // Badge rect stays inside the icon for every diameter and a long count.
             double textWidths[] = { 0, 8, 16, 30 };
             for (unsigned t = 0; t < 4; t++) {
@@ -463,6 +468,95 @@ int main(void) {
             }
         }
     }
+
+    // ---------------------------------------------------------------------
+    // 0.48.84: the control produced by the real plan, in real screen space.
+    // Production frame: origin.x = W - 7 - d/2 (half-hidden x = rail x, parked
+    // x = NFBParkedToggleX), bounds side = d + 14, image inset 7, image centre
+    // at local side/2 which is the global screen edge W. The on-screen part is
+    // the LEFT half, local x in [0, W - origin.x], and a tap on the left half's
+    // middle (image centre 7 + d*0.25) must be accepted; the part behind the
+    // physical edge must be refused. The old policy returned
+    // `screenWidth - origin.x` as a *min* x, so every check below that expects
+    // YES failed and every one that expects NO behind the edge passed a point
+    // no finger can reach.
+    double diameters[] = { 32, 48, 62 };
+    for (unsigned d = 0; d < 3; d++) {
+        double diameter = diameters[d];
+        double bubble = diameter + 14;
+        // The plan's own control for the screen: fullscreen column and a split.
+        NFBRailPlan full = NFBPlanRail(W, H, safe, TOP, diameter, splitPosition, false, CGRectZero,
+                false, 0.7, true, 1, 2, 0, 0, 0, 0, false, true);
+        NFBRailPlan splitPlan = NFBPlanRail(W, H, safe, TOP, diameter, splitPosition, true,
+                CGRectMake(0, 100, 300, 600), true, 0.7, true, 1, 2, 0, 0, 0, 0, false, false);
+        CGRect toggles[2] = { full.toggle, splitPlan.toggle };
+
+        for (unsigned s = 0; s < 2; s++) {
+            double origin = CGRectGetMinX(toggles[s]);
+            close_(CGRectGetWidth(toggles[s]), bubble, "the control's bounds are d + 14 wide");
+            double maxX = NFBVisibleMaxX(origin, bubble, W);
+            if (s == 0) close_(maxX, W - origin, "the on-screen part ends at screen width - origin");
+            if (s == 0) check(maxX > 0 && maxX < bubble, "about half of the fullscreen control is on screen");
+            check(maxX > 0 && maxX <= bubble, "the control has an on-screen part inside its bounds");
+            // Desktop and fullscreen share this exact call.
+            check(NFBHalfHiddenAcceptsTouch(7 + diameter * 0.25, bubble / 2, bubble, maxX),
+                    "the visible left half centre of the control is tappable");
+            check(NFBHalfHiddenAcceptsTouch(7, bubble / 2, bubble, maxX),
+                    "the left edge that is on screen is tappable");
+            double probeX = fmin(maxX - 3, 7 + diameter * 0.25);
+            check(NFBHalfHiddenAcceptsTouch(probeX, 7 + diameter * 0.25, bubble, maxX),
+                    "a point above the image centre but on screen is tappable");
+            check(!NFBHalfHiddenAcceptsTouch(maxX + 2, bubble / 2, bubble, maxX),
+                    "the part behind the physical edge is not a target");
+            if (maxX < 7 + diameter * 0.75)
+                check(!NFBHalfHiddenAcceptsTouch(7 + diameter * 0.75, bubble / 2, bubble, maxX),
+                        "the off-screen right half of the image is not a target");
+            check(!NFBHalfHiddenAcceptsTouch(bubble - 0.5, bubble / 2, bubble, maxX),
+                    "the control's own right edge, behind the screen, is not a target");
+        }
+        // Parked: the production parked control frame at half opacity.
+        double parkedX = NFBParkedToggleX(W, diameter);
+        double parkedMaxX = NFBVisibleMaxX(parkedX, bubble, W);
+        check(NFBHalfHiddenAcceptsTouch(7 + diameter * 0.25, bubble / 2, bubble, parkedMaxX),
+                "the parked control's visible half centre is tappable");
+        check(!NFBHalfHiddenAcceptsTouch(parkedMaxX + 2, bubble / 2, bubble, parkedMaxX),
+                "the parked control does not take touches behind the edge");
+        // Both sides of the hard production number for a 48pt icon.
+        close_(NFBVisibleMaxX(W - 7 - 24, 62, W), 31, "a 48pt control's on-screen part is 31pt wide");
+        check(NFBHalfHiddenAcceptsTouch(7 + 12, 31, 62, NFBVisibleMaxX(W - 7 - 24, 62, W)),
+                "half a 48pt control at d*0.25 is tappable");
+    }
+    // A fully visible control (expanded) is unchanged: its range is its bounds.
+    double expandedMaxX = NFBVisibleMaxX(W - 62, 62, W);
+    close_(expandedMaxX, 62, "an expanded control keeps its whole width on screen");
+    check(NFBHalfHiddenAcceptsTouch(7, 7 + 24, 62, expandedMaxX),
+            "an expanded control is tappable at the icon's left edge");
+    check(NFBHalfHiddenAcceptsTouch(55, 31, 62, expandedMaxX),
+            "an expanded control is tappable at its right edge, unchanged from the split button");
+    check(!NFBHalfHiddenAcceptsTouch(0.5, 0.5, 62, expandedMaxX),
+            "an expanded control keeps its rounded icon hit area (no square corner)");
+    check(!NFBHalfHiddenAcceptsTouch(-1, 30, 62, NFBVisibleMaxX(W - 62, 62, W)),
+            "touches left of an expanded control belong to the app behind");
+    check(!NFBHalfHiddenAcceptsTouch(30, -1, 62, NFBVisibleMaxX(W - 62, 62, W)),
+            "touches above an expanded control belong to the app behind");
+    check(!NFBHalfHiddenAcceptsTouch(30, 63, 62, NFBVisibleMaxX(W - 62, 62, W)),
+            "touches below an expanded control belong to the app behind");
+    // The on-screen part never widens past the 44pt floor for a small icon, and
+    // never steals y outside the frame.
+    double small = 18 + 14, smallMaxX = NFBVisibleMaxX(W - small / 2, small, W);
+    check(smallMaxX < 22, "a small icon's on-screen part is narrower than 22pt");
+    check(NFBHalfHiddenAcceptsTouch(small / 2 - 5, small / 2, small, smallMaxX),
+            "a small icon keeps its circle tappable on screen");
+    check(!NFBHalfHiddenAcceptsTouch(small / 2 - 5, -0.5, small, smallMaxX),
+            "the 44pt floor never extends the control vertically");
+    // Degenerate inputs.
+    check(!NFBHalfHiddenAcceptsTouch(NAN, 5, 62, 20), "a NaN touch is refused");
+    check(!NFBHalfHiddenAcceptsTouch(5, 5, 0, 20), "a zero-size view is refused");
+    check(NFBVisibleMaxX(W, 62, W) == 0, "a view entirely behind the edge has no on-screen part");
+    check(!NFBHalfHiddenAcceptsTouch(0.5, 30, 62, NFBVisibleMaxX(W, 62, W)),
+            "no touch reaches a view entirely behind the edge");
+    check(NFBVisibleMaxX(W - 200, 62, W) == 62, "a view fully on screen keeps its whole bounds");
+
     // A squeezed split's smaller diameter is reused by the fullscreen column and
     // still lands exactly on the edge.
     NFBRailPlan squeezed = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, true, CGRectMake(0, 422, 340, 422),

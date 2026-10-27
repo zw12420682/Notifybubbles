@@ -181,8 +181,8 @@ if "- (BOOL)pointInside:(CGPoint)point withEvent:(UIEvent *)event" in manager:
     problems.append("a bubble-wide pointInside would change every icon's hit area")
 if "hit = [root hitTest:" in manager:
     problems.append("the window must not hand touches to a narrower root by hand")
-if "NFBVisibleMinX(" not in hit:
-    problems.append("the on-screen part of a half-hidden view must be computed once")
+if "NFBVisibleMaxX(" not in hit:
+    problems.append("the on-screen end of a half-hidden view must be computed once")
 if "- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event" not in manager:
     problems.append("the rail must offer the on-screen half of a row that hangs past it")
 if "self.rail.clipsToBounds = NO;" not in manager:
