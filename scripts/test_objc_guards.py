@@ -4,9 +4,12 @@ The plain-C tests and validate.py run on every host, but the tweak's Objective-C
 only builds in macOS CI. These rules catch the mistakes that broke a build (and
 that no C test can see):
 
-  1. a property whose type is a C struct, *unless* it is only ever assigned as a
+  1. a property whose type is a C struct, unless it is only ever assigned as a
      whole (the getter returns a temporary, so `self.x.field = ...` is
-     "expression is not assignable" and `&self.x` is the address of a temporary);
+     "expression is not assignable" and `&self.x` is the address of a temporary),
+     and a bare variable declaration inside an @interface / class extension
+     ("cannot declare variable inside @interface or @protocol": only declarations
+     belong there, C-struct state must be an ivar in the @implementation);
   2. an Objective-C object passed to a `const void *` parameter without the
      __bridge cast ARC requires;
   3. the same selector defined twice inside one class (a redefinition, or -
@@ -105,6 +108,25 @@ def scan(sources):
                 if re.search(r"\(\s*const void \*\s*\)\s*self\.", call.group(0)):
                     problems.append("%s:%d: const void * without __bridge" % (path.name, index))
 
+        # 1b. Only declarations belong in an @interface / class extension. A bare
+        #     variable there is the sibling mistake of a struct property, and it is
+        #     what broke the build that added these guards in the first place.
+        #     Interface members are at column 0; method bodies inside an
+        #     @implementation are indented, so indentation alone tells them apart
+        #     (`return x;` in a method must never read as a declaration).
+        for match in re.finditer(r"@interface\s+\w+\s*(?:\([^)]*\))?[^\n]*\n(.*?)\n@end", text, re.S):
+            body_ = match.group(1)
+            depth = 0
+            for line in body_.split("\n"):
+                stripped = line.strip()
+                if not re.match(r"[A-Za-z_]", line) or depth:
+                    depth += line.count("{") - line.count("}")
+                    continue
+                if re.fullmatch(r"(?:[A-Za-z_]\w*[\s*]+)+\**[A-Za-z_]\w*\s*;", stripped) \
+                        and not stripped.startswith("typedef"):
+                    problems.append("%s: variable declaration '%s' inside @interface (it must be "
+                                    "an ivar in the @implementation)" % (path.name, stripped))
+
         # 3. Duplicate selectors inside one class.
         seen = {}
         for class_name, body in class_blocks.get(path.name, []):
@@ -197,6 +219,7 @@ def self_test():
             "old write-only state in an untouched file is not reported": "NFBOld.m" not in output,
             "new state that is read is accepted": "NFBGoodState.m" not in output,
             "new write-only state is reported": "NFBDeadState.m: self.showClearAll is written but never read" in output,
+            "a variable in a class extension is reported": "NFBVapor.m: variable declaration 'NFBProbeStamp probe;' inside @interface" in output,
             "the fixture tree fails the scan": result.returncode != 0,
         }
         failures = [name for name, ok in wanted.items() if not ok]

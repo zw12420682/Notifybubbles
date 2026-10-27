@@ -87,6 +87,16 @@ iOS 模拟器的桌面宿主用例（`DesktopHostTests`，本次未改动其代�
 滑行中的请求照常执行。普通路径（既未滑行、状态也未变）仍是原来的早退，外观/时长/位置/
 透明度不变。
 
+**0.48.88 优化版 CI 结果**
+
+- 4ad5437：test 作业全绿（含模拟器桌面宿主）；构建作业失败——`NFBProbeStamp/
+  NFBTickState` 作为"变量"写在类扩展里，clang 报 "cannot declare variable inside
+  @interface or @protocol"，属性自然也不存在。改为 `@implementation` 内的 ivar
+  （`NFBManager.m`、`NFBRailStateStore.m` 的 `queue` 同样处理）。
+- 守卫规则 1 扩大：`@interface`/类扩展里出现裸变量声明即报（这正是漏网的那条），
+  self-test 新增 `scripts/fixtures/guard_shallow/NFBVapor.m` 覆盖它。
+- 后续 CI 结果追加在下方，不覆盖旧记录。
+
 **0.48.88 实际规模**：减少的是"同一状态下重复调用"（同帧重复动画提交、突发期间每个通知
 一次完整布局、拖动每帧两次移动、20 Hz 每条路径各探测一次窗口），不是减少功能或渲染次数；
 唯一新增的常驻工作是 2 Hz tick 的一次状态比较（约 10 个字段 + 一次未读计数求和）。

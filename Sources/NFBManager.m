@@ -255,11 +255,9 @@ static double NFBNumber(NSString *key, double fallback) {
 // The layout pass is running: further requests join it instead of nesting.
 @property(nonatomic) BOOL layoutRecording;
 // Same-round probe reuse on the 20 Hz watcher path (NFBProbePolicy.h).
-// C structs, not properties: a property getter returns a temporary, so
-// `self.x.resolved = NO` would not compile. Plain ivars keep the same
-// sizeof/state and are zero-initialised like every object.
-NFBProbeStamp floatingProbe;
-NFBProbeStamp desktopProbe;
+// The probe stamps are ivars declared in the @implementation below (a class
+// extension may hold declarations only, not variables), for the same-reason
+// comment there.
 @property(nonatomic) double desktopProbeLateRetry;
 @property(nonatomic) BOOL floatingWatchClassMissing;
 // Rounds are the unique object touched by every 20 Hz entry point (watcher,
@@ -288,7 +286,7 @@ NFBProbeStamp desktopProbe;
 // and therefore an ivar: a synthsized property would hand out a temporary.
 @property(nonatomic) BOOL tickForcedRefresh;
 @property(nonatomic) BOOL tickStateValid;
-NFBTickState tickState;
+// The tick baseline itself is an ivar in the @implementation below.
 @property(nonatomic) BOOL lastLocked;
 @property(nonatomic, copy) NSString *tickActiveFloating;
 - (UIView *)desktopTargetProbe:(BOOL *)probed;
@@ -396,7 +394,16 @@ NFBTickState tickState;
 - (void)appHeld:(UILongPressGestureRecognizer *)gesture;
 @end
 
-@implementation NFBManager
+@implementation NFBManager {
+    // C structs as ivars, not properties: a property getter returns a temporary,
+    // so `self.x.field = NO` would not compile and `&self.x` would be the address
+    // of that temporary. An ivar also keeps this state out of any class
+    // extension, which may only hold declarations.
+    NFBProbeStamp floatingProbe;
+    NFBProbeStamp desktopProbe;
+    // The 2 Hz tick's previous pass, compared by NFBTickNeedsLayout.
+    NFBTickState tickState;
+}
 // Only a collapsed column hugs the screen edge; an expanded one stays
 // visible, which is what a left swipe unfolds into.
 static BOOL edgeRailHugging(BOOL halfHidden, BOOL expanded) {

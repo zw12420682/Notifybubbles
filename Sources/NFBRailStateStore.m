@@ -10,15 +10,17 @@ static NSString * const NFBRailStateWidthKey = @"RailScreenWidth";
 static const NSInteger NFBRailStateVersion = 1;
 
 @interface NFBRailStateStore ()
-// Main-thread confined: the newest geometry still waiting for the debounce, plus
-// what is on disk, so repeated identical layouts (the split refresh runs
-// continuously) never touch the disk. NFBRailMetricQueue.h owns the rules.
-// A C struct kept as an ivar: &self.queue would be the address of a property
-// getter's temporary, so draining would lose the state it just updated.
-NFBRailMetricQueue queue;
 @end
 
-@implementation NFBRailStateStore
+@implementation NFBRailStateStore {
+    // Main-thread confined: the newest geometry still waiting for the debounce,
+    // plus what is on disk, so repeated identical layouts (the split refresh runs
+    // continuously) never touch the disk. NFBRailMetricQueue.h owns the rules.
+    // A C struct kept as an ivar: &self.queue would be the address of a property
+    // getter's temporary, so draining would lose the state it just updated. It is
+    // declared here because a class extension may hold declarations only.
+    NFBRailMetricQueue queue;
+}
 + (NSString *)domain {
     // Separate from CFSTR("local.notifybubbles"): geometry cache, not settings.
     return @"local.notifybubbles.railstate";
