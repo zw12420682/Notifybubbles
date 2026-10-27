@@ -141,6 +141,15 @@ static inline bool NFBSplitMetricsValid(double diameter, double span,
     return screenWidth > 0;
 }
 
+// Sane first-use anchor when nothing was ever measured (first launch, no split
+// opened yet). The collapsed/expanded column replays the split geometry, so with
+// no record at all it must still start at the top - never near the bottom right,
+// which is where the fullscreen vertical-position slider used to put the control.
+static inline double NFBUnmeasuredColumnTop(double safeTop) {
+    if (!isfinite(safeTop) || safeTop < 0) safeTop = 0;
+    return fmax(safeTop, 48) + 30;
+}
+
 // Collapsed non-split geometry. Only the horizontal placement changes: the
 // column hugs the right screen edge. The top must be finite and fully on screen.
 static inline double NFBCollapsedRailFrameX(double screenWidth, double railWidth, double margin) {
@@ -173,3 +182,26 @@ static inline bool NFBShouldParkToggle(bool collapsed, bool split, unsigned long
 static inline bool NFBToggleShouldFade(bool parked, bool halfHidden) {
     return halfHidden || parked;
 }
+
+// --- collapsed fullscreen column: one position, opacity by unread ----------
+//
+// The tucked state keeps the single global half-hide shift (every row centre and
+// the control centre sit exactly on the screen's right edge) but no longer dims
+// the whole column: a row is fully opaque when the app it shows has unread
+// notifications in our own store (store.countForApp > 0 - the same source that
+// decides collapsed membership), and 0.5 otherwise. The fullscreen app's own row
+// therefore fades while it has nothing queued, and the collapse control stays at
+// 0.5. Expanding restores every row's position and alpha. A split, the plain
+// (non-fullscreen) collapsed column and the expanded column keep the normal alpha.
+static inline double NFBHalfHiddenRowAlpha(bool halfHidden, bool unread, double normalAlpha) {
+    if (!isfinite(normalAlpha)) normalAlpha = 1;
+    normalAlpha = fmax(0, fmin(1, normalAlpha));
+    return halfHidden ? (unread ? 1.0 : 0.5) : normalAlpha;
+}
+// The half-hidden control never carries unread state, so it always sits at 0.5.
+static inline double NFBHalfHiddenToggleAlpha(bool halfHidden, double normalAlpha) {
+    return NFBHalfHiddenRowAlpha(halfHidden, false, normalAlpha);
+}
+// Whether a rail row is fully visible (its image entirely on screen) and must be
+// painted at alpha 1.0: an expanded, a split or a plain collapsed column.
+static inline bool NFBRowFullyVisible(bool halfHidden) { return !halfHidden; }

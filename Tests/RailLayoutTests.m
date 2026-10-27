@@ -627,7 +627,171 @@ int main(void) {
     check(!NFBToggleIsInteractive(true, false, true), "a hidden toggle takes no touches");
     check(!NFBToggleIsInteractive(false, true, false), "a disabled column takes no touches");
 
+    // ---------------------------------------------------------------------
+    // 0.48.85: the expanded column IS the split column, and the tucked column
+    // keeps its position but paints unread rows opaque.
+    //
+    // Item 1: for every screen width / diameter / orientation the expanded
+    // (edgeExpanded, non-split) plan must land on exactly the split column's
+    // top slot, row rhythm, icon diameter and rail x. The manager feeds the
+    // measured split metrics (splitRailTop / splitRailDiameter) into the plan and
+    // the fullscreen position slider (verticalPosition) must not move anything.
+    // On the previous implementation the slider placed the non-split column, so
+    // every comparison below failed for a slider value other than the split
+    // position.
+    {
+        double widths[] = { 390, 430, 844 };        // 390/430 portrait, 844 landscape
+        double heights[] = { 844, 932, 390 };
+        double diamSizes[] = { 32, 48, 56 };
+        double sliders[] = { 0.05, 0.7, 1.0 };       // arbitrary fullscreen slider values
+        for (unsigned w = 0; w < 3; w++) {
+            double sw = widths[w], sh = heights[w];
+            for (unsigned d = 0; d < 3; d++) {
+                double diam = diamSizes[d];
+                // The split window: the bottom-left half of the screen, as Open
+                // places it. The rail is then measured from it.
+                CGRect frame = CGRectMake(0, sh / 2, sw / 2, sh / 2);
+                NFBRailInsets safeHere = sh < sw ? (NFBRailInsets){ 0, 44, 21, 44 } : safe;
+                NFBRailPlan sp = NFBPlanRail(sw, sh, safeHere, TOP, diam, splitPosition, true,
+                        frame, true, 0.7, false, 2, 3, 2, 0, 0, 0, false, false);
+                check(sp.diameter > 0 && sp.toggleTop > 0, "split column measurable");
+                for (unsigned s = 0; s < 3; s++) {
+                    double slider = sliders[s];
+                    // Expanded: same rows/favorites as the split, nothing hidden.
+                    NFBRailPlan ex = NFBPlanRail(sw, sh, safeHere, TOP, diam, splitPosition, false,
+                            CGRectZero, false, slider, false, 2, 3, 2,
+                            sp.toggleTop, sp.diameter, sw, true, false);
+                    close_(ex.toggleTop, sp.toggleTop, "expanded keeps the split slot top");
+                    close_(ex.toggle.origin.y, sp.toggle.origin.y, "expanded toggle row == split toggle row");
+                    close_(ex.diameter, sp.diameter, "expanded diameter == split diameter");
+                    close_(ex.diameter + 9, sp.diameter + 9, "expanded step == split step");
+                    close_(ex.rowsTop, sp.rowsTop, "expanded first row == split first row");
+                    close_(ex.favoriteHeight, sp.favoriteHeight, "expanded favorites block == split");
+                    // Horizontal placement is the documented difference: a split
+                    // column hugs the split window, the expanded column hugs the
+                    // screen edge. It must not depend on the slider either.
+                    close_(ex.rail.origin.x, NFBPlainRailFrameX(sw, ex.diameter + 14, 4),
+                            "expanded rail x == the collapsed column x");
+                    close_(ex.toggle.origin.x, ex.rail.origin.x, "expanded toggle shares the rail x");
+                    check(ex.rail.origin.x >= sp.rail.origin.x, "expanded column is right of the split window");
+                    close_(CGRectGetWidth(ex.toggle), CGRectGetWidth(sp.toggle), "same toggle slot width");
+                    for (unsigned i = 0; i < 3; i++) {
+                        close_(ex.toggleTop + i * (ex.diameter + 9),
+                               sp.toggleTop + i * (sp.diameter + 9),
+                               "row y is the split row y for every row");
+                    }
+                    check(ex.reusedColumn && ex.measuredColumn && !ex.edgeRail, "expanded reuses the measured column");
+                    check(ex.toggleVisible, "expanded keeps the top slot");
+                    check(!ex.parked, "expanded never parks");
+                    check(!ex.edgeRail, "expanded column is not tucked");
+                    close_(NFBHalfHiddenRowAlpha(ex.edgeRail, false, 1.0), 1.0, "expanded row alpha is 1.0");
+                    close_(NFBHalfHiddenRowAlpha(ex.edgeRail, true, 1.0), 1.0, "expanded unread row alpha is 1.0");
+                }
+                // Collapsed: same slot top and diameter, half hidden.
+                NFBRailPlan cs = NFBPlanRail(sw, sh, safeHere, TOP, diam, splitPosition, false,
+                        CGRectZero, false, 0.05, true, 0, 2, 1,
+                        sp.toggleTop, sp.diameter, sw, true, true);
+                close_(cs.toggleTop, sp.toggleTop, "collapsed keeps the split slot top");
+                close_(cs.diameter, sp.diameter, "collapsed diameter == split diameter");
+                close_(rowImageCenterX(cs), sw, "collapsed row image centre is the screen edge");
+                close_(toggleImageCenterX(cs), sw, "collapsed control centre is the screen edge");
+                check(cs.rowInset == 0 && cs.clearInset == 0, "no per-row half-hide offset");
+            }
+        }
+        // Landscape (844 x 390) is covered above; a separate pass with the
+        // landscape safe area and a bottom-left split too.
+        double sw = 844, sh = 390;
+        NFBRailInsets lSafe = { 0, 44, 21, 44 };
+        NFBRailPlan lSplit = NFBPlanRail(sw, sh, lSafe, TOP, 48, splitPosition, true,
+                CGRectMake(0, 195, 422, 195), true, 0.7, false, 2, 3, 0, 0, 0, 0, false, false);
+        NFBRailPlan lExp = NFBPlanRail(sw, sh, lSafe, TOP, 48, splitPosition, false, CGRectZero,
+                false, 0.9, false, 2, 3, 0, lSplit.toggleTop, lSplit.diameter, sw, true, false);
+        close_(lExp.toggleTop, lSplit.toggleTop, "landscape expanded slot top == split");
+        close_(lExp.diameter, lSplit.diameter, "landscape expanded diameter == split");
+        close_(lExp.rail.origin.x, NFBPlainRailFrameX(sw, lExp.diameter + 14, 4),
+                "landscape expanded rail x == the collapsed column x");
+    }
+
+    // Item 1 fallback: nothing measured at all -> a sane anchor near the TOP of
+    // the screen, never the bottom right (the slider is 0.95 here and must be
+    // ignored). The old implementation returned 90 + available * 0.95 near the
+    // bottom, so this fails there.
+    {
+        NFBRailPlan fresh = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, false, CGRectZero,
+                false, 0.95, false, 2, 3, 0, 0, 0, 0, false, false);
+        check(fresh.reusedColumn && !fresh.measuredColumn, "an unmeasured column falls back to the sane top");
+        // Nothing measured: the column is anchored at the top of the screen - the
+        // sane top (max(safeTop, 48) + 30) or the settings top when that sits
+        // higher - and never at the slider's 0.95 (the old implementation put it
+        // at 90 + available * 0.95, ~806pt, i.e. the bottom right).
+        close_(fresh.toggle.origin.y, fmax(NFBUnmeasuredColumnTop(safe.top), TOP),
+                "unmeasured column starts at the sane top");
+        check(fresh.toggle.origin.y <= NFBUnmeasuredColumnTop(safe.top) + 1,
+                "sane top is max(safeTop, 48) + 30 or the settings top");
+        check(fresh.toggle.origin.y < H / 2, "unmeasured column is in the upper half, not the bottom");
+        // The old implementation put the same plan at 90 + available * 0.95.
+        check(fabs((TOP + fmax(48 + 14, H - TOP - fmax(safe.bottom, 20) - 20) * 0.95) - fresh.toggle.origin.y) > 100,
+                "unmeasured column is far from the slider-derived bottom position");
+        close_(fresh.diameter, 48, "unmeasured column keeps the settings diameter");
+        NFBRailPlan freshCollapsed = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, false, CGRectZero,
+                false, 0.95, true, 0, 2, 0, 0, 0, 0, false, false);
+        close_(freshCollapsed.toggle.origin.y, fresh.toggle.origin.y, "collapsed and expanded share the fallback");
+        close_(freshCollapsed.diameter, fresh.diameter, "collapsed and expanded share the fallback size");
+    }
+
+    // Item 2: the tucked (collapsed + fullscreen) column keeps every row and the
+    // control exactly half hidden with the single global formula, but paints
+    // unread rows at 1.0 and the rest at 0.5. Split and expanded stay normal.
+    {
+        double tuckedDiams[] = { 32, 48, 56 };
+        for (unsigned d = 0; d < 3; d++) {
+            double diam = tuckedDiams[d];
+            NFBRailPlan tk = NFBPlanRail(W, H, safe, TOP, diam, splitPosition, false, CGRectZero,
+                    false, 0.7, true, 0, 3, 2, TOP + 30, diam, W, true, true);
+            check(tk.edgeRail, "tucked column is half hidden");
+            close_(rowImageCenterX(tk), W, "tucked row image centre == screen width");
+            close_(toggleImageCenterX(tk), W, "tucked control image centre == screen width");
+            close_(tk.halfHiddenShift, (diam + 14) / 2 + 11, "one global shift, no row offset");
+            // Unread row: opaque. Fullscreen-app row (no unread): 0.5.
+            close_(NFBHalfHiddenRowAlpha(tk.edgeRail, true, 1.0), 1.0, "unread tucked row alpha 1.0");
+            close_(NFBHalfHiddenRowAlpha(tk.edgeRail, false, 1.0), 0.5, "fullscreen app row alpha 0.5");
+            close_(NFBHalfHiddenToggleAlpha(NFBToggleShouldFade(tk.parked, tk.edgeRail), 1.0), 0.5,
+                    "tucked control alpha 0.5");
+            check(!NFBRowFullyVisible(tk.edgeRail), "tucked rows are not fully visible");
+            // A half-hidden row keeps its badge inside the icon (half on screen).
+            NFBBadgeRect badge = NFBBadgeFrame(7, 7, tk.diameter, tk.diameter, 18, true);
+            check(NFBBadgeInsideImage(badge, 7, 7, tk.diameter), "tucked badge stays inside the icon");
+            check(badge.x >= 7 && badge.y >= 7, "tucked badge is anchored at the icon's top-left");
+            // Expanded: the same rows are fully visible and opaque at alpha 1.0.
+            NFBRailPlan ex = NFBPlanRail(W, H, safe, TOP, diam, splitPosition, false, CGRectZero,
+                    false, 0.7, false, 0, 3, 2, TOP + 30, diam, W, true, false);
+            check(!ex.edgeRail && tk.edgeRail, "expanded is the opposite of tucked");
+            check(rowImageCenterX(ex) + ex.diameter / 2 <= W, "expanded icon stays entirely on screen");
+            close_(rowImageCenterX(ex), NFBPlainRailFrameX(W, diam + 14, 4) + 7 + diam / 2,
+                    "expanded row centre is the plain column centre");
+            close_(NFBHalfHiddenRowAlpha(ex.edgeRail, false, 1.0), 1.0, "expanded row alpha 1.0");
+            close_(NFBHalfHiddenRowAlpha(ex.edgeRail, true, 1.0), 1.0, "expanded unread row alpha 1.0");
+            close_(NFBHalfHiddenToggleAlpha(NFBToggleShouldFade(ex.parked, ex.edgeRail), 1.0), 1.0,
+                    "expanded control alpha 1.0");
+            // Split: untouched - fully visible, normal alpha.
+            NFBRailPlan sv = NFBPlanRail(W, H, safe, TOP, diam, splitPosition, true,
+                    CGRectMake(0, 422, 195, 422), true, 0.7, false, 0, 3, 2, 0, 0, 0, false, false);
+            check(!sv.edgeRail, "split is never half hidden");
+            close_(NFBHalfHiddenRowAlpha(sv.edgeRail, false, 1.0), 1.0, "split row alpha 1.0");
+        }
+        // Parked (no fullscreen app, nothing to show) keeps its 0.5 too.
+        NFBRailPlan pk = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, false, CGRectZero,
+                false, 0.7, true, 0, 0, 0, TOP + 30, 48, W, true, false);
+        check(pk.parked, "empty column parks");
+        close_(NFBHalfHiddenToggleAlpha(NFBToggleShouldFade(pk.parked, pk.edgeRail), 1.0), 0.5,
+                "parked control alpha 0.5");
+        close_(NFBHalfHiddenRowAlpha(pk.edgeRail, false, 1.0), 1.0, "plain column rows keep the normal alpha");
+    }
+    // 0.48.85 END
+
     printf("PASS: column geometry (split -> fullscreen expanded -> collapsed -> empty)\n");
     printf("PASS: hidden fullscreen exception (screen-space half hide, all rows + control)\n");
+    printf("PASS: expanded column == split column (390/430/844, 32/48/56, any slider)\n");
+    printf("PASS: tucked column keeps the half-hide and paints unread opaque / rest 0.5\n");
     return 0;
 }

@@ -153,17 +153,40 @@ for stale in ["rowInset", "clearInset", "+ plan.halfHiddenShift", "NFBHalfHidden
         problems.append("the half-hidden offset is applied twice: " + stale)
 if "toggleFrame.origin.x = CGRectGetMinX(railFrame);" not in manager:
     problems.append("the control shares the rail's half-hidden x")
-# Whole-column fade: no per-row exception alpha, the column dims as one.
-if "CGFloat columnAlpha = exceptionApp ? 0.5 : 1;" not in manager:
-    problems.append("the collapsed fullscreen column must fade as a whole")
-if "if (exceptionRow) alpha = 0.5;" in manager:
-    problems.append("only the fullscreen row must not be dimmed individually")
+# 0.48.85 opacity: the tucked column keeps its position and paints per row -
+# unread rows opaque, everything else 0.5 - from the one store count that also
+# decides membership. The rail/material must not dim the whole column any more.
+if "columnAlpha" in manager:
+    problems.append("the tucked column must not be faded as a whole")
+if "NFBHalfHiddenRowAlpha(tuckedColumn, [self.store countForApp:appID] > 0, self.iconOpacity)" not in manager:
+    problems.append("unread rows must be opaque from the store count the membership uses")
+if "NFBHalfHiddenToggleAlpha(fade, 1.0)" not in manager:
+    problems.append("the collapse control must take its 0.5 from the shared helper")
+if "CGFloat targetRailAlpha = rowCount ? 1 : 0;" not in manager:
+    problems.append("the rail itself must stay opaque (per-row alpha only)")
+if "self.desktopActionHalfHidden = exceptionApp;" not in manager:
+    problems.append("the tucked control alpha must follow the tucked state")
+if "self.halfHiddenRowAlpha = tuckedColumn;" not in manager:
+    problems.append("the expanded/collapsed switch must share the per-row policy flag")
 if "transform.origin.x" in manager or "self.rail.transform = CGAffineTransform" in manager:
     problems.append("the column must move by its frame, never by a transform")
 if "exceptionSlot" in manager:
     problems.append("no separate exception slot may be created")
 if "CGSizeMake(railFrameWidth, contentHeight)" not in manager:
     problems.append("the rail content size must follow its frame")
+
+# 10b. 0.48.85: the expanded column replays the split column; nothing outside a
+#      split is placed by the fullscreen position slider.
+if "double anchor = top + available * position;" in plan:
+    problems.append("a non-split column must not be anchored by the fullscreen slider")
+if "NFBUnmeasuredColumnTop(safe.top)" not in plan:
+    problems.append("an unmeasured column needs a sane top, not the slider anchor")
+if "NFBUnmeasuredColumnTop(double safeTop)" not in read("Sources/NFBGeometry.h"):
+    problems.append("the sane unmeasured top must come from one helper")
+if "plan.measuredColumn = !split && reuseSplit;" not in plan:
+    problems.append("the plan must report whether a measurement existed")
+if "desired = isfinite(lastSplitTop) ? fmax(columnFloor, lastSplitTop)" not in plan:
+    problems.append("the expanded top must be the measured split slot top")
 
 # 11. Interaction of the half-hidden control and rows.
 hit = read("Sources/NFBHitPolicy.h")

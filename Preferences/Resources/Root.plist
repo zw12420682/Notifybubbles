@@ -76,7 +76,7 @@
 			<key>label</key>
 			<string>图标外观</string>
 			<key>footerText</key>
-			<string>大小范围 32–80 点，默认 48 点；不透明度范围 20%–100%，越低越透明。修改即时生效。</string>
+			<string>大小范围 32–80 点，默认 48 点；不透明度范围 20%–100%，越低越透明。修改即时生效。收起状态只露出左半，未读图标保持不透明，当前全屏 App 与收起按钮为半透明；展开后恢复完整位置。位置与大小沿用分屏测量的结果。</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -113,6 +113,18 @@
 			<real>1.0</real>
 			<key>showValue</key>
 			<true/>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>label</key>
+			<string>收起时未读图标保持不透明</string>
+			<key>key</key>
+			<string>HalfHiddenUnreadOpaque</string>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>local.notifybubbles</string>
 		</dict>
 		<dict>
 			<key>cell</key>
