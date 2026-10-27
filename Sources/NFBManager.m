@@ -309,7 +309,6 @@ static double NFBNumber(NSString *key, double fallback) {
 - (BOOL)executeRecord:(NFBRecord *)record;
 - (BOOL)executeRecord:(NFBRecord *)record authentication:(BOOL)authentication;
 - (void)tick;
-- (void)tick;
 - (UIView *)rail:(NFBRail *)rail bubbleAtPoint:(CGPoint)point withEvent:(UIEvent *)event;
 - (void)startTimer;
 - (void)closeAppsInOrder:(NSArray<NSString *> *)apps;
@@ -1563,7 +1562,8 @@ static NSString *NFBFrontmostAppID(void) {
         if (!isClearAll) [self layoutBadge:button diameter:diameter];
         if (!isClearAll) {
             unsigned long long version = button.badgeContentVersion;
-            if (version != self.lastBadgeVersion[appID] && button.badge.text.length) {
+            NSNumber *lastVersion = self.lastBadgeVersion[appID];
+            if ((!lastVersion || lastVersion.unsignedLongLongValue != version) && button.badge.text.length) {
                 self.lastBadgeVersion[appID] = @(version);
                 if (!UIAccessibilityIsReduceMotionEnabled()) {
                     CABasicAnimation *pop = [CABasicAnimation animationWithKeyPath:@"transform.scale"];
