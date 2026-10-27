@@ -218,8 +218,6 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic) BOOL desktopActionParked;
 // Collapsed fullscreen column: the control shares the rows' shift and alpha.
 @property(nonatomic) BOOL desktopActionHalfHidden;
-// Collapsed fullscreen column: rows with unread stay opaque, the rest fade.
-@property(nonatomic) BOOL halfHiddenRowAlpha;
 @property(nonatomic) CFTimeInterval lastInteractionAt;
 - (void)closeBubble:(NFBBubble *)button;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NFBBubble *> *buttons;
@@ -648,7 +646,7 @@ static NSString *NFBFrontmostAppID(void) {
     // Half hidden (collapsed fullscreen column): the control shares the rows'
     // shift and alpha, so the whole column reads as one state.
     BOOL fade = NFBToggleShouldFade(self.desktopActionParked, self.desktopActionHalfHidden);
-    CGFloat targetAlpha = visible ? NFBHalfHiddenToggleAlpha(fade, 1.0) : 0;
+    CGFloat targetAlpha = visible ? (fade ? 0.5 : 1) : 0;
     // On screen (or parked with a visible half) is enough: no desktop target needed.
     button.userInteractionEnabled = NFBToggleIsInteractive(self.enabled, visible, NO);
     if (visible && (button.alpha < 0.01 || CGRectIsEmpty(button.frame))) button.frame = frame;
@@ -1176,10 +1174,6 @@ static NSString *NFBFrontmostAppID(void) {
     }
     self.lastActiveApp = active;
     if (floatingApp.length) NFBInspectTrollEdges();
-    // Read once per refresh, before any row is laid out: `exceptionApp` below is
-    // the only state that tucks the column, and this copy is what the row loop
-    // captured (a later refresh may have moved on by the time it runs).
-    BOOL halfHiddenRows = NFBPreference(@"HalfHiddenUnreadOpaque", YES);
     NSMutableOrderedSet *history = [NSMutableOrderedSet orderedSetWithArray:self.recentUsedApps];
     [history addObjectsFromArray:self.lastSwitcher ?: @[]];
     // Apps that actually have queued notifications.
@@ -1318,14 +1312,6 @@ static NSString *NFBFrontmostAppID(void) {
     NSUInteger notifiedCount = self.notifiedCount;
     // The hidden column has nothing to clear when no notification is queued, so
     // it keeps only the unread apps and the collapse control: no X, no favorites.
-    // Per-row opacity in the tucked state (unread 1.0, everything else 0.5) is
-    // only used when the column is really tucked; otherwise rows keep the normal
-    // opacity, which is what "split untouched" and "expand restores" rely on.
-    BOOL tuckedColumn = exceptionApp && halfHiddenRows;
-    // Tucked fullscreen column: the control keeps 0.5, the rows carry their own
-    // opacity, so the rail/material below no longer dim the whole column.
-    self.desktopActionHalfHidden = exceptionApp;
-    self.halfHiddenRowAlpha = tuckedColumn;
     BOOL hideFavorites = !(splitNow || self.edgeExpanded);
     BOOL collapse = !splitNow && !self.edgeExpanded;
     BOOL splitUsable = splitNow;
@@ -1341,17 +1327,6 @@ static NSString *NFBFrontmostAppID(void) {
         hideFavorites ? 0 : self.favoriteApps.count, (unsigned long)columnRows, (unsigned long)notifiedCount,
         (double)self.splitRailTop, (double)self.splitRailDiameter, (double)self.splitRailScreenWidth,
         self.splitRailMeasured, exceptionApp);
-    // An unmeasured column (first launch, no split yet) is anchored at the top of
-    // the screen, never near the bottom right/left of the position slider; keep
-    // that behind the existing preference so a device can still ask for the old
-    // fullscreen placement.
-    if (!splitNow && !plan.reusedColumn && !self.halfHiddenRowAlpha &&
-        !NFBPreference(@"ColumnReuseSplitMeasure", YES))
-        plan = NFBPlanRail(bounds.size.width, bounds.size.height, planSafe, top, self.iconSize,
-            NFBFloatingPosition, NO, CGRectZero, NO, self.verticalPosition, collapse,
-            hideFavorites ? 0 : self.favoriteApps.count, (unsigned long)columnRows,
-            (unsigned long)notifiedCount, (double)self.splitRailTop, (double)self.splitRailDiameter,
-            (double)self.splitRailScreenWidth, NO, exceptionApp, YES);
     BOOL railMeasuredNow = NO;
     if (splitNow && plan.toggleTop > 0) {
         // A genuinely laid-out split column is the reference the fullscreen column
@@ -1395,7 +1370,7 @@ static NSString *NFBFrontmostAppID(void) {
         toggleFrame.origin.x = CGRectGetMinX(railFrame);
     BOOL parked = plan.parked && !self.edgeExpanded;
     self.desktopActionParked = parked;
-    self.desktopActionHalfHidden = exceptionApp && !CGRectIsNull(toggleFrame);
+    self.desktopActionHalfHidden = exceptionApp && !splitNow && !CGRectIsNull(toggleFrame);
     // A changing clipped viewport must not race independently animated child
     // sizes and scroll bounds. Commit resize geometry together, then keep the
     // normal animation timing for subsequent moves within a stable viewport.
@@ -1413,12 +1388,12 @@ static NSString *NFBFrontmostAppID(void) {
     BOOL hideEdgeIcons = NO;
     self.rail.hidden = rowCount == 0;
     self.railMaterial.hidden = rowCount == 0;
-    // The collapsed fullscreen column keeps the one shared half-hide shift, but
-    // the rail itself stays opaque: opacity is per row (unread 1.0, the rest 0.5,
-    // see NFBHalfHiddenRowAlpha). Dimming the rail as well multiplied the two
-    // (0.25 for every row) and left no row fully visible.
-    CGFloat targetRailAlpha = rowCount ? 1 : 0;
-    CGFloat targetMaterialAlpha = rowCount && height > 0 ? 0.55 : 0;
+    // The whole visible column - unread rows included - is half hidden in the
+    // collapsed fullscreen state: the rail, every row and the control share the
+    // same shift and the same 0.5 alpha, so no unread icon stays fully visible.
+    CGFloat columnAlpha = exceptionApp ? 0.5 : 1;
+    CGFloat targetRailAlpha = rowCount ? columnAlpha : 0;
+    CGFloat targetMaterialAlpha = rowCount && height > 0 ? 0.55 * columnAlpha : 0;
     BOOL railSizeChanged = !CGSizeEqualToSize(self.rail.bounds.size, railFrame.size);
     // Narrow only the visible edge material. Keep the rail's padded area so icon
     // edges, shadows and the unread badges inside the icon stay intact.
@@ -1548,18 +1523,14 @@ static NSString *NFBFrontmostAppID(void) {
             button.alpha = 0;
         }
         // The clear-all bubble is an action, not an app: keep it fully opaque so
-        // it stays discoverable. An app row follows the collapse/half-hide opacity
-        // policy: fully visible (split, expanded, plain collapsed) keeps the
-        // configured opacity; the tucked fullscreen column paints unread rows at
-        // 1.0 and every other row at 0.5, from the one store count that also
-        // decides membership. The rail itself is opaque, so this is the only alpha.
+        // it stays discoverable, unlike the dimmed background bubbles around it.
+        // Every row keeps its own opacity; the half-hidden state dims the whole
+        // column (self.rail.alpha) instead, so no unread icon stays fully visible.
         CGFloat alpha = self.iconOpacity;
-        if (isClearAll || [active isEqualToString:appID] || NFBRowFullyVisible(!tuckedColumn)) {
+        if (isClearAll) {
             alpha = 1.0;
-        } else {
-            // Unread comes from the same store count the membership uses; no new
-            // per-frame scan, the store answers from its own in-memory queue.
-            alpha = NFBHalfHiddenRowAlpha(tuckedColumn, [self.store countForApp:appID] > 0, self.iconOpacity);
+        } else if ([active isEqualToString:appID]) {
+            alpha = 1.0;
         }
         BOOL changed = fresh || fabs(button.imageView.layer.cornerRadius - corner) > 0.01 || !CGRectEqualToRect(button.bounds, targetBounds) ||
             !CGPointEqualToPoint(button.center, targetCenter) ||

@@ -31,8 +31,6 @@ typedef struct {
     double rowsTop;     // content top, one row below toggleTop
     bool parked;
     bool toggleVisible;
-    bool reusedColumn;  // the split column's measured top/size was replayed
-    bool measuredColumn; // ...and a measurement actually existed (else the sane top)
     bool favoritesVisible;
     double favoriteHeight;
 } NFBRailPlan;
@@ -41,14 +39,9 @@ typedef struct {
 // usable frame). Never infer it from the desktop target: the target is nil while
 // Open rebuilds its window, which used to make a split look like fullscreen.
 //
-// Outside a split the column - expanded or collapsed, half hidden or not - is a
-// replay of the split column: the top slot that was measured in the split
-// (plan.toggleTop, persisted since 0.48.81), the step and the icon diameter the
-// split's room allowed. Only the horizontal placement changes (hug the right
-// screen edge) and nothing is re-derived from the fullscreen vertical-position
-// slider, which used to put the control near the bottom right. With no
-// measurement at all the anchor is NFBUnmeasuredColumnTop() (top of the screen),
-// never the slider. NFBRailPlan.reusedColumn reports which of the two was used.
+// Fullscreen (and the hidden state) reuses the split column: same icon diameter
+// as the split measured, and the same absolute row position. Only the horizontal
+// placement changes (hug the right screen edge).
 // `collapsed` is the column state. `halfHidden` (collapsed && !split && a
 // fullscreen app is in use) is the only state that shows just the left half of
 // its icons and control; `parked` (collapsed && !split && no notifications, see
@@ -78,19 +71,12 @@ static inline NFBRailPlan NFBPlanRail(double screenWidth, double screenHeight,
     if (!isfinite(settingsDiameter)) settingsDiameter = 48;
     settingsDiameter = fmax(16, fmin(80, settingsDiameter));
     if (!isfinite(top) || top < 0) top = 0;
-    // `currentPosition` stays in the signature for the callers' sake, but it no
-    // longer places anything: see the anchor comment below.
-    (void)currentPosition;
     double splitGap = 4, screenMargin = 4;
 
     bool reuseSplit = !split && measured &&
         NFBSplitMetricsValid(lastSplitDiameter, 0, screenWidth, lastSplitScreenWidth) &&
         isfinite(lastSplitTop);
     double diameter = reuseSplit ? lastSplitDiameter : settingsDiameter;
-    // Expanded and collapsed (split excluded) share one column: same diameter,
-    // same step, same top slot. `reuseSplit` decides whether that is the measured
-    // split metrics or a plain settings-sized column anchored at the top.
-    bool reusedColumn = !split;
     if (split && usableSplit) {
         double room = screenWidth - CGRectGetMaxX(splitFrame) - splitGap - screenMargin;
         if (isfinite(room)) diameter = fmin(diameter, fmax(1, room - 14));
@@ -102,17 +88,10 @@ static inline NFBRailPlan NFBPlanRail(double screenWidth, double screenHeight,
     double padding = 12;
     double contentHeight = rows ? (rows - 1) * step + side : 0;
     double height = fmin(available, contentHeight);
-    double anchor = top + available * splitPosition;
-    // A non-split column never sits above the settings top: both its measured
-    // anchor and its unmeasured fallback keep their own sanity ceiling, but the
-    // settings top (the slider's upper bound) still applies as the top edge.
-    double columnFloor = top;
+    double position = isfinite(currentPosition) ? fmax(0, fmin(1, currentPosition)) : 0.7;
+    double anchor = top + available * (split ? splitPosition : position);
     double railY = anchor + (step - side / 2) + padding - height;
     railY = fmax(top, fmin(screenHeight - fmax(safe.bottom, 20) - 20 - height, railY));
-    // railY is only a split's provisional frame (the split branch below replaces
-    // it from the window). A non-split column gets its y from the first row and
-    // the content fit further down, so the fullscreen position slider - still
-    // received for compatibility - never places it.
     double railWidth = side;
     // Collapsed fullscreen column, half hidden: the column keeps its width, its
     // row budget, its diameter and every row offset; the rail and the collapse
@@ -163,22 +142,8 @@ static inline NFBRailPlan NFBPlanRail(double screenWidth, double screenHeight,
         // absolute row is reused as-is; when it would run past the bottom edge,
         // the whole column slides up by just enough to stay on screen (keeping the
         // relative rows, not re-deriving them from the fullscreen slider).
-        // Measured slot top, else the sane unmeasured anchor - never the
-        // fullscreen position slider.
-        // The sane fallback is already clamped against the safe area itself, so
-        // the settings top (which may sit above it) only lifts a real
-        // measurement.
-        double desired;
-        if (reuseSplit) {
-            desired = isfinite(lastSplitTop) ? fmax(columnFloor, lastSplitTop) : NFBUnmeasuredColumnTop(safe.top);
-        } else {
-            desired = NFBUnmeasuredColumnTop(safe.top);
-        }
-        // The existing contract (and the "first layout" assertion) is that with
-        // nothing measured the plain settings top still anchors the column; the
-        // sane top only guards the case where the settings top itself is absent
-        // or higher up than that.
-        desired = fmax(desired, top);
+        double desired = reuseSplit ? lastSplitTop : top;
+        if (!isfinite(desired)) desired = top;
         y = fmax(ceiling, desired);
         double lastRowTop = screenHeight - fmax(safe.bottom, 12) - side;
         if (y > lastRowTop) y = fmax(ceiling, lastRowTop);
@@ -213,8 +178,6 @@ static inline NFBRailPlan NFBPlanRail(double screenWidth, double screenHeight,
     plan.favoriteHeight = favoriteHeight;
 
     plan.toggleVisible = CGRectGetWidth(plan.toggle) > 0;
-    plan.reusedColumn = reusedColumn;
-    plan.measuredColumn = !split && reuseSplit;
     plan.parked = NFBShouldParkToggle(collapsed, split, notifiedCount);
     // Half-hidden control: a root-view sibling with the same origin as the rail,
     // so it takes the rail's half-hidden x (not `shift` added to a second time).

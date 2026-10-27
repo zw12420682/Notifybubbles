@@ -54,7 +54,6 @@ assert injection["Filter"]["Bundles"]==["com.apple.springboard"]
 prefs=plistlib.loads((root/"Preferences/Resources/Root.plist").read_bytes())
 assert {item["key"] for item in prefs["items"] if "key" in item}=={
     "Enabled","ShowOnLock","ShowOnHome","ShowInApps","IconSize","IconOpacity",
-    "HalfHiddenUnreadOpaque",
     "ClosePreviousSplit","HideInScreenshots",
     "DebugLogging","HotspotAutoClose","HotspotIdleMinutes"}
 print("PASS: package identity, versions, preference keys and SpringBoard-only injection")
