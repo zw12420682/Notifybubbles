@@ -1,3 +1,41 @@
+# 0.48.87 — 收纳键左滑展开、展开态长按清未读（只这两条）
+
+0.48.86 基础上只加两条已确认的手势，其余视觉、尺寸、透明度、动画与性能一律未动。
+
+**收纳态（非分屏、非展开）左滑展开**
+
+- 新增 `UISwipeGestureRecognizer`，方向只收 `.left`；它不充当 toggle，展开后左滑 noop。
+- 与 0.48.84 的左半命中同一道可见半门禁：`NFBVisibleMaxX` + `NFBHalfHiddenAcceptsTouch`
+  （`desktopActionHalfHidden || desktopActionParked` 时只认真实屏内左半），半露/parked
+  形态不会用整块方框抢触摸；`cancelsTouchesInView = NO`，被拒绝的滑动不接管触摸。
+- 展开后整列必须完整在屏内：哪一半贴边收敛为一个门（`edgeRailHugging(halfHidden, expanded)`），
+  展开时列与控制都不继承半隐藏 x（否则展开后的图标全部落在屏幕外）。
+
+**展开态（非分屏）顶部收纳键长按清未读**
+
+- `NFBStore` 新增 `clearUnreadRecords`：与打开 App 一样走 `consumeRecord:` 记账（迟到的重复通知
+  不能把记录重新加回），只清通知记录与角标；`pins`、App 顺序、后台 App 身份全部保留。
+  原 `clear` 仍按身份删除（会连 pins 一起删），未改。
+- `pendingRecord` 释放；保持 `edgeExpanded = YES`，并以本次真实操作重置 5 秒时钟
+  （`scheduleAutoCollapse`）。清空后没有 X 按钮，故清空那次刷新保留原来展示的 App 行，
+  否则下一次布局只按未读记录重建，列表看起来被清空了。
+- 收纳态长按在 delegate 即被拒绝：既不执行，也不会在松手时变成一次 tap。
+- 分屏房子按钮的原 tap（开/关桌面）与长按（Open 控制台）不变。
+
+**策略与测试**
+
+- 三手势一张表：`Sources/NFBActionGesturePolicy.h`，管理器、delegate 与测试共用。
+- `Tests/ActionGestureTests.c`（纯 C，无需 Apple 框架）：左滑只在收纳态、长按只在展开态、
+  分屏原行为、enabled/locked 全部无动作、方向只认 left。
+- `Tests/StoreTests.m`：清未读不删身份与 pins 顺序、迟到的重复被拒、新通知仍可入列。
+- `Tests/RailLayoutTests.m`：展开（左滑的结果）不贴屏幕边、控制与整列在屏内；半露控制仍按
+  可见半命中。`scripts/test_rail_layout.py` 的源码断言随同一道门更新。
+
+**验证范围**：validate / test_scheme / test_cleanup / test_validator / test_package_parser /
+test_rail_layout / transition / ActionGestureTests / RailLayoutTests（便携编译）本地全绿；
+CI 的 test 作业已通过（含 macOS 上编译的 StoreTests、InterfaceTests、RailLayoutTests 与模拟器
+用例），但**未在真机验证**，真实滑动/长按手感仍需设备确认。
+
 # 0.48.84 — 收纳键半露时左右判反（0.48.83 半露左半球点不动，桌面/全屏共同路径）
 
 0.48.83 真机：全屏收纳态、桌面（parked）收纳态下，半露的收纳键点不动。读代码定位到
