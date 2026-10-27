@@ -3,32 +3,13 @@
 #include <stdbool.h>
 
 // Touch policy for the half-hidden column state.
+// The visible LEFT half lies inside the view's bounds, local x [0, W-origin].
+// UIKit can hit that portion normally; the gesture delegate must not reject it.
+// Keep the existing circular radius (22pt floor), clipped to the control bounds
+// and physical screen edge, without capturing unrelated app space.
 //
-// 0.48.82 device report: the collapse control did not respond while a fullscreen
-// app was in use. Root cause: the column is moved right so its left half sits past
-// the physical screen edge, and a touch only ever arrives inside the screen. A
-// point on the *visible* half then falls outside the view's bounds for a view that
-// was moved by more than half its width (or a row hanging out of the rail), so
-// UIKit's bounds-based -hitTest:withEvent: / -pointInside:withEvent: refused it
-// before any gesture saw it. The shared half-hidden helper answers that, and the
-// rules are
-//   1. a control/row the user can see must be tappable;
-//   2. a touch that is not on the visible half must never be stolen from the app
-//      underneath (no full-screen invisible capture, no square corners swallowing
-//      touches on a circle);
-//   3. the minimum comfortable target is 44pt (HIG), which a half circle of a
-//      32pt icon (16pt wide) does not reach: the visible half keeps a 22pt radius
-//      from its centre so the part on screen is still comfortably tappable. Past
-//      the view's own frame edge (or the screen edge) nothing is taken.
-//
-// 0.48.84 device report: the control still did not respond in desktop or
-// fullscreen. Root cause: the visible range was computed as
-// `screenWidth - frameOriginX` (the *width* of the on-screen part, ~side/2) and
-// then treated as its *left* local edge, so the helper refused every point of the
-// real on-screen left half and accepted the half behind the physical edge, which
-// no touch can ever reach. `NFBVisibleMaxX` is that same number, now named for
-// what it is: the last local x that is on screen. The visible range is always
-// [0, maxX] - the view is only ever moved right, never left.
+// The old helper named W-origin as a minimum and rejected x below it. It was
+// actually the visible maximum: rejecting below it discarded the on-screen half.
 
 // 44 / 2: half of the HIG minimum target, used as the radius floor.
 #define NFBMinimumTouchRadius 22.0

@@ -1930,8 +1930,8 @@ static NSString *NFBFrontmostAppID(void) {
         // Toggle mode has no desktop target by design; requiring one here was why
         // the collapse control never responded to a tap.
         if (self.desktopActionToggle) {
-            // Half hidden: accept the visible half where it lies outside the
-            // bubble's bounds (bounds-only testing is the 0.48.82 bug).
+            // The visible left half is inside the bubble bounds. Restrict only
+            // half-hidden/parked controls to that on-screen interval.
             if (self.desktopActionHalfHidden || self.desktopActionParked)
                 return [self visibleHalfContainsTouch:touch forView:self.desktopActionButton];
             return YES;
