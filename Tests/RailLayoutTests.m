@@ -415,15 +415,17 @@ int main(void) {
                     "half-hidden rail keeps its column width");
             // The rail moves by exactly the gap between the plain and the
             // half-hidden column origin, computed independently of the helper.
-            close_(hh.halfHiddenShift, (4 + side / 2) + 7,
-                    "the whole column moves by margin + half the bubble + the icon inset, once");
+            close_(hh.halfHiddenShift, NFBColumnHalfHideShift(sw, hh.diameter, margin),
+                    "the shift is derived from the two origins, so they cannot drift apart");
+            close_(hh.halfHiddenShift, 4 + side / 2,
+                    "the whole column moves by margin + half the bubble, once");
             check(CGRectGetMaxX(hh.rail) >= sw, "the rail is not clipped before the screen edge");
             check(CGRectGetMaxX(hh.rail) <= sw + hh.diameter + 7, "the overhang is at most the hidden right half");
             close_(hh.rail.origin.x, NFBHalfHiddenBubbleOriginX(sw, hh.diameter, margin),
                     "half-hidden rail sits at its half-hidden x");
             close_(hh.rail.origin.x, NFBPlainRailFrameX(sw, side, margin) + hh.halfHiddenShift,
                     "the rail moved right by its own half-hidden shift, applied once");
-            close_(hh.halfHiddenShift, side / 2 + 11, "the column moves by half its bubble + margin + inset");
+            close_(hh.halfHiddenShift, side / 2 + 4, "the column moves by half its bubble + margin");
             // Every row (unread or not) and the control use the plain column offset.
             check(!hh.rowInset || hh.rowInset == 0, "no extra row inset is needed");
             check(fabs(rowCenterX(hh) - side / 2) < 0.01, "rows keep their column offset");
@@ -595,23 +597,35 @@ int main(void) {
             false, 0.7, false, 2, 3, 2, split.toggleTop, split.diameter, W, true, true);
     check(!hhExpanded.edgeRail && hhExpanded.rowInset == 0, "expanded ignores the half-hidden state");
     close_(CGRectGetWidth(hhExpanded.rail), CGRectGetWidth(open.rail), "expanded viewport unchanged");
-    // The column starts 2 * margin + 7 before the edge so the icon (inset 7pt in
-    // its bubble) ends margin + 7 before it: expanded stays clear of the edge.
-    // Right edge = plain x + side = (W - 2 * margin - 7 - side) + side.
+    // Device measurement (0.48.85): the expanded column sat 7pt further from the
+    // edge than the split column because of the bubble's 7pt image inset. The
+    // plain column is now aligned by its icon edge, so the icon ends margin
+    // before the physical edge instead of margin + inset.
     close_(CGRectGetMaxX(hhExpanded.rail),
             NFBPlainRailFrameX(W, hhExpanded.diameter + 14, margin) + hhExpanded.diameter + 14,
-            "expanded rail keeps the plain column x (icon inset 7pt, margin 4pt)");
+            "expanded rail keeps the plain column x");
     NFBRailPlan plainUnread = NFBPlanRail(W, H, safe, TOP, 48, splitPosition, false, CGRectZero,
             false, 0.7, true, 0, 2, 2, split.toggleTop, split.diameter, W, true, false);
     check(!plainUnread.edgeRail && plainUnread.rowInset == 0, "plain unread column keeps its geometry");
     close_(CGRectGetWidth(plainUnread.rail), 62, "plain unread column keeps the icon column width");
-    // Unchanged original rule: the icon ends 7pt before the physical edge.
-    close_(regularRightX(plainUnread), W - inset - 4 - 7, "plain unread icon keeps its original right edge");
+    // The icon now ends exactly margin before the physical edge (was margin+inset).
+    // rows sit at frame x = 0 inside the rail (see rowFrameX), so the icon's right
+    // edge is railX + 7 + d, which must equal screenWidth - margin.
+    close_(regularRightX(plainUnread),
+           NFBPlainRailFrameX(W, plainUnread.diameter + 14, margin) + 7 + plainUnread.diameter,
+           "plain icon ends margin before the edge");
+    // Measured on device: the split column keeps 11pt (margin + inset) from the
+    // right edge. The expanded column now matches that instead of 18pt.
+    close_(regularRightX(plainUnread), W - margin - inset,
+           "plain icon right edge matches the split column (margin + inset)");
     close_(regularRightX(plainUnread), NFBPlainRailFrameX(W, plainUnread.diameter + 14, margin) + inset + plainUnread.diameter,
             "plain icon right edge from the one column x");
-    // ...which is rail x + 7 + d/2 = W - margin - d/2 (not a second 7pt inset).
-    close_(rowImageCenterX(plainUnread), W - inset - margin - inset - plainUnread.diameter / 2,
-            "plain unread centre is not on the edge (icon ends margin + inset before it)");
+    // The same, computed from the helper rather than restated: one source of truth.
+    close_(regularRightX(plainUnread), NFBPlainRailFrameX(W, plainUnread.diameter + 14, margin) + inset + plainUnread.diameter,
+            "plain icon right edge equals plain x + inset + diameter");
+    // ...which is rail x + 7 + d = W - margin: a 7pt step right of the old layout.
+    close_(rowImageCenterX(plainUnread), regularRightX(plainUnread) - plainUnread.diameter / 2,
+            "plain centre sits half an icon left of the icon right edge");
     check(rowImageCenterX(plainUnread) < W - 2, "plain unread icon stays fully on screen");
     close_(toggleImageCenterX(plainUnread), rowImageCenterX(plainUnread), "plain control shares the row centre");
     // Empty column (no notifications, to the home screen): the control parks and

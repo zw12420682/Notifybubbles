@@ -131,8 +131,8 @@ if "return 4 + (diameter + 14) / 2;" not in geometry:
                     "(margin + half bubble, independent of the unread count)")
 if "static inline double NFBHalfHiddenBubbleOriginX(" not in geometry:
     problems.append("the half-hidden column x must come from one helper")
-if "return screenWidth - NFBHalfHiddenShift(diameter) + margin;" not in geometry:
-    problems.append("the half-hidden column x must be screenWidth - (margin + side/2)")
+if "return screenWidth - (4 + (diameter + 14) / 2) + margin;" not in geometry:
+    problems.append("the half-hidden column x must put the image centre on the screen edge")
 if "NFBHalfHiddenBubbleX" in geometry or "NFBCollapsedEdgeRailFrameX" in geometry:
     problems.append("the old local-x half-hide helpers must be gone")
 if "NFBExpandedAppHalfHidden(collapsed, split, fullscreenApp.length > 0)" not in manager:

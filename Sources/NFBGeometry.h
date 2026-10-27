@@ -52,7 +52,12 @@ static inline double NFBHalfHiddenShift(double diameter) {
 // plain and the half-hidden origin, so it is a parameter, not a constant.
 static inline double NFBHalfHiddenBubbleOriginX(double screenWidth, double diameter, double margin) {
     if (!isfinite(screenWidth) || !isfinite(diameter) || !isfinite(margin) || diameter <= 0) return 0;
-    return screenWidth - NFBHalfHiddenShift(diameter) + margin;
+    // Half-hidden keeps the image centre exactly on the edge:
+    //   x + side/2 + 7 + d/2 == screenWidth  =>  x = screenWidth - (4 + side/2) + margin
+    // The plain column now ends its icon at screenWidth - margin (no 7pt inset), so
+    // the plain origin is margin + 7 further left than this formula's base; the
+    // shift between the two states is therefore (4 + side/2) - 7.
+    return screenWidth - (4 + (diameter + 14) / 2) + margin;
 }
 
 // Badge rect inside one icon. The unread count sits inside the icon's own frame
@@ -156,13 +161,22 @@ static inline double NFBCollapsedRailFrameX(double screenWidth, double railWidth
     if (!isfinite(screenWidth) || !isfinite(railWidth) || !isfinite(margin)) return 0;
     return fmax(0, screenWidth - railWidth - margin);
 }
-// Collapsed column x that keeps the icon image 7pt inside the padding allowance:
-// the bubble is inset 7pt in its side-wide frame, so the rail has to start
-// 2 * margin + 7 before the screen edge for the icon to end at screenWidth -
-// margin - 7. This is the plain (fully visible) column's x.
+// Fully visible column x. Measured on device: the old `- 7` (the bubble's image
+// inset) pushed the expanded column 7pt further from the edge than the split
+// column, so the icon overlap did not match. Aligning by the rail edge instead
+// puts the icon right edge at screenWidth - margin, the same margin the split
+// column keeps from the window gap.
 static inline double NFBPlainRailFrameX(double screenWidth, double railWidth, double margin) {
     if (!isfinite(screenWidth) || !isfinite(railWidth) || !isfinite(margin)) return 0;
-    return fmax(0, NFBCollapsedRailFrameX(screenWidth, railWidth, margin) - 7);
+    return fmax(0, NFBCollapsedRailFrameX(screenWidth, railWidth, margin));
+}
+// Distance the column moves right when it tucks half off the screen. Derived from
+// the two origins above so the two states can never drift apart again.
+static inline double NFBColumnHalfHideShift(double screenWidth, double diameter, double margin) {
+    double plain = NFBPlainRailFrameX(screenWidth, diameter + 14, margin);
+    double hidden = NFBHalfHiddenBubbleOriginX(screenWidth, diameter, margin);
+    if (!isfinite(plain) || !isfinite(hidden)) return 0;
+    return hidden - plain;
 }
 
 // Half-hidden toggle: the image's center belongs exactly on the screen edge, so
