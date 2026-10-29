@@ -185,7 +185,7 @@ void NFBKeyboardInstall(void (^onChange)(void)) {
             NFBKeyboardTrackState.hiddenSince = YES;
             if (NFBKeyboardChange) NFBKeyboardChange();
         };
-        void (^hideDid)(NSNotification *) = ^(NSNotification *note) {
+        void (^hideDid)(NSNotification *) = ^(__unused NSNotification *note) {
             NFBKeyboardUpdateFrame([NSValue valueWithCGRect:CGRectZero]);
             // A DidHide that no WillHide/DidShow announced belongs to a keyboard
             // that is already gone: it must not clear a newer WillShow.
