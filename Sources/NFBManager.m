@@ -6,6 +6,7 @@
 #import "NFBWindowState.h"
 #import "NFBTransitionPolicy.h"
 #import "NFBMotionPolicy.h"
+#import "NFBColumnMotionPolicy.h"
 #import "NFBHitPolicy.h"
 #import "NFBActionGesturePolicy.h"
 #import "NFBIcon.h"
@@ -303,6 +304,9 @@ static double NFBNumber(NSString *key, double fallback) {
 // Bumped on every column slide so a stale completion cannot hide a newer state.
 @property(nonatomic) NSUInteger columnSlideToken;
 @property(nonatomic) BOOL columnTargetOffscreen;
+// The column is parked off the right edge / its transform is meaningful. Reduce
+// motion and a missing root flip `hidden` without touching the transform.
+@property(nonatomic) BOOL columnParked, columnParkedEver, columnTouchesKnown;
 @property(nonatomic) BOOL preferenceFlushPending;
 @property(nonatomic, strong) UILabel *noticeLabel;
 @property(nonatomic) NSUInteger noticeToken;
@@ -437,6 +441,10 @@ static const CFTimeInterval kTickReconcileInterval = 2.0;
         _gestureTimes = [NSMutableDictionary dictionary];
         _retractTokens=[NSMutableDictionary dictionary];
         _railStateStore = [NFBRailStateStore new];
+        // The window does not exist yet: the committed column state is "shown",
+        // so the first request explores the normal reveal path.
+        _columnTargetOffscreen = NO;
+        _columnParkedEver = NO;
         [self restoreRailMetric];
         __weak NFBManager *weakSelf = self;
         NFBKeyboardInstall(^{ [weakSelf setNeedsRefresh]; });
@@ -1404,57 +1412,83 @@ static NSString *NFBFrontmostAppID(void) {
 - (void)setColumnOffscreen:(BOOL)offscreen {
     UIView *root = self.window ? self.window.rootViewController.view : nil;
     if (!root) { self.window.hidden = offscreen; return; }
-    // A request that asks for the state already on screen is skipped only when no
-    // slide is in flight (`idle`). While one is, the request still has to run: the
-    // completions below commit against `columnSliding`, so a slide and the request
-    // that reverses it must not be short-circuited. This read is also what makes
-    // the flag a decision instead of a write-only field (test_objc_guards.py).
-    BOOL idle = !self.columnSliding && CGAffineTransformIsIdentity(root.transform);
-    if (offscreen && self.window.hidden && idle) return;
-    if (!offscreen && !self.window.hidden && idle) {
-        self.columnSliding = NO;
+    // iOS 26 previews the destination state while a slide runs, so a 20 Hz
+    // `refresh` that re-asks for a slide already in flight (or already committed)
+    // used to resubmit it every pass and the column flashed. Only a request that
+    // changes the committed state starts anything; while a slide is in flight a
+    // request for the *other* direction reverses it from the current position.
+    // (This read is also what keeps `columnSliding` a decision, not write-only
+    // state - test_objc_guards.py rule 4.)
+    BOOL idle = NFBColumnMotionIdle(self.columnSliding, self.columnTouchesKnown,
+                                   CGAffineTransformIsIdentity(root.transform),
+                                   self.columnParked, self.window.hidden);
+    if (!NFBColumnSlideNeeded(offscreen, self.columnTargetOffscreen)) {
+        // The state on screen is already the one asked for. Reconcile a screen
+        // that disagrees (an interrupted commit) without animating it back.
+        if (idle) {
+            root.transform = CGAffineTransformIdentity;
+            self.window.hidden = offscreen;
+        }
         return;
     }
     BOOL animated = !UIAccessibilityIsReduceMotionEnabled();
     CGFloat width = CGRectGetWidth(root.bounds);
     if (!(width > 0)) width = CGRectGetWidth(UIScreen.mainScreen.bounds);
     CGAffineTransform away = CGAffineTransformMakeTranslation(width, 0);
+    self.columnTouchesKnown = animated;
+    self.columnTargetOffscreen = offscreen;
     if (!animated) {
         root.transform = CGAffineTransformIdentity;
         self.window.hidden = offscreen;
         self.columnSliding = NO;
+        self.columnParked = offscreen;
         return;
     }
     self.columnSliding = YES;
-    self.columnTargetOffscreen = offscreen;
     // Interruption-safe: a completion from an earlier slide must never hide or
     // reveal the column the current slide is moving.
     NSUInteger token = ++self.columnSlideToken;
+    NSPointerArray *column = [NSPointerArray weakObjectsPointerArray];
+    [column addPointer:(__bridge void *)root];
     if (offscreen) {
         [UIView animateWithDuration:0.24 delay:0
             options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseIn
             animations:^{ root.transform = away; }
-            completion:^(__unused BOOL done) {
-                // Only commit the hide if the column is still meant to be away and
-                // no newer slide took over; a keyboard that came back mid-slide
-                // must keep it on screen.
-                if (NFBMotionCompletionIsCurrent(token, self.columnSlideToken) && self.columnTargetOffscreen) {
-                    root.transform = CGAffineTransformIdentity;
-                    self.window.hidden = YES;
-                    self.columnSliding = NO;
-                }
+            completion:^(__unused BOOL finished) {
+                if (!NFBColumnCompletionApplies(token, self.columnSlideToken, self.columnTargetOffscreen, YES)) return;
+                UIView *view = [column pointerAtIndex:0];
+                // A finished animation leaves the transform at the model value; a
+                // tree rebuilt meanwhile does not, and parking `hidden` on top of
+                // a live transform is what made the next reveal jump.
+                if (!NFBColumnTransformMatches(CGAffineTransformIsIdentity(view.transform), NO)) return;
+                view.transform = CGAffineTransformIdentity;
+                self.window.hidden = YES;
+                self.columnSliding = NO;
+                self.columnParked = YES;
             }];
     } else {
         self.window.hidden = NO;
         // Start from the right edge only when the column was actually parked
-        // there; reversing mid-slide continues from the current position instead
-        // of snapping back.
-        if (CGAffineTransformIsIdentity(root.transform)) root.transform = away;
+        // there; reversing mid-slide (or a column that was merely not laid out
+        // yet) continues from the current position instead of snapping away.
+        // The first reveal of a fresh column (never parked, no layout yet) enters
+        // from the edge as it always has; later ones only when truly parked.
+        BOOL identity = CGAffineTransformIsIdentity(root.transform);
+        if (!self.columnParkedEver && identity) {
+            self.columnParkedEver = YES;
+            self.columnTouchesKnown = YES;
+            self.columnParked = YES;
+        }
+        if (NFBColumnRevealStartAway(self.columnTouchesKnown, self.columnParked, identity))
+            root.transform = away;
+        self.columnParked = NO;
         [UIView animateWithDuration:0.28 delay:0.04
             options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseOut
             animations:^{ root.transform = CGAffineTransformIdentity; }
-            completion:^(__unused BOOL done) {
-                if (!NFBMotionCompletionIsCurrent(token, self.columnSlideToken)) return;
+            completion:^(__unused BOOL finished) {
+                if (!NFBColumnCompletionApplies(token, self.columnSlideToken, self.columnTargetOffscreen, NO)) return;
+                UIView *view = [column pointerAtIndex:0];
+                if (!NFBColumnTransformMatches(CGAffineTransformIsIdentity(view.transform), YES)) return;
                 self.window.hidden = NO;
                 self.columnSliding = NO;
             }];

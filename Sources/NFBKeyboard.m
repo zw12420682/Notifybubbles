@@ -1,12 +1,13 @@
 #import "NFBWindowState.h"
 #import "NFBKeyboard.h"
+#import "NFBColumnMotionPolicy.h"
 #import "NFBPrivate.h"
 #import "NFBDebugLog.h"
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
 
-// Set from the notifications, which only cover keyboards SpringBoard hosts.
-static BOOL NFBKeyboardNotified = NO;
+// Notification + hide-confirmation state (pure decisions in the policy header).
+static NFBKeyboardTrack NFBKeyboardTrackState;
 // Timestamp of the last WillHide, used to override the probe grace window.
 static CFTimeInterval NFBKeyboardHiddenSince;
 static CGRect NFBKeyboardScreenFrame;
@@ -89,24 +90,35 @@ static BOOL NFBKeyboardSystemUp(void) {
     return NO;
 }
 
-BOOL NFBKeyboardVisible(void) {
-    // A collapse that has just been announced wins over the throttled probes,
-    // which still see the keyboard window while it animates out.
-    if (NFBKeyboardHiddenSince > 0 && CACurrentMediaTime() - NFBKeyboardHiddenSince < 0.45) return NO;
-    BOOL notified = NFBKeyboardNotified;
-    // The window snapshot is a fresh object every runloop turn, so an identity
-    // check here always missed and both probes (a full scene/window walk) ran on
-    // every 20 Hz poll. Keyboard membership cannot change that fast.
+// Throttled probes with a hard TTL: an answer older than the TTL is not reused,
+// it is re-probed (keyboards hosted by an app publish no notification here, so
+// the probe is the only source that can recover the "up" state).
+#define NFBKeyboardProbeInterval 0.2
+#define NFBKeyboardProbeTTL 0.5
+
+static BOOL NFBKeyboardProbeUp(void) {
     static BOOL window, system;
     static CFTimeInterval probedAt;
     static BOOL probed;
     CFTimeInterval now = CACurrentMediaTime();
-    if (!probed || now - probedAt > 0.2) {
+    if (!probed || now - probedAt > NFBKeyboardProbeInterval) {
         probed = YES; probedAt = now;
         window = NFBKeyboardWindowUp();
         system = NFBKeyboardSystemUp();
     }
-    BOOL up = notified || window || system;
+    // A stale answer can neither hold "up" nor certify "down".
+    if (now - probedAt > NFBKeyboardProbeTTL) return NO;
+    return window || system;
+}
+
+BOOL NFBKeyboardVisible(void) {
+    // A collapse that has just been announced wins over the throttled probes,
+    // which still see the keyboard window while it animates out.
+    double now = CACurrentMediaTime();
+    BOOL grace = NFBKeyboardHiddenGrace(now, NFBKeyboardHiddenSince);
+    BOOL notified = NFBKeyboardTrackState.notified;
+    BOOL probe = NFBKeyboardProbeUp();
+    BOOL up = NFBKeyboardCombined(NFBKeyboardTrackState, probe, grace);
     // Log every flip, not just notification-driven ones, so a polled source
     // (window/system) that is stuck high shows up here with its per-source flags.
     static BOOL last = NO;
@@ -114,15 +126,19 @@ BOOL NFBKeyboardVisible(void) {
     if (!seen || up != last) {
         seen = YES;
         last = up;
-        NFBDebugLog(@"keyboard: %@ (notified=%d window=%d system=%d)", up ? @"up" : @"down", notified, window, system);
+        NFBDebugLog(@"keyboard: %@ (notified=%d probe=%d grace=%d)", up ? @"up" : @"down", notified, probe, grace);
     }
     return up;
 }
 
-static void NFBKeyboardSet(BOOL notified) {
+static void NFBKeyboardSet(NFBKeyboardTrack track, const char *source) {
     BOOL before = NFBKeyboardVisible();
-    NFBKeyboardNotified = notified;
+    NFBKeyboardTrack previous = NFBKeyboardTrackState;
+    NFBKeyboardTrackState = track;
     BOOL after = NFBKeyboardVisible();
+    if (previous.notified != track.notified || previous.hiddenSince != track.hiddenSince)
+        NFBDebugLog(@"keyboard: %s (notified=%d pending-hide=%d stale-did-hide=%d)", source,
+                    track.notified, track.hiddenSince, track.staleDidHide);
     if (before == after) return;
     NFBKeyboardScheduleChange();
 }
@@ -142,8 +158,16 @@ void NFBKeyboardInstall(void (^onChange)(void)) {
         void (^show)(NSNotification *) = ^(NSNotification *note) {
             NSValue *value = note.userInfo[UIKeyboardFrameEndUserInfoKey];
             NFBKeyboardUpdateFrame(value);
+            NFBKeyboardHiddenSince = 0;   // a new keyboard cancels the hide grace
+            NFBKeyboardSet(NFBKeyboardShow(NFBKeyboardTrackState, NO), "show");
+        };
+        void (^showDid)(NSNotification *) = ^(NSNotification *note) {
+            NSValue *value = note.userInfo[UIKeyboardFrameEndUserInfoKey];
+            NFBKeyboardUpdateFrame(value);
+            // A duplicate DidShow after a hide announcement must not restart it.
+            if (NFBKeyboardDidShowIsDuplicate(NFBKeyboardTrackState)) return;
             NFBKeyboardHiddenSince = 0;
-            NFBKeyboardSet(YES);
+            NFBKeyboardSet(NFBKeyboardShow(NFBKeyboardTrackState, NO), "did-show");
         };
         // Clearing the "visible" flag on WillHide slid the bubbles back down while
         // the keyboard was still on its way out, overlapping both animations. Only
@@ -151,23 +175,36 @@ void NFBKeyboardInstall(void (^onChange)(void)) {
         void (^hideWill)(NSNotification *) = ^(NSNotification *note) {
             NSValue *value = note.userInfo[UIKeyboardFrameEndUserInfoKey];
             if (value) NFBKeyboardUpdateFrame(value);
+            if (NFBKeyboardWillHideIsDuplicate(NFBKeyboardTrackState)) return;
             // Collapse starts here, not at DidHide: the bubbles should slide back
             // in while the keyboard is still on its way down. The window/scene
             // probes can keep reporting a keyboard for a few hundred ms after
             // WillHide, so suppress them for one animation's worth of time.
             NFBKeyboardHiddenSince = CACurrentMediaTime();
-            NFBKeyboardNotified = NO;
+            NFBKeyboardTrackState.notified = NO;
+            NFBKeyboardTrackState.hiddenSince = YES;
             if (NFBKeyboardChange) NFBKeyboardChange();
         };
-        void (^hideDid)(NSNotification *) = ^(__unused NSNotification *note) {
-            NFBKeyboardUpdateFrame([NSValue valueWithCGRect:CGRectZero]); NFBKeyboardSet(NO);
+        void (^hideDid)(NSNotification *) = ^(NSNotification *note) {
+            NFBKeyboardUpdateFrame([NSValue valueWithCGRect:CGRectZero]);
+            // A DidHide that no WillHide/DidShow announced belongs to a keyboard
+            // that is already gone: it must not clear a newer WillShow.
+            BOOL confirmed = NO;
+            NFBKeyboardTrack track = NFBKeyboardDidHide(NFBKeyboardTrackState, &confirmed);
+            if (!confirmed) {
+                NFBKeyboardTrackState = track;
+                NFBDebugLog(@"keyboard: stale did-hide ignored");
+                return;
+            }
+            NFBKeyboardTrackState = track;
+            NFBKeyboardSet(track, "did-hide");
         };
         [center addObserverForName:UIKeyboardWillChangeFrameNotification object:nil queue:main usingBlock:^(NSNotification *note) {
             NSValue *value = note.userInfo[UIKeyboardFrameEndUserInfoKey];
             NFBKeyboardUpdateFrame(value);
         }];
         [center addObserverForName:UIKeyboardWillShowNotification object:nil queue:main usingBlock:show];
-        [center addObserverForName:UIKeyboardDidShowNotification object:nil queue:main usingBlock:show];
+        [center addObserverForName:UIKeyboardDidShowNotification object:nil queue:main usingBlock:showDid];
         [center addObserverForName:UIKeyboardWillHideNotification object:nil queue:main usingBlock:hideWill];
         [center addObserverForName:UIKeyboardDidHideNotification object:nil queue:main usingBlock:hideDid];
         NFBDebugLog(@"keyboard: observers installed");

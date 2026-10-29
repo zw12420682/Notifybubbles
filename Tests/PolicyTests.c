@@ -1,4 +1,4 @@
-// 0.48.88 regression tests: the policies below are the ones the manager itself
+// Regression tests: the policies below are the ones the manager itself the policies below are the ones the manager itself
 // runs (Sources/*Policy.h are pure C, no UIKit/Foundation).
 //
 // Built (and built with -Werror) on every platform by scripts/test_policies.py,
@@ -15,6 +15,7 @@ static int debug_line;
 #include "NFBBurstPolicy.h"
 #include "NFBFavoriteDragPolicy.h"
 #include "NFBProbePolicy.h"
+#include "NFBColumnMotionPolicy.h"
 #include "NFBRailMetricQueue.h"
 #include "NFBTickReconcile.h"
 
@@ -159,6 +160,102 @@ static void testLatestPendingMetric(void) {
     check(!NFBRailMetricQueueDrain(&q, &out), "an empty clock yields nothing");
 }
 
+// Column slide + keyboard visibility (rapid show/hide flashing).
+static void testColumnSlide(void) {
+    // Duplicates are no-ops: a repeated request for the committed state never
+    // starts a slide, and an idle column that already matches stays untouched.
+    check(!NFBColumnSlideNeeded(true, true), "repeat off-screen request is not a new slide");
+    check(!NFBColumnSlideNeeded(false, false), "repeat on-screen request is not a new slide");
+    check(NFBColumnSlideNeeded(true, false), "hide from a shown column slides");
+    check(NFBColumnSlideNeeded(false, true), "show from a parked column slides");
+    // Idle is only the settled, committed state; a slide in flight is never idle,
+    // so a reversal is allowed to interrupt it.
+    check(NFBColumnMotionIdle(false, true, true, true, false), "a visible settled column at identity is idle");
+    check(NFBColumnMotionIdle(false, true, true, false, true), "a hidden column at identity is idle");
+    check(!NFBColumnMotionIdle(true, true, true, false, false), "a slide in flight is not idle");
+    check(NFBColumnMotionIdle(false, true, true, true, true), "a hidden settled column is idle (park flag is bookkeeping)");
+    // Reduce motion / no root never touched the transform: the identity read is
+    // meaningless, the hidden flag is the whole state.
+    check(NFBColumnMotionIdle(false, false, false, false, true), "hidden without touch state is idle");
+    check(!NFBColumnMotionIdle(false, false, false, false, false), "visible without touch state is not idle");
+    // Reveal start: only a truly parked column enters from the edge.
+    check(NFBColumnRevealStartAway(true, true, true), "parked at identity enters from the edge");
+    check(!NFBColumnRevealStartAway(true, false, true), "mid-slide reversal keeps its position");
+    check(!NFBColumnRevealStartAway(true, true, false), "a column that is not parked never snaps away");
+    check(!NFBColumnRevealStartAway(false, true, true), "unknown transform never snaps away");
+    // Completions: the latest token wins, and only for its own direction.
+    check(NFBColumnCompletionApplies(7, 7, true, true), "latest hide completion applies");
+    check(!NFBColumnCompletionApplies(6, 7, true, true), "an old completion is ignored");
+    check(!NFBColumnCompletionApplies(7, 7, false, true), "a hide completion cannot commit a revealed column");
+    check(!NFBColumnCompletionApplies(7, 7, true, false), "a reveal completion cannot commit a hidden column");
+    check(NFBColumnCompletionApplies(8, 8, false, false), "latest reveal completion applies");
+    check(NFBColumnTransformMatches(false, false) && NFBColumnTransformMatches(true, true),
+          "a completion accepts the transform its slide was built from");
+    check(!NFBColumnTransformMatches(false, true), "a rebuilt render tree is not committed over");
+}
+
+static void testKeyboardState(void) {
+    NFBKeyboardTrack t = {false, false, false};
+    // Show sequence: Will wins immediately; the duplicate DidShow does not restart.
+    t = NFBKeyboardShow(t, false);
+    check(t.notified && !t.hiddenSince, "WillShow marks the keyboard up");
+    t = NFBKeyboardShow(t, false);
+    check(t.notified, "duplicate DidShow keeps it up");
+    check(NFBKeyboardCombined(t, false, false), "a notified keyboard is visible without probes");
+    // Hide: WillHide starts the collapse; a second WillHide is a duplicate.
+    check(!NFBKeyboardWillHideIsDuplicate(t), "first WillHide is accepted");
+    t = NFBKeyboardWillHide(t);
+    check(!t.notified && t.hiddenSince, "WillHide announces the collapse");
+    check(!NFBKeyboardCombined(t, true, true), "during the grace window the probes are muted");
+    check(NFBKeyboardCombined(t, true, false), "after the grace window a still-up probe wins");
+    check(NFBKeyboardWillHideIsDuplicate(t), "duplicate WillHide is ignored");
+    check(NFBKeyboardDidShowIsDuplicate(t), "a DidShow after WillHide is a duplicate");
+    bool confirmed = false;
+    t = NFBKeyboardDidHide(t, &confirmed);
+    check(confirmed && !t.hiddenSince && !t.notified, "DidHide confirms the announced hide");
+    check(!NFBKeyboardCombined(t, false, false), "a confirmed hide is down");
+    check(NFBKeyboardCombined(t, true, false), "an app keyboard with no notification still shows through the probe");
+    // Remote-only: no notification at all, the probe alone recovers and releases.
+    NFBKeyboardTrack remote = {false, false, false};
+    check(NFBKeyboardCombined(remote, true, false), "probe-only keyboard is visible");
+    check(!NFBKeyboardCombined(remote, false, false), "probe-only keyboard releases when the probe says down");
+    // Latest wins: a new WillShow outranks a DidHide still travelling from the
+    // previous keyboard (stale DidHide must not clear the new show).
+    NFBKeyboardTrack stale = {false, false, false};
+    stale = NFBKeyboardDidHide(stale, &confirmed);
+    check(!confirmed && stale.staleDidHide && !stale.notified, "unannounced DidHide is stale and changes nothing");
+    stale.notified = true; stale.staleDidHide = false;   // a newer WillShow just landed
+    stale = NFBKeyboardDidHide(stale, &confirmed);
+    check(!confirmed && stale.notified, "a stale DidHide does not clear a newer show");
+    // Show/hide/show/hide rapid sequence settles on the latest intent.
+    NFBKeyboardTrack rapid = {false, false, false};
+    rapid = NFBKeyboardShow(rapid, false);
+    rapid = NFBKeyboardWillHide(rapid);
+    // The DidShow that follows the announced hide is a duplicate and must not
+    // restart anything ...
+    rapid = NFBKeyboardShow(rapid, NFBKeyboardDidShowIsDuplicate(rapid));
+    check(!rapid.notified && rapid.hiddenSince, "a duplicate DidShow does not restart the announced hide");
+    // ... a real WillShow does, and it also cancels the probe grace (the caller
+    // resets the hidden-since stamp, so no grace window remains).
+    rapid = NFBKeyboardShow(rapid, false);
+    check(rapid.notified && !rapid.hiddenSince, "a show during a hide announcement settles up");
+    check(NFBKeyboardCombined(rapid, false, NFBKeyboardHiddenGrace(1.0, 0.0)), "a new show cancels the hide grace");
+    rapid = NFBKeyboardWillHide(rapid);
+    rapid = NFBKeyboardDidHide(rapid, &confirmed);
+    check(confirmed && !rapid.notified, "the final hide settles down");
+    // Probe contradiction: a probe still up right after WillHide is muted for the
+    // grace window and only then counted; a probe already down never blocks it.
+    NFBKeyboardTrack contradiction = NFBKeyboardWillHide((NFBKeyboardTrack){false, false, false});
+    check(!NFBKeyboardCombined(contradiction, true, NFBKeyboardHiddenGrace(0.2, 0.1)),
+          "contradicting probe is muted inside the grace window");
+    check(NFBKeyboardCombined(contradiction, true, NFBKeyboardHiddenGrace(0.6, 0.1)),
+          "the same probe settles up once the window expires");
+    check(!NFBKeyboardHiddenGrace(0.0, 0.0), "no hide announcement means no grace window");
+    check(NFBKeyboardHiddenGrace(0.4, 0.01) && !NFBKeyboardHiddenGrace(0.46, 0.01),
+          "the grace window is 0.45s");
+}
+
+
 static void testProbeReuse(void) {
     double now = 100.0;
     NFBProbeStamp none = {false, false, NULL, 0};
@@ -245,10 +342,12 @@ int main(void) {
     testLatestPendingMetric();
     testTickReconcile();
     testProbeReuse();
+    testColumnSlide();
+    testKeyboardState();
     if (failures) {
         printf("FAIL: %d policy checks\n", failures);
         return 1;
     }
-    printf("PASS: layout/burst/drag/metric/tick/probe policies\n");
+    printf("PASS: layout/burst/drag/metric/tick/probe/column/keyboard policies\n");
     return 0;
 }

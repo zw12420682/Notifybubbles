@@ -184,7 +184,7 @@ jobs:
       - name: Summarise produced packages
         run: |
           {
-            echo '## NotifyBubbles 0.48.56 — 双方案构建完成'
+            echo '## NotifyBubbles 0.48.90 — 双方案构建完成'
             echo ''
             echo '| 方案 | Artifact | DEB Architecture | 安装位置 |'
             echo '| --- | --- | --- | --- |'

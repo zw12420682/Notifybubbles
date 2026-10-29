@@ -1,3 +1,52 @@
+# 0.48.90 — 键盘快速升降时轨道列闪烁（只修这一项）
+
+0.48.88 基线上只处理"键盘快速显示/隐藏时轨道列反复闪进闪出"。尺寸、透明度、
+滑动/长按/单击判定、5 秒自动收起、20 Hz 布局、6 个图标上限、缓动与时长
+（滑出 0.24s ease-in，滑回 0.28s + 0.04s 延迟 ease-out）全部保持原样，没有新增
+设置项、没有新的常驻定时器、没有引入状态框架。
+
+**真实原因（四处叠加，缺一不闪）**
+
+1. `setColumnOffscreen:` 只在"`!columnSliding` 且 transform 为 identity"时跳过
+   重复请求。偏偏 `columnSliding` 在动画提交后（下一个 runloop 帧）就被完成回调
+   清掉，而 iOS 26 在动画期间就把 transform 呈现为**目标值**，于是 20 Hz 的
+   `refresh` 每一轮都重新提交同一条滑出/滑入：表现为列反复闪烁。
+2. 反向（滑入）请求只要 transform 不是 identity 就一定先赋一次 `away`，把正在
+   回滑的列瞬间甩回右边；而"可见且 transform 为 identity"恰恰是稳态，也会被赋值。
+3. 完成回调不看 `finished`，只比 token：被打断（reversal / 目标变化）的旧回调仍
+   可能把 `hidden` 写反，造成一次跳变。
+4. 键盘侧：`WillHide` 后 0.45s 内探针被静音、`DidHide` 无条件清 notified；一个
+   迟到的 `DidHide` 会把紧随其后的 `WillShow` 清掉（该读数是静音探针 + 开关
+   notified），于是列先滑回、下一轮又被判"键盘还在"滑出；无通知的键盘
+   （App 内键盘、SpringBoard 自身键盘）只能靠探针，探针 TTL 缺失时可能永远回收
+   不到"抬起"或"落下"。
+
+**改动**
+
+- 新增 `Sources/NFBColumnMotionPolicy.h`（纯 C，管理器与测试引用同一份）：
+  - `NFBColumnSlideNeeded`：与已提交状态相同即不再滑（重复/no-op）。
+  - `NFBColumnMotionIdle`：只在"未滑动 + 已提交"时认为空闲；滑行中永不短路，
+    所以反向请求仍能打断。
+  - `NFBColumnRevealStartAway`：只有**真正停在右侧**的列才从边缘进入；中途反
+    向从当前位置继续，稳态可见时绝不赋值。
+  - `NFBColumnCompletionApplies`：token + 方向双判定，旧回调作废。
+  - `NFBColumnTransformMatches`：完成时 transform 必须是本次动画的目标值，否则
+    说明渲染树被重建，不覆盖 `hidden`。
+  - 键盘：`NFBKeyboardTrack`（notified / hiddenSince / staleDidHide）+
+    `NFBKeyboardCombined`：Will 是意图、Did 是确认；重复 Will/Did 不重启；未宣告
+    的 DidHide 记为 stale，不再清除更新的 WillShow；`WillShow` 清除 0.45s 静音窗。
+- `Sources/NFBKeyboard.m`：探针 0.2s 节流之外加 0.5s TTL——过期答案既不能撑
+  "抬起"也不能证明"落下"，会重新探测（SpringBoard/App 键盘可能不发通知）。
+- `Sources/NFBManager.m`：按上述规则重写 `setColumnOffscreen:`，新增
+  `columnParked` / `columnParkedEver` / `columnTouchesKnown` 三个实例属性；完成
+  回调弱持有 root，不再强捕获视图阻塞释放。时长、曲线、20 Hz 布局、5 秒收起、
+  尺寸与透明度均未改动。
+
+**验证范围**：本地 iSH/Alpine 跑通 validate、test_objc_guards(+self-test)、
+test_policies、test_rail_layout、test_scheme、test_validator、test_cleanup、
+test_package_parser，以及本机 clang 编出的 TransitionTests / ActionGestureTests；
+Objective-C 生产文件与 UIKit 相关测试在 CI（macOS/Xcode）编译。**未做真机验证。**
+
 # 0.48.88 — 六项定向优化（重复工作去除，外观与手感不变）
 
 0.48.87 基础上只减少已证明多余的重复工作。用户可见的 x/y/尺寸/透明度、滑动/长按/单击
