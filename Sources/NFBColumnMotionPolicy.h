@@ -3,6 +3,7 @@
 
 // Column slide + keyboard visibility decisions, shared verbatim by the manager
 // (Sources/NFBManager.m, Sources/NFBKeyboard.m) and the portable tests.
+// Keep the existing simulator regression enabled when validating this policy.
 //
 // Only the *decision* lives here; timings, curves and the animations themselves
 // stay in the production files (out 0.24s ease-in, in 0.28s delay 0.04s).
