@@ -98,9 +98,11 @@ if "isTracking" not in manager or "isDragging" not in manager:
 if "if (!NFBTrollVisibleApp().length) self.edgeExpanded = NO;" in manager:
     problems.append("tapping an app must not fold the expanded column")
 
-# 7. The clear action is hidden when there is nothing to clear.
-if "split || (self.edgeExpanded && notified.count > 0)" not in manager:
-    problems.append("clear button must be hidden without notifications outside a split")
+# 7. Only a split has a bottom close key; edge states never do.
+if "BOOL showClearAll = NFBBottomCloseVisible(split);" not in manager:
+    problems.append("bottom close button must be split-only")
+if "double bottomControlSpace = split ? side + 9 : 0;" not in read("Sources/NFBRailLayout.h"):
+    problems.append("edge columns must not reserve a bottom close-key row")
 
 # 8. No new independent edge control: only the one desktop-action button.
 if manager.count("desktopActionButton = button;") != 1:

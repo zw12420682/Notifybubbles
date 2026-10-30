@@ -190,7 +190,10 @@ static inline NFBRailPlan NFBPlanRail(double screenWidth, double screenHeight,
     // One full step below the slot: a single step put the first icon only 9pt
     // under the button, so their circular images nearly touched/overlapped.
     y += side + 9;
-    double room = fmax(0, floorY - y - side - 9);
+    // Only a split reserves its final row for X. The edge column has no bottom
+    // control in either expanded or collapsed state, and must not reserve one.
+    double bottomControlSpace = split ? side + 9 : 0;
+    double room = fmax(0, floorY - y - bottomControlSpace);
     // A hidden fullscreen column shows no favorites rail, so favorites must not
     // eat the height budget: doing so crushed the main rail to a hairline.
     bool hideFavorites = !split && collapsed;

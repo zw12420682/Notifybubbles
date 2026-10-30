@@ -21,6 +21,10 @@ typedef enum {
     NFBActionSwipeLeft = 2,
 } NFBActionGesture;
 
+// Only split mode owns a bottom close button. Expanded/collapsed edge columns
+// clear unread through the top control's hold gesture, not a second bottom key.
+static inline bool NFBBottomCloseVisible(bool split) { return split; }
+
 static inline NFBActionMode NFBActionModeFor(bool split, bool expanded) {
     if (split) return NFBActionModeSplit;
     return expanded ? NFBActionModeExpanded : NFBActionModeCollapsed;

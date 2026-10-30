@@ -1625,10 +1625,9 @@ static NSString *NFBFrontmostAppID(void) {
     if (exceptionApp && ![columnApps containsObject:fullscreenApp]) [columnApps addObject:fullscreenApp];
     NSArray<NSString *> *railApps = columnApps.array;
     NSMutableArray<NSString *> *displayApps = [railApps mutableCopy];
-    // The clear button only makes sense with something to clear (or a split to close).
-    // With no queued notification outside a split it is hidden entirely, so only
-    // the unread apps and the collapse control remain.
-    BOOL showClearAll = split || (self.edgeExpanded && notified.count > 0);
+    // The bottom close control belongs to split mode only. Outside a split,
+    // clearing unread is the top control's hold gesture, regardless of count.
+    BOOL showClearAll = NFBBottomCloseVisible(split);
     if (showClearAll) [displayApps addObject:NFBClearAllID];
     BOOL orderChanged = ![self.lastLayoutApps isEqualToArray:displayApps];
     self.lastLayoutApps = [displayApps copy];
@@ -1637,6 +1636,14 @@ static NSString *NFBFrontmostAppID(void) {
         NFBBubble *button = self.buttons[appID];
         [self.buttons removeObjectForKey:appID];
         button.userInteractionEnabled = NO;
+        if (!split && [appID isEqualToString:NFBClearAllID]) {
+            // Do not leave a fading close key or its hit area behind outside a
+            // split. Its previous animation must not re-expose it afterwards.
+            [button.layer removeAllAnimations];
+            button.hidden = YES;
+            [button removeFromSuperview];
+            continue;
+        }
         unsigned long long removalToken = button.badgeContentVersion + 1;
         button.badgeContentVersion = removalToken;
         if (![self.favoriteApps containsObject:appID]) [self.icons removeObjectForKey:appID];
@@ -1652,8 +1659,8 @@ static NSString *NFBFrontmostAppID(void) {
             // Only tear down if nothing re-adopted this app in the meantime,
             // otherwise a returning notification authors a second bubble. The
             // token additionally protects an interrupted removal that was reused.
-            if (self.buttons[appID] == button || self.favoriteButtons[appID] == button ||
-                NFBMotionCompletionIsCurrent(removalToken, button.badgeContentVersion) == NO)
+            if (self.buttons[appID] != button && self.favoriteButtons[appID] != button &&
+                NFBMotionCompletionIsCurrent(removalToken, button.badgeContentVersion))
                 [button removeFromSuperview];
         }];
     }
