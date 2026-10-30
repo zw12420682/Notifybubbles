@@ -1606,6 +1606,7 @@ static NSString *NFBFrontmostAppID(void) {
         if ([self.lastSwitcher containsObject:app] || [app isEqual:active]) [background addObject:app];
     NSArray<NSString *> *recentGroup = NFBRecentBackgroundThree(background, history.array, self.favoriteApps);
     NSMutableOrderedSet<NSString *> *columnApps = [NSMutableOrderedSet orderedSet];
+    BOOL collapse = !splitNow && !self.edgeExpanded;
     if (collapse) {
         // Collapsed: unread first (top), recent backgrounds below it, so a newly
         // opened app joins at the bottom and stacks upward.
@@ -1742,7 +1743,6 @@ static NSString *NFBFrontmostAppID(void) {
     // The hidden column has nothing to clear when no notification is queued, so
     // it keeps only the unread apps and the collapse control: no X, no favorites.
     BOOL hideFavorites = !(splitNow || self.edgeExpanded);
-    BOOL collapse = !splitNow && !self.edgeExpanded;
     BOOL splitUsable = splitNow;
     NSUInteger columnRows = railApps.count;
     // The plan takes a platform-neutral inset struct; being field-compatible with
