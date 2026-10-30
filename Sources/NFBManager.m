@@ -1606,7 +1606,9 @@ static NSString *NFBFrontmostAppID(void) {
         if ([self.lastSwitcher containsObject:app] || [app isEqual:active]) [background addObject:app];
     NSArray<NSString *> *recentGroup = NFBRecentBackgroundThree(background, history.array, self.favoriteApps);
     NSMutableOrderedSet<NSString *> *columnApps = [NSMutableOrderedSet orderedSet];
-    BOOL collapse = !splitNow && !self.edgeExpanded;
+    // Membership order only needs the resolved split state, not the plan's
+    // isfinite-sanitised variant, so this is safe before splitNow is declared.
+    BOOL collapse = !split && !self.edgeExpanded;
     if (collapse) {
         // Collapsed: unread first (top), recent backgrounds below it, so a newly
         // opened app joins at the bottom and stacks upward.
