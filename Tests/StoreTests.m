@@ -257,3 +257,14 @@ int main(void) {
     }
     return 0;
 }
+
+        // Collapsed edge column order: unread apps first (top), recent
+        // backgrounds below, so a newly opened app sits at the bottom.
+        NSMutableOrderedSet *collapsedOrder = [NSMutableOrderedSet orderedSetWithArray:@[@"unreadA", @"unreadB"]];
+        [collapsedOrder addObjectsFromArray:@[@"recentC", @"recentD"]];
+        Check([collapsedOrder.array isEqual:@[@"unreadA", @"unreadB", @"recentC", @"recentD"]],
+              "collapsed order keeps unread above the recent backgrounds");
+        NSMutableOrderedSet *mergedOrder = [NSMutableOrderedSet orderedSetWithArray:@[@"unreadA", @"recentC"]];
+        [mergedOrder addObjectsFromArray:@[@"recentC", @"unreadA"]];
+        Check([mergedOrder.array isEqual:@[@"unreadA", @"recentC"]],
+              "an app in both groups still appears once in the collapsed order");

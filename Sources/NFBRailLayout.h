@@ -35,6 +35,10 @@ typedef struct {
     bool measuredColumn; // ...and a measurement actually existed (else the sane top)
     bool favoritesVisible;
     double favoriteHeight;
+    // Rows the expanded column would fit at this anchor. The collapsed edge
+    // column must never show more rows than that (it has no favorites rail, so
+    // its own budget is larger and would otherwise grow past the expanded one).
+    unsigned long expandedRowCap;
 } NFBRailPlan;
 
 // `split` is the real, resolved split state (an attached floating window with a
@@ -202,6 +206,21 @@ static inline NFBRailPlan NFBPlanRail(double screenWidth, double screenHeight,
     double favoriteHeight = hideFavorites ? 0 : fit.favorites;
     double gap = fit.gap;
     height = fit.regular;
+    // Reference for the collapsed cap: the same anchor with the favorites rail
+    // present, i.e. the expanded column's own budget.
+    NFBContainerHeights expandedFit = NFBFitContainers(room, side, step, favorites, rows);
+    // Same rule as NFBRowCenter: n rows need (n-1)*step + side. Clamp at zero
+    // so a zero-height budget cannot underflow into a huge count.
+    unsigned long capRows = 0;
+    if (expandedFit.regular >= side && step > 0) {
+        capRows = (unsigned long)((expandedFit.regular - side) / step) + 1;
+    }
+    if (capRows > rows) capRows = rows;
+    plan.expandedRowCap = capRows;
+    if (hideFavorites && capRows > 0 && rows > capRows) {
+        double capped = (capRows - 1) * step + side;
+        if (capped < height) height = capped;
+    }
     plan.rail = CGRectMake(rail.origin.x, y + favoriteHeight + gap, frameWidth, height);
     plan.favorites = CGRectMake(rail.origin.x, y, railWidth, favoriteHeight);
     plan.clearCenterY = CGRectGetMaxY(plan.rail) + 9 + side / 2;

@@ -665,6 +665,41 @@ int main(void) {
     check(!NFBToggleIsInteractive(true, false, true), "a hidden toggle takes no touches");
     check(!NFBToggleIsInteractive(false, true, false), "a disabled column takes no touches");
 
+
+    // --- the collapsed edge column never shows more rows than the expanded one
+    {
+        const double d = 48, step = d + 9, side = d + 14;
+        // Plenty of room, many unread apps: expanded keeps its favorites rail.
+        NFBRailPlan expMore = NFBPlanRail(W, H, safe, TOP, d, splitPosition, false, CGRectZero,
+                false, 0.7, false, 3, 12, 12, 200, d, W, true, false);
+        NFBRailPlan colMore = NFBPlanRail(W, H, safe, TOP, d, splitPosition, false, CGRectZero,
+                false, 0.7, true, 3, 12, 12, 200, d, W, true, false);
+        check(expMore.expandedRowCap > 0, "expanded cap computed for a real budget");
+        check(colMore.expandedRowCap == expMore.expandedRowCap,
+              "collapsed column reports the expanded row cap");
+        // Collapsed height may never exceed the expanded cap's rows.
+        double capHeight = (expMore.expandedRowCap - 1) * step + side;
+        check(CGRectGetHeight(colMore.rail) <= capHeight + 0.51,
+              "collapsed rail height never exceeds the expanded row cap");
+        check(CGRectGetHeight(colMore.rail) + 0.51 >= side,
+              "collapsed rail still fits at least one row");
+        // No favorites configured: expanded is already full height, so the cap
+        // must not shrink the column below what it would have had anyway.
+        NFBRailPlan expNoFav = NFBPlanRail(W, H, safe, TOP, d, splitPosition, false, CGRectZero,
+                false, 0.7, false, 0, 12, 12, 200, d, W, true, false);
+        NFBRailPlan colNoFav = NFBPlanRail(W, H, safe, TOP, d, splitPosition, false, CGRectZero,
+                false, 0.7, true, 0, 12, 12, 200, d, W, true, false);
+        close_(CGRectGetHeight(colNoFav.rail), CGRectGetHeight(expNoFav.rail),
+               "without favorites both states get the same budget");
+        // Zero rows never underflows into a huge cap.
+        NFBRailPlan emptyBudget = NFBPlanRail(W, 120, safe, TOP, d, splitPosition, false, CGRectZero,
+                false, 0.7, true, 3, 1, 1, 200, d, W, true, false);
+        check(emptyBudget.expandedRowCap < 1000, "degenerate budget cannot produce a huge row cap");
+        // Split is untouched by the cap.
+        NFBRailPlan splitPlan = NFBPlanRail(W, H, safe, TOP, d, splitPosition, true, splitFrame,
+                true, 0.7, false, 3, 12, 12, 200, d, W, true, false);
+        check(!splitPlan.edgeRail, "split column is never capped by the expanded rule");
+    }
     printf("PASS: column geometry (split -> fullscreen expanded -> collapsed -> empty)\n");
     printf("PASS: hidden fullscreen exception (screen-space half hide, all rows + control)\n");
     return 0;

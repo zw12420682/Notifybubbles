@@ -1598,13 +1598,24 @@ static NSString *NFBFrontmostAppID(void) {
     // Unread apps first (including unread favorites, which stay in the main
     // column even though the favorites rail is hidden), then the split's recent
     // background apps.
-    NSMutableOrderedSet<NSString *> *columnApps = [NSMutableOrderedSet orderedSetWithArray:notified];
-    // Reuse the very same recent-background group in every state. The ordered
-    // set merges unread membership without duplicating an app or changing order.
+    // Collapsed edge column: unread apps on top, the recent-background group
+    // below them, so a newly opened app lands at the bottom of the column and
+    // stacks upward like before. Split and expanded keep the original order.
     NSMutableArray<NSString *> *background = [NSMutableArray array];
     for (NSString *app in apps)
         if ([self.lastSwitcher containsObject:app] || [app isEqual:active]) [background addObject:app];
-    [columnApps addObjectsFromArray:NFBRecentBackgroundThree(background, history.array, self.favoriteApps)];
+    NSArray<NSString *> *recentGroup = NFBRecentBackgroundThree(background, history.array, self.favoriteApps);
+    NSMutableOrderedSet<NSString *> *columnApps = [NSMutableOrderedSet orderedSet];
+    if (collapse) {
+        // Collapsed: unread first (top), recent backgrounds below it, so a newly
+        // opened app joins at the bottom and stacks upward.
+        [columnApps addObjectsFromArray:notified];
+        [columnApps addObjectsFromArray:recentGroup];
+    } else {
+        // Split and expanded keep the shipped order: backgrounds first.
+        [columnApps addObjectsFromArray:recentGroup];
+        [columnApps addObjectsFromArray:notified];
+    }
     NSArray<NSString *> *railApps = columnApps.array;
     NSMutableArray<NSString *> *displayApps = [railApps mutableCopy];
     // The bottom close control belongs to split mode only. Outside a split,

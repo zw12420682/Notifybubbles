@@ -140,8 +140,12 @@ if "NFBHalfHiddenBubbleX" in geometry or "NFBCollapsedEdgeRailFrameX" in geometr
 # Recent-background membership must also survive collapsed edge mode.
 if "BOOL halfHiddenColumn = collapsed && !split;" not in manager:
     problems.append("all collapsed edge states must use the half-hidden geometry")
-if manager.count("[columnApps addObjectsFromArray:NFBRecentBackgroundThree(background, history.array, self.favoriteApps)];") != 1:
-    problems.append("one shared recent-background group must serve split, expanded and collapsed states")
+if "NSArray<NSString *> *recentGroup = NFBRecentBackgroundThree(background, history.array, self.favoriteApps);" not in manager:
+    problems.append("one shared recent-background group must serve every column state")
+if manager.count("[columnApps addObjectsFromArray:recentGroup];") != 2:
+    problems.append("the shared background group must feed both branches")
+if "if (collapse) {" not in manager:
+    problems.append("collapsed membership must be ordered separately from split/expanded")
 if "columnApps addObject:fullscreenApp" in manager:
     problems.append("the special fullscreen app row must not be reintroduced")
 if "NFBCurrentWindowState()" not in manager:
