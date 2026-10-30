@@ -253,18 +253,20 @@ int main(void) {
         Check(NFBDispatchRightEdgeTap(edge, tap) && edge.calls == 1 && edge.received == tap, @"Original tap callback invoked exactly once with recognizer");
         Check(!NFBDispatchRightEdgeTap([TestEdgeWrong new], tap), @"ABI mismatch rejected");
         Check(!NFBDispatchRightEdgeTap([NSObject new], tap) && !NFBDispatchRightEdgeTap(edge, nil), @"Missing callback/recognizer rejected");
-        NSLog(@"PASS: queue chronology, per-app isolation, deduplication, consumption, switcher pins, unread clearing and geometry");
-    }
-    return 0;
-}
-
-        // Collapsed edge column order: unread apps first (top), recent
-        // backgrounds below, so a newly opened app sits at the bottom.
+    
+    // Collapsed edge column order: unread apps first (top), recent backgrounds
+    // below, so a newly opened app sits at the bottom; duplicates collapse.
+    {
         NSMutableOrderedSet *collapsedOrder = [NSMutableOrderedSet orderedSetWithArray:@[@"unreadA", @"unreadB"]];
         [collapsedOrder addObjectsFromArray:@[@"recentC", @"recentD"]];
         Check([collapsedOrder.array isEqual:@[@"unreadA", @"unreadB", @"recentC", @"recentD"]],
-              "collapsed order keeps unread above the recent backgrounds");
+              @"collapsed order keeps unread above the recent backgrounds");
         NSMutableOrderedSet *mergedOrder = [NSMutableOrderedSet orderedSetWithArray:@[@"unreadA", @"recentC"]];
         [mergedOrder addObjectsFromArray:@[@"recentC", @"unreadA"]];
         Check([mergedOrder.array isEqual:@[@"unreadA", @"recentC"]],
-              "an app in both groups still appears once in the collapsed order");
+              @"an app in both groups still appears once in the collapsed order");
+    }
+    NSLog(@"PASS: queue chronology, per-app isolation, deduplication, consumption, switcher pins, unread clearing and geometry");
+    }
+    return 0;
+}
