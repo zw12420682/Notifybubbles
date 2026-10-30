@@ -1604,14 +1604,14 @@ static NSString *NFBFrontmostAppID(void) {
     NSMutableArray<NSString *> *background = [NSMutableArray array];
     for (NSString *app in apps)
         if ([self.lastSwitcher containsObject:app] || [app isEqual:active]) [background addObject:app];
+    // Membership order only needs the resolved split state, not the plan's
+    // isfinite-sanitised variant, so this is safe before splitNow is declared.
+    BOOL collapse = !split && !self.edgeExpanded;
     // The collapsed column hides the favorites rail, so favorites must stay
     // reachable there as ordinary background apps; split/expanded keep excluding them.
     NSArray<NSString *> *recentGroup =
         NFBRecentBackgroundThreeIncludingFavorites(background, history.array, self.favoriteApps, collapse);
     NSMutableOrderedSet<NSString *> *columnApps = [NSMutableOrderedSet orderedSet];
-    // Membership order only needs the resolved split state, not the plan's
-    // isfinite-sanitised variant, so this is safe before splitNow is declared.
-    BOOL collapse = !split && !self.edgeExpanded;
     if (collapse) {
         // Collapsed: unread first (top), recent backgrounds below it, so a newly
         // opened app joins at the bottom and stacks upward.
