@@ -220,6 +220,14 @@ int main(void) {
         [duplicateStore pinApp:@"same"];
         Check(duplicateStore.appIDs.count == 1, @"Re-pinning an existing app does not duplicate it");
         Check([duplicateStore countForApp:@"same"] == 2, @"Both messages still count for that one entry");
+        // The collapsed column hides the favorites rail, so favorites must still
+        // be reachable there; split/expanded keep excluding them.
+        Check([NFBRecentBackgroundThreeIncludingFavorites(edgeOrder, @[@"c", @"b", @"d", @"a"], @[@"c"], YES)
+               isEqual:@[@"c", @"b", @"d"]], @"Collapsed background group keeps favorite apps");
+        Check([NFBRecentBackgroundThreeIncludingFavorites(edgeOrder, @[@"c", @"b", @"d", @"a"], @[@"c"], NO)
+               isEqual:@[@"b", @"d", @"a"]], @"Split/expanded background group still excludes favorites");
+        Check([NFBRecentBackgroundThree(edgeOrder, @[@"c", @"b", @"d", @"a"], @[@"c"]) isEqual:@[@"b", @"d", @"a"]],
+              @"The original helper keeps its existing behaviour");
         NSArray *sixApps = @[@"a", @"b", @"c", @"d", @"e", @"f"];
         NSArray *four = NFBRecentFour(sixApps, sixApps, @[], @"b", @[]);
         Check([four isEqual:@[@"a", @"b", @"c", @"d"]], @"Only four actual members, not merely four visible rows");

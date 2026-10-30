@@ -51,11 +51,21 @@ static inline NSArray<NSString *> *NFBVisibleEdgeApps(NSArray<NSString *> *order
     for (NSString *app in ordered) if (unread(app) > 0) [visible addObject:app];
     return visible;
 }
+static inline NSArray<NSString *> *NFBRecentBackgroundThreeIncludingFavorites(NSArray<NSString *> *apps,
+        NSArray<NSString *> *recent, NSArray<NSString *> *favorites, BOOL includeFavorites);
 static inline NSArray<NSString *> *NFBRecentBackgroundThree(NSArray<NSString *> *apps,
         NSArray<NSString *> *recent, NSArray<NSString *> *favorites) {
+    return NFBRecentBackgroundThreeIncludingFavorites(apps, recent, favorites, NO);
+}
+
+// `includeFavorites` keeps favorite apps in the group. The collapsed edge column
+// hides the favorites rail, so its members would otherwise vanish entirely; there
+// they join as ordinary background apps (membership still deduplicates).
+static inline NSArray<NSString *> *NFBRecentBackgroundThreeIncludingFavorites(NSArray<NSString *> *apps,
+        NSArray<NSString *> *recent, NSArray<NSString *> *favorites, BOOL includeFavorites) {
     NSMutableOrderedSet<NSString *> *ranked = [NSMutableOrderedSet orderedSet];
     for (NSString *app in recent)
-        if ([apps containsObject:app] && ![favorites containsObject:app]) [ranked addObject:app];
+        if ([apps containsObject:app] && (includeFavorites || ![favorites containsObject:app])) [ranked addObject:app];
     return [ranked.array subarrayWithRange:NSMakeRange(0, MIN((NSUInteger)3, ranked.count))];
 }
 
