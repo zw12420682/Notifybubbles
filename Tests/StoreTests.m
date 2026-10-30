@@ -200,6 +200,12 @@ int main(void) {
         Check([NFBRecentBackgroundThree(edgeOrder, @[@"c", @"b", @"d", @"a"], @[@"c"]) isEqual:@[@"b", @"d", @"a"]], @"Split picks three recent non-favorites");
         Check([NFBRecentBackgroundThree(edgeOrder, @[@"a", @"c", @"b", @"d"], @[@"c"]) isEqual:@[@"a", @"b", @"d"]], @"Recency changes the three members");
         Check(NFBRecentBackgroundThree(edgeOrder, @[@"removed"], @[]).count == 0, @"Stale switcher history cannot create icons");
+        NSMutableOrderedSet *edgeGroup = [NSMutableOrderedSet orderedSetWithArray:@[@"a", @"b"]];
+        [edgeGroup addObjectsFromArray:NFBRecentBackgroundThree(edgeOrder, @[@"c", @"b", @"d", @"a"], @[@"c"])];
+        Check([edgeGroup.array isEqual:@[@"a", @"b", @"d"]], @"Unread plus existing background group keeps read apps and deduplicates unread apps");
+        NSMutableOrderedSet *noUnreadGroup = [NSMutableOrderedSet orderedSet];
+        [noUnreadGroup addObjectsFromArray:NFBRecentBackgroundThree(edgeOrder, @[@"c", @"b", @"d", @"a"], @[@"c"])];
+        Check([noUnreadGroup.array isEqual:@[@"b", @"d", @"a"]], @"No unread still keeps the existing background group without an extra fullscreen row");
         NSArray *sixApps = @[@"a", @"b", @"c", @"d", @"e", @"f"];
         NSArray *four = NFBRecentFour(sixApps, sixApps, @[], @"b", @[]);
         Check([four isEqual:@[@"a", @"b", @"c", @"d"]], @"Only four actual members, not merely four visible rows");

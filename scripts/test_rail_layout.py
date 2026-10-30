@@ -137,18 +137,21 @@ if "return screenWidth - (4 + (diameter + 14) / 2) + margin;" not in geometry:
     problems.append("the half-hidden column x must put the image centre on the screen edge")
 if "NFBHalfHiddenBubbleX" in geometry or "NFBCollapsedEdgeRailFrameX" in geometry:
     problems.append("the old local-x half-hide helpers must be gone")
-if "NFBExpandedAppHalfHidden(collapsed, split, fullscreenApp.length > 0)" not in manager:
-    problems.append("the manager must track the fullscreen app of the column")
-if "if (exceptionApp && ![columnApps containsObject:fullscreenApp]) [columnApps addObject:fullscreenApp];" not in manager:
-    problems.append("the fullscreen app must join the same column and never duplicate a notified app")
-if "windowState.fullscreen" not in manager or "NFBCurrentWindowState()" not in manager:
-    problems.append("the front app must come from the shared NFBWindowState, not a new tree scan")
+# Recent-background membership must also survive collapsed edge mode.
+if "BOOL halfHiddenColumn = collapsed && !split;" not in manager:
+    problems.append("all collapsed edge states must use the half-hidden geometry")
+if manager.count("[columnApps addObjectsFromArray:NFBRecentBackgroundThree(background, history.array, self.favoriteApps)];") != 1:
+    problems.append("one shared recent-background group must serve split, expanded and collapsed states")
+if "columnApps addObject:fullscreenApp" in manager:
+    problems.append("the special fullscreen app row must not be reintroduced")
+if "NFBCurrentWindowState()" not in manager:
+    problems.append("front state must continue using the shared snapshot")
 # The manager must pass the half-hidden state to the plan (not a local x guess).
 # ...through the one gate the collapsed control's gestures share, so an expanded
 # column (what a left swipe unfolds into) is never laid out half hidden.
-if "self.splitRailMeasured, edgeRailHugging(exceptionApp, self.edgeExpanded));" not in manager:
+if "self.splitRailMeasured, edgeRailHugging(halfHiddenColumn, self.edgeExpanded));" not in manager:
     problems.append("the plan must receive the half-hidden state")
-if "return halfHidden && !expanded;" not in manager or "edgeRailHugging(exceptionApp, self.edgeExpanded)" not in manager:
+if "return halfHidden && !expanded;" not in manager or "edgeRailHugging(halfHiddenColumn, self.edgeExpanded)" not in manager:
     problems.append("only the collapsed column may hug the screen edge")
 # The move is applied exactly once: no row carries an offset, and the control
 # takes the rail's x instead of adding the shift a second time.
@@ -160,7 +163,7 @@ for stale in ["rowInset", "clearInset", "+ plan.halfHiddenShift", "NFBHalfHidden
 if "toggleFrame.origin.x = CGRectGetMinX(railFrame);" not in manager:
     problems.append("the control shares the rail's half-hidden x")
 # Whole-column fade: no per-row exception alpha, the column dims as one.
-if "CGFloat columnAlpha = exceptionApp ? 0.5 : 1;" not in manager:
+if "CGFloat columnAlpha = halfHiddenColumn ? 0.5 : 1;" not in manager:
     problems.append("the collapsed fullscreen column must fade as a whole")
 if "if (exceptionRow) alpha = 0.5;" in manager:
     problems.append("only the fullscreen row must not be dimmed individually")

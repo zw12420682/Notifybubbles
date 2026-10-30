@@ -1564,15 +1564,9 @@ static NSString *NFBFrontmostAppID(void) {
     // runloop turn and shared, so this is a lookup, not an extra tree scan. A
     // split owns the column, and the desktop owns no app, so neither qualifies.
     NFBWindowState *windowState = NFBCurrentWindowState();
-    NSString *fullscreenApp = (!split && !windowState.home && windowState.fullscreen) ? windowState.frontApp : nil;
-    if (NFBIsSystemDesktop(fullscreenApp)) fullscreenApp = nil;
-    if ([self.closingApps containsObject:fullscreenApp ?: @""] || [self.dismissedSwitcher containsObject:fullscreenApp ?: @""])
-        fullscreenApp = nil;
-    // Collapsed column only: that row exists to keep the current app reachable
-    // while the column is folded; expanding shows everything fully again.
-    // A left swipe unfolds from the screen edge, so only the collapsed column
-    // hugs it (edgeRailHugging); an expanded one must keep its icons on screen.
-    BOOL exceptionApp = NFBExpandedAppHalfHidden(collapsed, split, fullscreenApp.length > 0);
+    // The collapsed edge column keeps the existing recent-background group on
+    // both the desktop and fullscreen apps. No special current-app membership.
+    BOOL halfHiddenColumn = collapsed && !split;
     NSString *active = NFBTrollVisibleApp() ?: floatingApp ?: (home ? nil : windowState.frontApp);
     // Clearing unread must leave the column (and its background apps) exactly as
     // it was, so this one layout keeps the apps it is replacing until the
@@ -1605,24 +1599,12 @@ static NSString *NFBFrontmostAppID(void) {
     // column even though the favorites rail is hidden), then the split's recent
     // background apps.
     NSMutableOrderedSet<NSString *> *columnApps = [NSMutableOrderedSet orderedSetWithArray:notified];
-    if (split) {
-        // Membership, not merely viewport height, is limited to three recent apps.
-        NSMutableArray<NSString *> *background = [NSMutableArray array];
-        for (NSString *app in apps)
-            if ([self.lastSwitcher containsObject:app] || [app isEqual:active]) [background addObject:app];
-        [columnApps addObjectsFromArray:NFBRecentBackgroundThree(background, history.array, self.favoriteApps)];
-    } else if (!collapsed) {
-        // Expanded: everything, so nothing is hidden behind the collapsed state.
-        NSMutableArray<NSString *> *background = [NSMutableArray array];
-        for (NSString *app in apps)
-            if ([self.lastSwitcher containsObject:app] || [app isEqual:active]) [background addObject:app];
-        [columnApps addObjectsFromArray:NFBRecentBackgroundThree(background, history.array, self.favoriteApps)];
-    }
-    // The fullscreen app joins the same column - no separate floating view. It is
-    // appended last so it never reshuffles the unread order, and it is skipped when
-    // that app already has a notification: then the unread row already keeps it
-    // reachable and the app must appear exactly once.
-    if (exceptionApp && ![columnApps containsObject:fullscreenApp]) [columnApps addObject:fullscreenApp];
+    // Reuse the very same recent-background group in every state. The ordered
+    // set merges unread membership without duplicating an app or changing order.
+    NSMutableArray<NSString *> *background = [NSMutableArray array];
+    for (NSString *app in apps)
+        if ([self.lastSwitcher containsObject:app] || [app isEqual:active]) [background addObject:app];
+    [columnApps addObjectsFromArray:NFBRecentBackgroundThree(background, history.array, self.favoriteApps)];
     NSArray<NSString *> *railApps = columnApps.array;
     NSMutableArray<NSString *> *displayApps = [railApps mutableCopy];
     // The bottom close control belongs to split mode only. Outside a split,
@@ -1762,7 +1744,7 @@ static NSString *NFBFrontmostAppID(void) {
         NFBFloatingPosition, splitNow, splitA, splitUsable, self.verticalPosition, collapse,
         hideFavorites ? 0 : self.favoriteApps.count, (unsigned long)columnRows, (unsigned long)notifiedCount,
         (double)self.splitRailTop, (double)self.splitRailDiameter, (double)self.splitRailScreenWidth,
-        self.splitRailMeasured, edgeRailHugging(exceptionApp, self.edgeExpanded));
+        self.splitRailMeasured, edgeRailHugging(halfHiddenColumn, self.edgeExpanded));
     // Keep the old fullscreen placement available if a device asks for it; the
     // default replays the measured split column (see NFBRailLayout.h).
     if (!splitNow && !NFBPreference(@"ColumnReuseSplitMeasure", YES))
@@ -1770,7 +1752,7 @@ static NSString *NFBFrontmostAppID(void) {
             NFBFloatingPosition, NO, CGRectZero, NO, self.verticalPosition, collapse,
             hideFavorites ? 0 : self.favoriteApps.count, (unsigned long)columnRows,
             (unsigned long)notifiedCount, (double)self.splitRailTop, (double)self.splitRailDiameter,
-            (double)self.splitRailScreenWidth, self.splitRailMeasured, edgeRailHugging(exceptionApp, self.edgeExpanded));
+            (double)self.splitRailScreenWidth, self.splitRailMeasured, edgeRailHugging(halfHiddenColumn, self.edgeExpanded));
     BOOL railMeasuredNow = NO;
     if (splitNow && plan.toggleTop > 0) {
         // A genuinely laid-out split column is the reference the fullscreen column
@@ -1820,7 +1802,7 @@ static NSString *NFBFrontmostAppID(void) {
     // parked-only column keep the plain slot.
     // Every gesture on the control (tap, hold, swipe) shares that visible half,
     // so a half-hidden control never claims the full square behind the edge.
-    BOOL toggleHalfHidden = exceptionApp && !self.edgeExpanded && !splitNow && !CGRectIsNull(toggleFrame);
+    BOOL toggleHalfHidden = halfHiddenColumn && !self.edgeExpanded && !splitNow && !CGRectIsNull(toggleFrame);
     if (toggleHalfHidden) toggleFrame.origin.x = CGRectGetMinX(railFrame);
     BOOL parked = plan.parked && !self.edgeExpanded;
     self.desktopActionParked = parked;
@@ -1845,7 +1827,7 @@ static NSString *NFBFrontmostAppID(void) {
     // The whole visible column - unread rows included - is half hidden in the
     // collapsed fullscreen state: the rail, every row and the control share the
     // same shift and the same 0.5 alpha, so no unread icon stays fully visible.
-    CGFloat columnAlpha = exceptionApp ? 0.5 : 1;
+    CGFloat columnAlpha = halfHiddenColumn ? 0.5 : 1;
     CGFloat targetRailAlpha = rowCount ? columnAlpha : 0;
     CGFloat targetMaterialAlpha = rowCount && height > 0 ? 0.55 * columnAlpha : 0;
     BOOL railSizeChanged = !CGSizeEqualToSize(self.rail.bounds.size, railFrame.size);
