@@ -206,6 +206,20 @@ int main(void) {
         NSMutableOrderedSet *noUnreadGroup = [NSMutableOrderedSet orderedSet];
         [noUnreadGroup addObjectsFromArray:NFBRecentBackgroundThree(edgeOrder, @[@"c", @"b", @"d", @"a"], @[@"c"])];
         Check([noUnreadGroup.array isEqual:@[@"b", @"d", @"a"]], @"No unread still keeps the existing background group without an extra fullscreen row");
+        // A second message for an already-pinned app must not add it to the fixed
+        // list again: appIDs feeds rail membership, so a duplicate pin showed the
+        // same icon twice with the same badge.
+        NFBStore *duplicateStore = [NFBStore new];
+        id duplicateDestination = [NSObject new];
+        Check([duplicateStore putApp:@"same" notification:@"n1" request:Request(30) destination:duplicateDestination],
+              @"First message pins and queues the app");
+        Check([duplicateStore putApp:@"same" notification:@"n2" request:Request(31) destination:duplicateDestination],
+              @"Second message is queued");
+        Check(duplicateStore.appIDs.count == 1 && [duplicateStore.appIDs.firstObject isEqual:@"same"],
+              @"New message for a pinned app keeps exactly one entry");
+        [duplicateStore pinApp:@"same"];
+        Check(duplicateStore.appIDs.count == 1, @"Re-pinning an existing app does not duplicate it");
+        Check([duplicateStore countForApp:@"same"] == 2, @"Both messages still count for that one entry");
         NSArray *sixApps = @[@"a", @"b", @"c", @"d", @"e", @"f"];
         NSArray *four = NFBRecentFour(sixApps, sixApps, @[], @"b", @[]);
         Check([four isEqual:@[@"a", @"b", @"c", @"d"]], @"Only four actual members, not merely four visible rows");

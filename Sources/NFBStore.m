@@ -38,7 +38,7 @@ NSString *NFBRevisionForRequest(id request) {
     // Switcher cards append ABOVE the existing bubbles: the first bubble stays
     // anchored at the bottom (index 0 = lowest) and never moves, while each new
     // bubble stacks upward on top of it.
-    if (appID.length) [self.pins addObject:appID];
+    if (appID.length && ![self.pins containsObject:appID]) [self.pins addObject:appID];
 }
 - (void)promoteApp:(NSString *)appID {
     if (![self.pins containsObject:appID]) return;
@@ -69,7 +69,10 @@ NSString *NFBRevisionForRequest(id request) {
     // "first icon is lowest" geometry) and never moves, while each new bubble
     // stacks upward on top of it. An app that already has a bubble keeps its
     // position (no re-promotion).
-    if (![self.pins containsObject:appID]) [self.pins addObject:appID];
+    // pins drives appIDs and therefore rail membership: a second add would put
+    // the same app in the column twice whenever a new message arrived for an app
+    // that was already pinned (pinApp uses addObject, which does not dedupe).
+    if (appID.length && ![self.pins containsObject:appID]) [self.pins addObject:appID];
     if (self.records.count > 512) [self eraseRecord:self.records.firstObject];
     return YES;
 }
