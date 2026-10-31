@@ -338,18 +338,31 @@ static void testTickReconcile(void) {
 
 static void testFixedBackgroundSections(void) {
     for (int d = 32; d <= 56; d += 8) {
-        double side = d + 14, step = d + 9, budget = 2 * step + side;
-        NFBEdgeSections empty = NFBEdgeSectionLayout(budget, side, step, 0, 3);
-        check(empty.backgroundOffset == 0, "without unread no blank area above backgrounds");
-        for (unsigned long count = 1; count < 20; ++count) {
-            NFBEdgeSections p = NFBEdgeSectionLayout(budget, side, step, count, 3);
-            check(p.totalHeight <= budget + 0.01, "both viewports remain in original column budget");
-            check(p.unreadHeight + 9 <= p.backgroundOffset + 0.01, "two viewports do not overlap");
-            check(p.backgroundHeight > 0 && p.unreadHeight > 0, "both groups have independent viewports");
-            check(p.backgroundHeight < 2 * step + side, "background overflow can scroll in its viewport");
+        double side = d + 14, step = d + 9;
+        for (unsigned long unread = 0; unread < 8; ++unread) {
+            NFBEdgeSections p = NFBEdgeSectionLayout(4000, side, step, unread, 6);
+            check(fabs(p.backgroundHeight - NFBEdgeRowsHeight(4, side, step)) < 0.01,
+                  "background viewport always shows four rows");
+            if (unread) check(fabs(p.unreadHeight - NFBEdgeRowsHeight(3, side, step)) < 0.01,
+                              "unread viewport always shows three rows");
+            if (unread) {
+                check(p.backgroundOffset >= p.unreadHeight + 9 - 0.01,
+                      "with unread present the two viewports keep their 9pt gap");
+            } else {
+                check(p.backgroundOffset >= p.unreadHeight - 0.01,
+                      "an empty unread viewport does not overlap the backgrounds");
+            }
         }
-        NFBEdgeSections noBg = NFBEdgeSectionLayout(budget, side, step, 20, 0);
-        check(noBg.backgroundHeight == 0, "empty group reserves no space");
+        NFBEdgeSections empty = NFBEdgeSectionLayout(4000, side, step, 0, 6);
+        check(empty.backgroundOffset == 0 && empty.unreadHeight == 0,
+              "without unread the background viewport starts at the top");
+        NFBEdgeSections noBg = NFBEdgeSectionLayout(4000, side, step, 5, 0);
+        check(noBg.backgroundHeight == 0, "an empty background group reserves no space");
+        double tight = NFBEdgeRowsHeight(5, side, step);
+        NFBEdgeSections squeezed = NFBEdgeSectionLayout(tight, side, step, 5, 6);
+        check(fabs(squeezed.backgroundHeight - NFBEdgeRowsHeight(4, side, step)) < 0.01,
+              "backgrounds keep their four rows when the budget is tight");
+        check(squeezed.totalHeight <= tight + 0.01, "fixed viewports stay inside the budget");
     }
 }
 

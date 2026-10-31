@@ -1805,10 +1805,9 @@ static NSString *NFBFrontmostAppID(void) {
     if (separateEdgeSections) {
         // Use the column's anchored screen span; only the upper notification
         // viewport scrolls. The fixed background group is never a scroll child.
-        // Same at-most-three-row main-column footprint as expanded mode. Do not
-        // anchor to the screen bottom; no unread means backgrounds start here.
-        double span = MIN(2 * step + side,
-            MAX(0, CGRectGetHeight(bounds) - MAX(safe.bottom, 12) - plan.rowsTop));
+        // Fixed viewports: unread shows three rows, backgrounds four. Do not
+        // anchor to the screen bottom; the span is the column budget only.
+        double span = MAX(0, CGRectGetHeight(bounds) - MAX(safe.bottom, 12) - plan.rowsTop);
         NFBEdgeSections sections = NFBEdgeSectionLayout(span, side, step,
             unreadScrollApps.count, fixedApps.count);
         height = sections.unreadHeight;
@@ -1844,7 +1843,7 @@ static NSString *NFBFrontmostAppID(void) {
                     self.fixedBackgroundMaterial.frame = fixedMaterial;
                 } completion:nil];
         }
-        CGFloat backgroundContent = (fixedApps.count - 1) * step + side;
+        CGFloat backgroundContent = NFBEdgeRowsHeight(fixedApps.count, side, step);
         self.fixedBackgroundHost.contentSize = CGSizeMake(side, backgroundContent);
         self.fixedBackgroundHost.bounces = backgroundContent > fixedBackgroundFrame.size.height;
         self.fixedBackgroundHost.scrollEnabled = YES;
