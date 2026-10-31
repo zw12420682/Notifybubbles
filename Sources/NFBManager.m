@@ -241,6 +241,8 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic) BOOL holdsClearedColumn;
 @property(nonatomic) BOOL desktopActionToggle;
 @property(nonatomic) BOOL desktopActionParked;
+// Set while laying out a background-area row: those icons never show a count.
+@property(nonatomic) BOOL suppressBadgeForFixedRow;
 // Collapsed fullscreen column: the control shares the rows' shift and alpha.
 @property(nonatomic) BOOL desktopActionHalfHidden;
 @property(nonatomic) CFTimeInterval lastInteractionAt;
@@ -1255,7 +1257,7 @@ static NSString *NFBFrontmostAppID(void) {
     // system icon's badge number. That keeps the badge visible for every app
     // with a pending notification (including in split view) and lets it clear
     // the moment the record is consumed — i.e. when the app is opened.
-    NSUInteger unread = [self.store countForApp:button.appID];
+    NSUInteger unread = self.suppressBadgeForFixedRow ? 0 : [self.store countForApp:button.appID];
     NSString *text = unread > 0 ? [NSString stringWithFormat:@"%lu", (unsigned long)unread] : nil;
     // Text only: -layoutBadge:diameter: owns the geometry for all call sites.
     // The version changes only with the content, so a 20 Hz pass that repeats the
@@ -1354,7 +1356,9 @@ static NSString *NFBFrontmostAppID(void) {
         // a reminder. Unchanged condition, now on a row that is really placed.
         if (NFBBurstShouldShake(in)) [self shakeBubble:button];
         if (!owner) continue;
-        [owner scrollRectToVisible:row animated:!in.reduceMotion];
+        // Split keeps the shipped reminder; expanded/scrolled rows follow the same
+        // rule so a new notification is brought into view there too.
+        if (NFBBurstShouldScroll(in)) [owner scrollRectToVisible:row animated:!in.reduceMotion];
     }
     // Dropped only now, and only the apps this pass handled. An app without a
     // bubble after the layout (closed meanwhile) has no reminder left either.
@@ -1612,8 +1616,20 @@ static NSString *NFBFrontmostAppID(void) {
     BOOL collapse = !split && !self.edgeExpanded;
     // The collapsed column hides the favorites rail, so favorites must stay
     // reachable there as ordinary background apps; split/expanded keep excluding them.
-    NSArray<NSString *> *recentGroup =
-        NFBRecentBackgroundThreeIncludingFavorites(background, history.array, self.favoriteApps, collapse);
+    // Collapsed: the background area mirrors the real app switcher, ignores
+    // favorites and never repeats an app that already has an unread row. One app
+    // therefore appears exactly once. Split/expanded keep the shipped group.
+    NSMutableArray<NSString *> *switcherGroup = [NSMutableArray array];
+    if (collapse) {
+        for (NSString *app in self.lastSwitcher ?: @[]) {
+            if ([notified containsObject:app]) continue;
+            if ([switcherGroup containsObject:app]) continue;
+            [switcherGroup addObject:app];
+        }
+    }
+    NSArray<NSString *> *recentGroup = collapse
+        ? switcherGroup
+        : NFBRecentBackgroundThreeIncludingFavorites(background, history.array, self.favoriteApps, NO);
     NSMutableOrderedSet<NSString *> *columnApps = [NSMutableOrderedSet orderedSet];
     if (collapse) {
         // Collapsed: unread first (top), recent backgrounds below it, so a newly
@@ -1969,6 +1985,7 @@ static NSString *NFBFrontmostAppID(void) {
         BOOL isClearAll = [appID isEqualToString:NFBClearAllID];
         NSUInteger rowIndex = [unreadScrollApps indexOfObject:appID];
         BOOL fixedRow = separateEdgeSections && [fixedApps containsObject:appID];
+        self.suppressBadgeForFixedRow = fixedRow;
         if (fixedRow) rowIndex = [fixedApps indexOfObject:appID];
         UIView *parent = isClearAll ? root : (fixedRow ? self.fixedBackgroundHost : self.rail);
         NFBBubble *button = self.buttons[appID];

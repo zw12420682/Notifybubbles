@@ -341,10 +341,11 @@ static void testFixedBackgroundSections(void) {
         double side = d + 14, step = d + 9;
         for (unsigned long unread = 0; unread < 8; ++unread) {
             NFBEdgeSections p = NFBEdgeSectionLayout(4000, side, step, unread, 6);
-            check(fabs(p.backgroundHeight - NFBEdgeRowsHeight(4, side, step)) < 0.01,
-                  "background viewport always shows four rows");
-            if (unread) check(fabs(p.unreadHeight - NFBEdgeRowsHeight(3, side, step)) < 0.01,
-                              "unread viewport always shows three rows");
+
+            if (unread) check(fabs(p.unreadHeight - NFBEdgeViewportHeight(unread, NFBUnreadVisibleRows, side, step)) < 0.01,
+                              "unread viewport shows one row per app up to three");
+            check(fabs(p.backgroundHeight - NFBEdgeViewportHeight(6, NFBBackgroundVisibleRows, side, step)) < 0.01,
+                  "background viewport shows one row per app up to four");
             if (unread) {
                 check(p.backgroundOffset >= p.unreadHeight + 9 - 0.01,
                       "with unread present the two viewports keep their 9pt gap");
@@ -353,6 +354,11 @@ static void testFixedBackgroundSections(void) {
                       "an empty unread viewport does not overlap the backgrounds");
             }
         }
+        for (unsigned long n = 1; n <= 4; ++n) {
+            NFBEdgeSections shrink = NFBEdgeSectionLayout(4000, side, step, 0, n);
+            check(fabs(shrink.backgroundHeight - NFBEdgeRowsHeight(n, side, step)) < 0.01,
+                  "background viewport grows one row per app until the cap");
+        }
         NFBEdgeSections empty = NFBEdgeSectionLayout(4000, side, step, 0, 6);
         check(empty.backgroundOffset == 0 && empty.unreadHeight == 0,
               "without unread the background viewport starts at the top");
@@ -360,8 +366,8 @@ static void testFixedBackgroundSections(void) {
         check(noBg.backgroundHeight == 0, "an empty background group reserves no space");
         double tight = NFBEdgeRowsHeight(5, side, step);
         NFBEdgeSections squeezed = NFBEdgeSectionLayout(tight, side, step, 5, 6);
-        check(fabs(squeezed.backgroundHeight - NFBEdgeRowsHeight(4, side, step)) < 0.01,
-              "backgrounds keep their four rows when the budget is tight");
+        check(fabs(squeezed.backgroundHeight - NFBEdgeViewportHeight(6, NFBBackgroundVisibleRows, side, step)) < 0.01,
+              "backgrounds keep their capped viewport when the budget is tight");
         check(squeezed.totalHeight <= tight + 0.01, "fixed viewports stay inside the budget");
     }
 }

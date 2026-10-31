@@ -140,10 +140,12 @@ if "NFBHalfHiddenBubbleX" in geometry or "NFBCollapsedEdgeRailFrameX" in geometr
 # Recent-background membership must also survive collapsed edge mode.
 if "BOOL halfHiddenColumn = collapsed && !split;" not in manager:
     problems.append("all collapsed edge states must use the half-hidden geometry")
-if "NFBRecentBackgroundThreeIncludingFavorites(background, history.array, self.favoriteApps, collapse);" not in manager:
-    problems.append("one shared recent-background group must serve every column state")
-if "IncludingFavorites(background, history.array, self.favoriteApps, collapse)" not in manager:
-    problems.append("collapsed membership must include favorites (the rail is hidden there)")
+if "NSArray<NSString *> *recentGroup = collapse" not in manager:
+    problems.append("collapsed membership must be chosen separately from split/expanded")
+if "for (NSString *app in self.lastSwitcher ?: @[]) {" not in manager:
+    problems.append("collapsed backgrounds must mirror the real switcher")
+if "[notified containsObject:app]) continue;" not in manager:
+    problems.append("an app with unread must not repeat in the background area")
 if manager.count("[columnApps addObjectsFromArray:recentGroup];") != 2:
     problems.append("the shared background group must feed both branches")
 if "if (collapse) {" not in manager:
