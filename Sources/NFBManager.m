@@ -1621,6 +1621,8 @@ static NSString *NFBFrontmostAppID(void) {
     // therefore appears exactly once. Split/expanded keep the shipped group.
     NSMutableArray<NSString *> *switcherGroup = [NSMutableArray array];
     if (collapse) {
+        // The switcher's own order runs oldest first, rightmost (newest) card
+        // last, so replaying it puts the newest at the bottom of the column.
         for (NSString *app in self.lastSwitcher ?: @[]) {
             if ([notified containsObject:app]) continue;
             if ([switcherGroup containsObject:app]) continue;

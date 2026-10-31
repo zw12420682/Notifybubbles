@@ -203,6 +203,8 @@ static inline NFBRailPlan NFBPlanRail(double screenWidth, double screenHeight,
     bool hideFavorites = !split && collapsed;
     unsigned long favoriteRows = hideFavorites ? 0 : favorites;
     NFBContainerHeights fit = NFBFitContainers(room, side, step, favoriteRows, rows);
+    // Only the edge column needs whole rows; a split keeps the window-derived fit.
+    if (!split) fit = NFBSnapToRows(fit, side, step);
     double favoriteHeight = hideFavorites ? 0 : fit.favorites;
     double gap = fit.gap;
     height = fit.regular;
