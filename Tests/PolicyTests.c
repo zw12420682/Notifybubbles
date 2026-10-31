@@ -337,23 +337,19 @@ static void testTickReconcile(void) {
 }
 
 static void testFixedBackgroundSections(void) {
-    double widths[] = {32, 48, 56};
-    for (int d = 0; d < 3; ++d) {
-        double side = widths[d] + 14, step = widths[d] + 9;
-        NFBEdgeSections base = NFBEdgeSectionLayout(500, side, step, 0, 3);
+    for (int d = 32; d <= 56; d += 8) {
+        double side = d + 14, step = d + 9, budget = 2 * step + side;
+        NFBEdgeSections empty = NFBEdgeSectionLayout(budget, side, step, 0, 3);
+        check(empty.backgroundOffset == 0, "without unread no blank area above backgrounds");
         for (unsigned long count = 1; count < 20; ++count) {
-            NFBEdgeSections incoming = NFBEdgeSectionLayout(500, side, step, count, 3);
-            check(fabs(base.backgroundOffset - incoming.backgroundOffset) < 0.01,
-                  "new unread cannot move the fixed backgrounds");
-            check(fabs(base.backgroundHeight - incoming.backgroundHeight) < 0.01,
-                  "new unread cannot resize the fixed backgrounds");
-            check(incoming.unreadHeight + 9 <= incoming.backgroundOffset + 0.01,
-                  "unread viewport never overlaps the fixed group");
-            check(incoming.unreadHeight >= 0, "unread height cannot be negative");
+            NFBEdgeSections p = NFBEdgeSectionLayout(budget, side, step, count, 3);
+            check(p.totalHeight <= budget + 0.01, "both viewports remain in original column budget");
+            check(p.unreadHeight + 9 <= p.backgroundOffset + 0.01, "two viewports do not overlap");
+            check(p.backgroundHeight > 0 && p.unreadHeight > 0, "both groups have independent viewports");
+            check(p.backgroundHeight < 2 * step + side, "background overflow can scroll in its viewport");
         }
-        NFBEdgeSections noBackground = NFBEdgeSectionLayout(500, side, step, 20, 0);
-        check(noBackground.backgroundHeight == 0, "no fixed group reserves no height");
-        check(noBackground.unreadHeight == 500, "unread can use the available empty space");
+        NFBEdgeSections noBg = NFBEdgeSectionLayout(budget, side, step, 20, 0);
+        check(noBg.backgroundHeight == 0, "empty group reserves no space");
     }
 }
 

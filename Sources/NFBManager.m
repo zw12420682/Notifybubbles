@@ -90,15 +90,6 @@ static double NFBNumber(NSString *key, double fallback) {
 }
 @end
 
-// A fixed group is not a scroll container and empty padding passes through.
-@interface NFBFixedGroup : UIView @end
-@implementation NFBFixedGroup
-- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
-    UIView *hit = [super hitTest:point withEvent:event];
-    return hit == self ? nil : hit;
-}
-@end
-
 @interface NFBWindow : UIWindow
 @end
 @implementation NFBWindow
@@ -197,7 +188,7 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, strong) NFBStore *store;
 @property(nonatomic, strong) NFBWindow *window;
 @property(nonatomic, strong) NFBRail *rail;
-@property(nonatomic, strong) UIView *fixedBackgroundHost;
+@property(nonatomic, strong) NFBRail *fixedBackgroundHost;
 @property(nonatomic, strong) UIVisualEffectView *fixedBackgroundMaterial;
 
 @property(nonatomic, strong) NFBBubble *desktopActionButton;
@@ -1814,10 +1805,13 @@ static NSString *NFBFrontmostAppID(void) {
     if (separateEdgeSections) {
         // Use the column's anchored screen span; only the upper notification
         // viewport scrolls. The fixed background group is never a scroll child.
-        double span = MAX(0, CGRectGetHeight(bounds) - MAX(safe.bottom, 12) - plan.rowsTop);
+        // Same at-most-three-row main-column footprint as expanded mode. Do not
+        // anchor to the screen bottom; no unread means backgrounds start here.
+        double span = MIN(2 * step + side,
+            MAX(0, CGRectGetHeight(bounds) - MAX(safe.bottom, 12) - plan.rowsTop));
         NFBEdgeSections sections = NFBEdgeSectionLayout(span, side, step,
             unreadScrollApps.count, fixedApps.count);
-        height = MIN(sections.unreadHeight, 2 * step + side);
+        height = sections.unreadHeight;
         railFrame = CGRectMake(railFrame.origin.x, plan.rowsTop, railFrame.size.width, height);
         fixedBackgroundFrame = CGRectMake(railFrame.origin.x,
             plan.rowsTop + sections.backgroundOffset, railFrame.size.width, sections.backgroundHeight);
@@ -1827,8 +1821,11 @@ static NSString *NFBFrontmostAppID(void) {
             initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterial]];
         self.fixedBackgroundMaterial.userInteractionEnabled = NO;
         self.fixedBackgroundMaterial.clipsToBounds = YES;
-        self.fixedBackgroundHost = [NFBFixedGroup new];
-        self.fixedBackgroundHost.clipsToBounds = NO;
+        self.fixedBackgroundHost = [NFBRail new];
+        self.fixedBackgroundHost.clipsToBounds = YES;
+        self.fixedBackgroundHost.delegate = self;
+        self.fixedBackgroundHost.showsVerticalScrollIndicator = NO;
+        self.fixedBackgroundHost.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
         [root addSubview:self.fixedBackgroundMaterial];
         [root addSubview:self.fixedBackgroundHost];
     }
@@ -1846,6 +1843,16 @@ static NSString *NFBFrontmostAppID(void) {
                     self.fixedBackgroundHost.frame = fixedBackgroundFrame;
                     self.fixedBackgroundMaterial.frame = fixedMaterial;
                 } completion:nil];
+        }
+        CGFloat backgroundContent = (fixedApps.count - 1) * step + side;
+        self.fixedBackgroundHost.contentSize = CGSizeMake(side, backgroundContent);
+        self.fixedBackgroundHost.bounces = backgroundContent > fixedBackgroundFrame.size.height;
+        self.fixedBackgroundHost.scrollEnabled = YES;
+        if (!self.fixedBackgroundHost.dragging && !self.fixedBackgroundHost.decelerating) {
+            CGFloat maxY = MAX(0, backgroundContent - fixedBackgroundFrame.size.height);
+            CGFloat offset = MAX(0, MIN(maxY, self.fixedBackgroundHost.contentOffset.y));
+            if (self.fixedBackgroundHost.contentOffset.y != offset)
+                self.fixedBackgroundHost.contentOffset = CGPointMake(0, offset);
         }
         self.fixedBackgroundHost.alpha = 0.5;
         self.fixedBackgroundMaterial.alpha = 0.275;
@@ -2487,6 +2494,8 @@ static NSString *NFBFrontmostAppID(void) {
     return [self view:view containsVisiblePoint:[touch locationInView:view]];
 }
 - (UIView *)rail:(NFBRail *)rail bubbleAtPoint:(CGPoint)point withEvent:(UIEvent *)event {
+    if (rail.clipsToBounds && (point.y < CGRectGetMinY(rail.bounds) ||
+        point.y > CGRectGetMaxY(rail.bounds))) return nil;
     for (UIView *candidate in rail.subviews.reverseObjectEnumerator) {
         if (![candidate isKindOfClass:NFBBubble.class] || candidate.hidden ||
             candidate.alpha < 0.01 || !candidate.userInteractionEnabled) continue;
@@ -2533,7 +2542,7 @@ static NSString *NFBFrontmostAppID(void) {
 // Programmatic scrolling (revealing the active row, settling the offset) does not
 // count as user activity; only a finger on the list does.
 - (void)scrollViewWillBeginDragging:(UIScrollView *)scrollView {
-    if (scrollView == self.rail || scrollView == self.favoritesRail) [self touchColumn];
+    if (scrollView == self.rail || scrollView == self.favoritesRail || scrollView == self.fixedBackgroundHost) [self touchColumn];
 }
 - (void)scrollViewDidScroll:(UIScrollView *)scrollView {
     if (scrollView != self.rail && scrollView != self.favoritesRail) return;
@@ -2541,11 +2550,11 @@ static NSString *NFBFrontmostAppID(void) {
     if (scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating) [self touchColumn];
 }
 - (void)scrollViewDidEndDragging:(UIScrollView *)scrollView willDecelerate:(BOOL)decelerate {
-    if (scrollView == self.rail || scrollView == self.favoritesRail) [self touchColumn];
+    if (scrollView == self.rail || scrollView == self.favoritesRail || scrollView == self.fixedBackgroundHost) [self touchColumn];
     if (scrollView == self.favoritesRail && !decelerate) [self saveFavoritePosition];
 }
 - (void)scrollViewDidEndDecelerating:(UIScrollView *)scrollView {
-    if (scrollView == self.rail || scrollView == self.favoritesRail) [self touchColumn];
+    if (scrollView == self.rail || scrollView == self.favoritesRail || scrollView == self.fixedBackgroundHost) [self touchColumn];
     if (scrollView == self.favoritesRail) [self saveFavoritePosition];
 }
 - (void)singleTapped:(UITapGestureRecognizer *)gesture {
