@@ -1209,9 +1209,9 @@ static NSString *NFBFrontmostAppID(void) {
     self.window.rootViewController = [UIViewController new];
     self.window.rootViewController.view.backgroundColor = UIColor.clearColor;
     self.rail = [NFBRail new];
-    // A half-hidden row hangs past the clip; the rail must still offer that row's
-    // on-screen part to hit testing (see -rail:bubbleAtPoint:withEvent:).
-    self.rail.clipsToBounds = NO;
+    // Scroll contents always clip to their own viewport. Half-hidden columns
+    // move the viewport itself to the screen edge; no vertical overflow is needed.
+    self.rail.clipsToBounds = YES;
     self.rail.nfbHitDelegate = self;
     self.rail.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
     // The window is the full screen, so this clip is the physical screen edge: a
@@ -1932,7 +1932,9 @@ static NSString *NFBFrontmostAppID(void) {
     // Narrow only the visible edge material. Keep the rail's padded area so icon
     // edges, shadows and the unread badges inside the icon stay intact.
     CGRect materialFrame = edgeMode ? CGRectInset(railFrame, 5, 0) : railFrame;
-    self.rail.clipsToBounds = separateEdgeSections;
+    // Split and expanded columns must also clip rows that scroll beyond their
+    // viewport, otherwise they paint over the neighboring favorites section.
+    self.rail.clipsToBounds = YES;
     self.rail.scrollEnabled = !separateEdgeSections || height > 0;
     self.rail.alwaysBounceVertical = contentHeight > height;
     self.rail.showsVerticalScrollIndicator = NO;

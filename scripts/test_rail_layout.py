@@ -202,8 +202,12 @@ if "NFBVisibleMaxX(" not in hit:
     problems.append("the on-screen end of a half-hidden view must be computed once")
 if "- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event" not in manager:
     problems.append("the rail must offer the on-screen half of a row that hangs past it")
-if "self.rail.clipsToBounds = NO;" not in manager:
-    problems.append("the rail must not clip a half-hidden row before the screen edge")
+if "self.rail.clipsToBounds = NO;" in manager or "self.rail.clipsToBounds = separateEdgeSections;" in manager:
+    problems.append("split and expanded scroll viewports must also clip their rows")
+if manager.count("self.rail.clipsToBounds = YES;") != 2:
+    problems.append("main rail must clip at creation and on every layout")
+if "if (rail.clipsToBounds && (point.y < CGRectGetMinY(rail.bounds) ||" not in manager:
+    problems.append("overflow hit-test fallback must reject vertically clipped rows")
 if "[self.window addSubview:button];" not in manager:
     problems.append("the collapse control must not be disabled by HideInScreenshots")
 
