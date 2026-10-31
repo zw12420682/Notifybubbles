@@ -23,6 +23,7 @@
 #import "NFBNotificationPolicy.h"
 #import "NFBAppExit.h"
 #import "NFBKeyboard.h"
+#import "NFBEdgeSections.h"
 #import "NFBDebugLog.h"
 #import "NFBEdgeInspection.h"
 #import "NFBEdgeLayout.h"
@@ -86,6 +87,15 @@ static double NFBNumber(NSString *key, double fallback) {
     UIView *hit = [super hitTest:point withEvent:event];
     if (hit && hit != self) return hit;
     return [self.nfbHitDelegate rail:self bubbleAtPoint:point withEvent:event] ?: hit;
+}
+@end
+
+// A fixed group is not a scroll container and empty padding passes through.
+@interface NFBFixedGroup : UIView @end
+@implementation NFBFixedGroup
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    UIView *hit = [super hitTest:point withEvent:event];
+    return hit == self ? nil : hit;
 }
 @end
 
@@ -187,6 +197,8 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, strong) NFBStore *store;
 @property(nonatomic, strong) NFBWindow *window;
 @property(nonatomic, strong) NFBRail *rail;
+@property(nonatomic, strong) UIView *fixedBackgroundHost;
+@property(nonatomic, strong) UIVisualEffectView *fixedBackgroundMaterial;
 
 @property(nonatomic, strong) NFBBubble *desktopActionButton;
 @property(nonatomic, strong) UITapGestureRecognizer *desktopActionTap;
@@ -1623,6 +1635,11 @@ static NSString *NFBFrontmostAppID(void) {
         [columnApps addObjectsFromArray:notified];
     }
     NSArray<NSString *> *railApps = columnApps.array;
+    BOOL separateEdgeSections = collapsed;
+    NSArray<NSString *> *fixedApps = separateEdgeSections ? recentGroup : @[];
+    NSMutableArray<NSString *> *scrollingApps = [railApps mutableCopy];
+    if (separateEdgeSections) [scrollingApps removeObjectsInArray:fixedApps];
+    NSArray<NSString *> *unreadScrollApps = separateEdgeSections ? scrollingApps : railApps;
     NSMutableArray<NSString *> *displayApps = [railApps mutableCopy];
     // The bottom close control belongs to split mode only. Outside a split,
     // clearing unread is the top control's hold gesture, regardless of count.
@@ -1749,7 +1766,7 @@ static NSString *NFBFrontmostAppID(void) {
     // it keeps only the unread apps and the collapse control: no X, no favorites.
     BOOL hideFavorites = !(splitNow || self.edgeExpanded);
     BOOL splitUsable = splitNow;
-    NSUInteger columnRows = railApps.count;
+    NSUInteger columnRows = unreadScrollApps.count;
     // The plan takes a platform-neutral inset struct; being field-compatible with
     // UIEdgeInsets means this stays a plain value copy.
     NFBRailInsets planSafe = { safe.top, safe.left, safe.bottom, safe.right };
@@ -1793,6 +1810,47 @@ static NSString *NFBFrontmostAppID(void) {
     CGFloat railWidth = side;
     // One column width: the rail never widens, every row stays at side/2 in it.
     CGFloat railFrameWidth = CGRectGetWidth(railFrame);
+    CGRect fixedBackgroundFrame = CGRectZero;
+    if (separateEdgeSections) {
+        // Use the column's anchored screen span; only the upper notification
+        // viewport scrolls. The fixed background group is never a scroll child.
+        double span = MAX(0, CGRectGetHeight(bounds) - MAX(safe.bottom, 12) - plan.rowsTop);
+        NFBEdgeSections sections = NFBEdgeSectionLayout(span, side, step,
+            unreadScrollApps.count, fixedApps.count);
+        height = MIN(sections.unreadHeight, 2 * step + side);
+        railFrame = CGRectMake(railFrame.origin.x, plan.rowsTop, railFrame.size.width, height);
+        fixedBackgroundFrame = CGRectMake(railFrame.origin.x,
+            plan.rowsTop + sections.backgroundOffset, railFrame.size.width, sections.backgroundHeight);
+    }
+    if (!self.fixedBackgroundHost) {
+        self.fixedBackgroundMaterial = [[UIVisualEffectView alloc]
+            initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterial]];
+        self.fixedBackgroundMaterial.userInteractionEnabled = NO;
+        self.fixedBackgroundMaterial.clipsToBounds = YES;
+        self.fixedBackgroundHost = [NFBFixedGroup new];
+        self.fixedBackgroundHost.clipsToBounds = NO;
+        [root addSubview:self.fixedBackgroundMaterial];
+        [root addSubview:self.fixedBackgroundHost];
+    }
+    BOOL fixedVisible = separateEdgeSections && fixedApps.count > 0;
+    self.fixedBackgroundHost.hidden = !fixedVisible;
+    self.fixedBackgroundMaterial.hidden = !fixedVisible;
+    self.fixedBackgroundHost.userInteractionEnabled = fixedVisible;
+    if (fixedVisible) {
+        CGRect fixedMaterial = CGRectInset(fixedBackgroundFrame, 5, 0);
+        self.fixedBackgroundMaterial.layer.cornerRadius = MIN(14, side / 4);
+        if (!CGRectEqualToRect(self.fixedBackgroundHost.frame, fixedBackgroundFrame)) {
+            [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : NFBMotion
+                delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
+                animations:^{
+                    self.fixedBackgroundHost.frame = fixedBackgroundFrame;
+                    self.fixedBackgroundMaterial.frame = fixedMaterial;
+                } completion:nil];
+        }
+        self.fixedBackgroundHost.alpha = 0.5;
+        self.fixedBackgroundMaterial.alpha = 0.275;
+    }
+
     NSTimeInterval layoutDuration = UIAccessibilityIsReduceMotionEnabled() ? 0 : (attachmentChanged ? 0.35 : (splitNow ? 0.16 : NFBMotion));
     BOOL edgeMode = collapse;
     self.edgeMode = edgeMode;
@@ -1850,6 +1908,8 @@ static NSString *NFBFrontmostAppID(void) {
     // Narrow only the visible edge material. Keep the rail's padded area so icon
     // edges, shadows and the unread badges inside the icon stay intact.
     CGRect materialFrame = edgeMode ? CGRectInset(railFrame, 5, 0) : railFrame;
+    self.rail.clipsToBounds = separateEdgeSections;
+    self.rail.scrollEnabled = !separateEdgeSections || height > 0;
     self.rail.alwaysBounceVertical = contentHeight > height;
     self.rail.showsVerticalScrollIndicator = NO;
     // Only a real change starts an animation: re-submitting the same frame/alpha
@@ -1887,7 +1947,7 @@ static NSString *NFBFrontmostAppID(void) {
     if (!self.rail.dragging && !self.rail.decelerating) {
         CGFloat offset = attachmentChanged ? maxOffset - oldBottomOffset : self.rail.contentOffset.y;
         offset = MAX(0, MIN(maxOffset, offset));
-        NSUInteger activeIndex = [railApps indexOfObject:active ?: @""];
+        NSUInteger activeIndex = [unreadScrollApps indexOfObject:active ?: @""];
         BOOL revealActive=activeIndex != NSNotFound && (attachmentChanged || orderChanged ||
                 ![self.lastRailActive isEqual:active] || keyboardUp != previousKeyboardUp || railSizeChanged);
         if (revealActive)
@@ -1901,8 +1961,10 @@ static NSString *NFBFrontmostAppID(void) {
     }
     [displayApps enumerateObjectsUsingBlock:^(NSString *appID, __unused NSUInteger index, __unused BOOL *stop) {
         BOOL isClearAll = [appID isEqualToString:NFBClearAllID];
-        NSUInteger rowIndex = [railApps indexOfObject:appID];
-        UIView *parent = isClearAll ? root : self.rail;
+        NSUInteger rowIndex = [unreadScrollApps indexOfObject:appID];
+        BOOL fixedRow = separateEdgeSections && [fixedApps containsObject:appID];
+        if (fixedRow) rowIndex = [fixedApps indexOfObject:appID];
+        UIView *parent = isClearAll ? root : (fixedRow ? self.fixedBackgroundHost : self.rail);
         NFBBubble *button = self.buttons[appID];
         BOOL fresh = !button;
         if (fresh) {
@@ -1958,7 +2020,8 @@ static NSString *NFBFrontmostAppID(void) {
         CGRect targetBounds = CGRectMake(0, 0, side, side);
         // Keep the same bottom-first app ordering on desktop and in split view.
         // The clear action is appended last and therefore stays above all apps.
-        CGFloat rowY = isClearAll ? side / 2 : NFBRowCenter(rowCount, rowIndex, step, side);
+        NSUInteger parentRows = fixedRow ? fixedApps.count : rowCount;
+        CGFloat rowY = isClearAll ? side / 2 : NFBRowCenter(parentRows, rowIndex, step, side);
         CGFloat corner = !isClearAll ? diameter * 0.23 : diameter / 2;
         // Rows are always placed at side/2 inside the column. The half-hidden
         // state moves the rail frame (and the control) once; adding a per-row

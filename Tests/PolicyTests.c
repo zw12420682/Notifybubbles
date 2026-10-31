@@ -11,6 +11,7 @@
 static int debug_line;
 #define check(c, w) (debug_line = __LINE__, check_impl((c), (w)))
 
+#include "NFBEdgeSections.h"
 #include "NFBDesktopActionPolicy.h"
 #include "NFBBurstPolicy.h"
 #include "NFBFavoriteDragPolicy.h"
@@ -335,7 +336,29 @@ static void testTickReconcile(void) {
     check(NFBTickNeedsLayout(&base, &base, true, false), "the reconcile reason alone lays out");
 }
 
+static void testFixedBackgroundSections(void) {
+    double widths[] = {32, 48, 56};
+    for (int d = 0; d < 3; ++d) {
+        double side = widths[d] + 14, step = widths[d] + 9;
+        NFBEdgeSections base = NFBEdgeSectionLayout(500, side, step, 0, 3);
+        for (unsigned long count = 1; count < 20; ++count) {
+            NFBEdgeSections incoming = NFBEdgeSectionLayout(500, side, step, count, 3);
+            check(fabs(base.backgroundOffset - incoming.backgroundOffset) < 0.01,
+                  "new unread cannot move the fixed backgrounds");
+            check(fabs(base.backgroundHeight - incoming.backgroundHeight) < 0.01,
+                  "new unread cannot resize the fixed backgrounds");
+            check(incoming.unreadHeight + 9 <= incoming.backgroundOffset + 0.01,
+                  "unread viewport never overlaps the fixed group");
+            check(incoming.unreadHeight >= 0, "unread height cannot be negative");
+        }
+        NFBEdgeSections noBackground = NFBEdgeSectionLayout(500, side, step, 20, 0);
+        check(noBackground.backgroundHeight == 0, "no fixed group reserves no height");
+        check(noBackground.unreadHeight == 500, "unread can use the available empty space");
+    }
+}
+
 int main(void) {
+    testFixedBackgroundSections();
     testDesktopActionAnimation();
     testBurst();
     testFavoriteDrag();
