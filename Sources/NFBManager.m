@@ -1886,7 +1886,6 @@ static NSString *NFBFrontmostAppID(void) {
             CGFloat offset = MAX(0, MIN(maxY, self.fixedBackgroundHost.contentOffset.y));
             // Bring the app that is open now into view, but never move a row that
             // is already fully visible (that would fight the user's scrolling).
-            NSUInteger focusedRow = [fixedApps indexOfObject:focusedForeground ?: @""];
             BOOL focusedChanged = !(focusedForeground ?: @"").length ? NO :
                 ![self.lastFocusedBackgroundApp isEqual:focusedForeground ?: @""];
             if (focusedChanged) {
