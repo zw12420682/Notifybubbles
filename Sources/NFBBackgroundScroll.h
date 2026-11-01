@@ -38,3 +38,4 @@ static inline double NFBBackgroundBottomTarget(double contentHeight, double visi
 
 // Re-run: the desktop simulator roundtrip case is a known intermittent fixture,
 // unrelated to this change; reruns keep it enabled rather than relaxing it.
+// re-trigger after a cancelled run
