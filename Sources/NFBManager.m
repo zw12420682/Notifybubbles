@@ -1584,7 +1584,7 @@ static NSString *NFBFrontmostAppID(void) {
     NSString *active = NFBTrollVisibleApp() ?: floatingApp ?: (home ? nil : windowState.frontApp);
     // The app the background viewport follows: the one on screen now, or none on
     // the home screen. Captured here because the layout below reuses `active`.
-    NSString *focusedForeground = (collapse && !home) ? active : nil;
+    NSString *focusedForeground = (collapsed && !home) ? active : nil;
     // Clearing unread must leave the column (and its background apps) exactly as
     // it was, so this one layout keeps the apps it is replacing until the
     // expanded hold has cleared. Pins and the app order live in the store and are
@@ -1893,7 +1893,7 @@ static NSString *NFBFrontmostAppID(void) {
                 // Remember the request even if it cannot run yet (the user is
                 // dragging); the next settled layout performs it.
                 self.backgroundScrollPending = YES;
-                self.pendingBackgroundApp = fullscreenApp ?: @"";
+                self.pendingBackgroundApp = focusedForeground ?: @"";
             }
             if (self.backgroundScrollPending) {
                 double visibleHeight = fixedBackgroundFrame.size.height;
