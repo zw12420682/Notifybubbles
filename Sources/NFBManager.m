@@ -1582,6 +1582,9 @@ static NSString *NFBFrontmostAppID(void) {
     // both the desktop and fullscreen apps. No special current-app membership.
     BOOL halfHiddenColumn = collapsed && !split;
     NSString *active = NFBTrollVisibleApp() ?: floatingApp ?: (home ? nil : windowState.frontApp);
+    // The app the background viewport follows: the one on screen now, or none on
+    // the home screen. Captured here because the layout below reuses `active`.
+    NSString *focusedForeground = (collapse && !home) ? active : nil;
     // Clearing unread must leave the column (and its background apps) exactly as
     // it was, so this one layout keeps the apps it is replacing until the
     // expanded hold has cleared. Pins and the app order live in the store and are
@@ -1874,18 +1877,18 @@ static NSString *NFBFrontmostAppID(void) {
         self.fixedBackgroundHost.scrollEnabled = YES;
         if (self.fixedBackgroundHost.dragging || self.fixedBackgroundHost.decelerating) {
             // The jump waits for the finger to lift; the pending flag below keeps it.
-            if (![self.lastFocusedBackgroundApp isEqual:fullscreenApp ?: @""]) {
+            if (![self.lastFocusedBackgroundApp isEqual:focusedForeground ?: @""]) {
                 self.backgroundScrollPending = YES;
-                self.pendingBackgroundApp = fullscreenApp ?: @"";
+                self.pendingBackgroundApp = focusedForeground ?: @"";
             }
         } else {
             CGFloat maxY = MAX(0, backgroundContent - fixedBackgroundFrame.size.height);
             CGFloat offset = MAX(0, MIN(maxY, self.fixedBackgroundHost.contentOffset.y));
             // Bring the app that is open now into view, but never move a row that
             // is already fully visible (that would fight the user's scrolling).
-            NSUInteger focusedRow = [fixedApps indexOfObject:fullscreenApp ?: @""];
-            BOOL focusedChanged = !(fullscreenApp ?: @"").length ? NO :
-                ![self.lastFocusedBackgroundApp isEqual:fullscreenApp ?: @""];
+            NSUInteger focusedRow = [fixedApps indexOfObject:focusedForeground ?: @""];
+            BOOL focusedChanged = !(focusedForeground ?: @"").length ? NO :
+                ![self.lastFocusedBackgroundApp isEqual:focusedForeground ?: @""];
             if (focusedChanged) {
                 // Remember the request even if it cannot run yet (the user is
                 // dragging); the next settled layout performs it.
