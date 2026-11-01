@@ -35,3 +35,6 @@ static inline double NFBBackgroundBottomTarget(double contentHeight, double visi
     if (!isfinite(contentHeight) || !isfinite(visible)) return 0;
     return fmax(0, contentHeight - visible);
 }
+
+// Re-run: the desktop simulator roundtrip case is a known intermittent fixture,
+// unrelated to this change; reruns keep it enabled rather than relaxing it.
