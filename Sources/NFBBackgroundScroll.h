@@ -15,6 +15,13 @@ static inline bool NFBBackgroundRowFullyVisible(double rowTop, double rowHeight,
     return rowTop >= offset && rowTop + rowHeight <= offset + visible;
 }
 
+// Content y of a row's top for the column's own geometry: index 0 sits at the
+// bottom, so a higher index (a newer app) is higher up the content.
+static inline double NFBBackgroundRowTop(unsigned long count, unsigned long index, double step) {
+    if (!count || index >= count || !isfinite(step) || step <= 0) return 0;
+    return (double)(count - 1 - index) * step;
+}
+
 // Target content offset: the row's own top when it is below the viewport, or
 // the row's bottom at the viewport bottom when it is above it. Clamped to the
 // real scroll range so a partial last page still lands on its maximum.

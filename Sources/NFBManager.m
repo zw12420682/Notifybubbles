@@ -1899,10 +1899,12 @@ static NSString *NFBFrontmostAppID(void) {
                 NSString *target = self.pendingBackgroundApp ?: @"";
                 NSUInteger pendingRow = [fixedApps indexOfObject:target];
                 if (pendingRow != NSNotFound) {
-                    offset = NFBBackgroundScrollTarget(pendingRow * step, side, offset,
+                    double rowTop = NFBBackgroundRowTop(fixedApps.count, pendingRow, step);
+                    offset = NFBBackgroundScrollTarget(rowTop, side, offset,
                         visibleHeight, backgroundContent);
                 } else {
-                    offset = NFBBackgroundBottomTarget(backgroundContent, visibleHeight);
+                    // No row of its own: land on the newest apps at the top.
+                    offset = 0;
                 }
                 self.lastFocusedBackgroundApp = target;
                 self.backgroundScrollPending = NO;

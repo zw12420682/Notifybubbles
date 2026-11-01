@@ -373,6 +373,21 @@ static void testFixedBackgroundSections(void) {
     }
 }
 
+static void testBackgroundRowTop(void) {
+    double step = 57;
+    // index 0 (oldest) is at the bottom of the content, the newest at the top.
+    check(NFBBackgroundRowTop(6, 0, step) == 5 * step, "index 0 sits at the content bottom");
+    check(NFBBackgroundRowTop(6, 5, step) == 0, "the last index is the content top");
+    check(NFBBackgroundRowTop(6, 5, step) < NFBBackgroundRowTop(6, 0, step),
+          "a newer app is higher up the content");
+    // Scrolling to a newer (higher) row decreases the offset.
+    double content = 6 * 57 + 62;
+    double newest = NFBBackgroundScrollTarget(NFBBackgroundRowTop(6, 5, step), 62, 204, 200, content);
+    double oldest = NFBBackgroundScrollTarget(NFBBackgroundRowTop(6, 0, step), 62, 204, 200, content);
+    check(newest < oldest, "a newer app scrolls upward, not downward");
+    check(newest == 0, "the newest row lands on the content top");
+}
+
 static void testBackgroundScrollTarget(void) {
     // A fully visible row is never moved, whatever the current offset is.
     check(NFBBackgroundRowFullyVisible(100, 62, 80, 300), "row inside the viewport is visible");
@@ -399,6 +414,7 @@ static void testBackgroundScrollTarget(void) {
 
 int main(void) {
     testBackgroundScrollTarget();
+    testBackgroundRowTop();
     testFixedBackgroundSections();
     testDesktopActionAnimation();
     testBurst();
