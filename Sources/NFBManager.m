@@ -24,6 +24,7 @@
 #import "NFBAppExit.h"
 #import "NFBKeyboard.h"
 #import "NFBEdgeSections.h"
+#import "NFBBackgroundScroll.h"
 #import "NFBDebugLog.h"
 #import "NFBEdgeInspection.h"
 #import "NFBEdgeLayout.h"
@@ -241,6 +242,12 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic) BOOL holdsClearedColumn;
 @property(nonatomic) BOOL desktopActionToggle;
 @property(nonatomic) BOOL desktopActionParked;
+// The app whose row the background viewport last scrolled to.
+@property(nonatomic, copy) NSString *lastFocusedBackgroundApp;
+// Set when a focus change arrived while the user was scrolling; the next
+// settled layout performs the deferred jump.
+@property(nonatomic) BOOL backgroundScrollPending;
+@property(nonatomic, copy) NSString *pendingBackgroundApp;
 // Set while laying out a background-area row: those icons never show a count.
 @property(nonatomic) BOOL suppressBadgeForFixedRow;
 // Collapsed fullscreen column: the control shares the rows' shift and alpha.
@@ -1865,11 +1872,43 @@ static NSString *NFBFrontmostAppID(void) {
         self.fixedBackgroundHost.contentSize = CGSizeMake(side, backgroundContent);
         self.fixedBackgroundHost.bounces = backgroundContent > fixedBackgroundFrame.size.height;
         self.fixedBackgroundHost.scrollEnabled = YES;
-        if (!self.fixedBackgroundHost.dragging && !self.fixedBackgroundHost.decelerating) {
+        if (self.fixedBackgroundHost.dragging || self.fixedBackgroundHost.decelerating) {
+            // The jump waits for the finger to lift; the pending flag below keeps it.
+            if (![self.lastFocusedBackgroundApp isEqual:fullscreenApp ?: @""]) {
+                self.backgroundScrollPending = YES;
+                self.pendingBackgroundApp = fullscreenApp ?: @"";
+            }
+        } else {
             CGFloat maxY = MAX(0, backgroundContent - fixedBackgroundFrame.size.height);
             CGFloat offset = MAX(0, MIN(maxY, self.fixedBackgroundHost.contentOffset.y));
+            // Bring the app that is open now into view, but never move a row that
+            // is already fully visible (that would fight the user's scrolling).
+            NSUInteger focusedRow = [fixedApps indexOfObject:fullscreenApp ?: @""];
+            BOOL focusedChanged = !(fullscreenApp ?: @"").length ? NO :
+                ![self.lastFocusedBackgroundApp isEqual:fullscreenApp ?: @""];
+            if (focusedChanged) {
+                // Remember the request even if it cannot run yet (the user is
+                // dragging); the next settled layout performs it.
+                self.backgroundScrollPending = YES;
+                self.pendingBackgroundApp = fullscreenApp ?: @"";
+            }
+            if (self.backgroundScrollPending) {
+                double visibleHeight = fixedBackgroundFrame.size.height;
+                NSString *target = self.pendingBackgroundApp ?: @"";
+                NSUInteger pendingRow = [fixedApps indexOfObject:target];
+                if (pendingRow != NSNotFound) {
+                    offset = NFBBackgroundScrollTarget(pendingRow * step, side, offset,
+                        visibleHeight, backgroundContent);
+                } else {
+                    offset = NFBBackgroundBottomTarget(backgroundContent, visibleHeight);
+                }
+                self.lastFocusedBackgroundApp = target;
+                self.backgroundScrollPending = NO;
+                self.pendingBackgroundApp = nil;
+            }
             if (self.fixedBackgroundHost.contentOffset.y != offset)
-                self.fixedBackgroundHost.contentOffset = CGPointMake(0, offset);
+                [self.fixedBackgroundHost setContentOffset:CGPointMake(0, offset)
+                    animated:!UIAccessibilityIsReduceMotionEnabled()];
         }
         self.fixedBackgroundHost.alpha = 0.5;
         self.fixedBackgroundMaterial.alpha = 0.275;

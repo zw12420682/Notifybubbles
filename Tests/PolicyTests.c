@@ -12,6 +12,7 @@ static int debug_line;
 #define check(c, w) (debug_line = __LINE__, check_impl((c), (w)))
 
 #include "NFBEdgeSections.h"
+#include "NFBBackgroundScroll.h"
 #include "NFBDesktopActionPolicy.h"
 #include "NFBBurstPolicy.h"
 #include "NFBFavoriteDragPolicy.h"
@@ -372,7 +373,32 @@ static void testFixedBackgroundSections(void) {
     }
 }
 
+static void testBackgroundScrollTarget(void) {
+    // A fully visible row is never moved, whatever the current offset is.
+    check(NFBBackgroundRowFullyVisible(100, 62, 80, 300), "row inside the viewport is visible");
+    check(!NFBBackgroundRowFullyVisible(300, 62, 0, 300), "row crossing the bottom edge is not visible");
+    check(!NFBBackgroundRowFullyVisible(10, 62, 80, 300), "row above the viewport is not visible");
+    double content = 6 * 57 + 62;
+    check(NFBBackgroundScrollTarget(150, 62, 100, 200, content) == 100,
+          "an already visible row keeps the offset");
+    // Content is 404 tall with a 200 viewport, so the last page starts at 204:
+    // a "400" request is clamped there, never past the scroll range.
+    check(NFBBackgroundScrollTarget(400, 62, 0, 200, content) == 204,
+          "a row below the viewport scrolls to it within the scroll range");
+    check(NFBBackgroundScrollTarget(150, 62, 0, 200, content) == 150,
+          "a row below the viewport but inside range scrolls to its top");
+    double top = NFBBackgroundScrollTarget(10, 62, 300, 200, content);
+    check(top >= 0 && top <= NFBBackgroundScrollTarget(0, 0, 0, 200, content), "an above row scrolls back");
+    check(fabs(NFBBackgroundBottomTarget(content, 200) - (content - 200)) < 0.01,
+          "bottom target lands on the last page");
+    check(NFBBackgroundBottomTarget(100, 200) == 0, "content shorter than the viewport stays at zero");
+    // A row taller than the viewport still resolves to a real offset inside the range.
+    double tall = NFBBackgroundScrollTarget(0, 400, 0, 200, 1000);
+    check(tall >= 0 && tall <= 800, "oversized row target stays inside the scroll range");
+}
+
 int main(void) {
+    testBackgroundScrollTarget();
     testFixedBackgroundSections();
     testDesktopActionAnimation();
     testBurst();
