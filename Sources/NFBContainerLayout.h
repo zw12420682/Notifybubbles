@@ -52,3 +52,12 @@ static inline NFBContainerHeights NFBFitContainers(double available, double side
     // column). A split column sizes itself from the window instead.
     return (NFBContainerHeights){ first, second, gap };
 }
+
+// Same as NFBFitContainers with an explicit row cap for the icon area. Split and
+// expanded columns list the whole switcher but only ever show three rows.
+static inline NFBContainerHeights NFBFitContainersCapped(double available, double side, double step,
+        unsigned long favorites, unsigned long regular, unsigned long regularCap) {
+    if (regularCap && regular > regularCap) regular = regularCap;
+    return NFBFitContainers(available, side, step, favorites, regular);
+}
+// visible rows per column: split/expanded 3, collapsed 4

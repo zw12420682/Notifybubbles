@@ -202,7 +202,11 @@ static inline NFBRailPlan NFBPlanRail(double screenWidth, double screenHeight,
     // eat the height budget: doing so crushed the main rail to a hairline.
     bool hideFavorites = !split && collapsed;
     unsigned long favoriteRows = hideFavorites ? 0 : favorites;
-    NFBContainerHeights fit = NFBFitContainers(room, side, step, favoriteRows, rows);
+    // A split or expanded column lists the whole switcher but only shows three
+    // rows; the collapsed column keeps its own four-row viewport.
+    NFBContainerHeights fit = split
+        ? NFBFitContainersCapped(room, side, step, favoriteRows, rows, 3)
+        : NFBFitContainers(room, side, step, favoriteRows, rows);
     // Only the edge column needs whole rows; a split keeps the window-derived fit.
     if (!split) fit = NFBSnapToRows(fit, side, step);
     double favoriteHeight = hideFavorites ? 0 : fit.favorites;

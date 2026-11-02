@@ -1639,9 +1639,11 @@ static NSString *NFBFrontmostAppID(void) {
             [switcherGroup addObject:app];
         }
     }
+    // Every column now lists the real app switcher; the split/expanded column only
+    // *shows* three rows and scrolls the rest, the collapsed one shows four.
     NSArray<NSString *> *recentGroup = collapse
         ? switcherGroup
-        : NFBRecentBackgroundThreeIncludingFavorites(background, history.array, self.favoriteApps, NO);
+        : (self.lastSwitcher ?: @[]);
     NSMutableOrderedSet<NSString *> *columnApps = [NSMutableOrderedSet orderedSet];
     if (collapse) {
         // Collapsed: unread first (top), recent backgrounds below it, so a newly
@@ -2253,6 +2255,9 @@ static NSString *NFBFrontmostAppID(void) {
             self.favoriteButtons[app] = button; [self.favoritesRail addSubview:button];
         }
         [self updateBubble:button record:[self.store latestForApp:app]];
+        // The favorites rail never shows a count; the main column still does.
+        button.badge.text = nil;
+        button.badge.hidden = YES;
         [button updateActiveMark:[app isEqual:active] diameter:diameter duration:duration];
         CGPoint targetCenter = CGPointMake(side / 2, NFBRowCenter(self.favoriteApps.count, index, step, side));
         BOOL changed = !CGRectEqualToRect(button.bounds, CGRectMake(0,0,side,side)) || (button != self.favoriteDrag && !CGPointEqualToPoint(button.center, targetCenter)) || !CGRectEqualToRect(button.imageView.frame, CGRectMake(7,7,diameter,diameter)) || button.imageView.layer.cornerRadius != diameter * 0.23 || button.alpha != ([app isEqual:active] ? 1 : self.iconOpacity);

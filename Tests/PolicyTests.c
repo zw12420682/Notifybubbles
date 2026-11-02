@@ -11,7 +11,9 @@
 static int debug_line;
 #define check(c, w) (debug_line = __LINE__, check_impl((c), (w)))
 
+#define NFBRailLayoutPort 1
 #include "NFBEdgeSections.h"
+#include "NFBContainerLayout.h"
 #include "NFBBackgroundScroll.h"
 #include "NFBDesktopActionPolicy.h"
 #include "NFBBurstPolicy.h"
@@ -373,6 +375,20 @@ static void testFixedBackgroundSections(void) {
     }
 }
 
+static void testSplitRowCap(void) {
+    double side = 62, step = 57;
+    NFBContainerHeights seven = NFBFitContainersCapped(2000, side, step, 0, 7, 3);
+    NFBContainerHeights three = NFBFitContainersCapped(2000, side, step, 0, 3, 3);
+    check(fabs(seven.regular - three.regular) < 0.01,
+          "a long list shows the same height as three rows");
+    check(fabs(three.regular - (2 * step + side)) < 0.01, "three rows means two steps plus one icon");
+    NFBContainerHeights two = NFBFitContainersCapped(2000, side, step, 0, 2, 3);
+    check(two.regular < three.regular, "fewer apps still take less height");
+    NFBContainerHeights uncapped = NFBFitContainersCapped(2000, side, step, 0, 7, 0);
+    check(uncapped.regular <= 2 * step + side + 0.01,
+          "without a cap the shared two-row limit still applies");
+}
+
 static void testBackgroundRowTop(void) {
     double step = 57;
     // index 0 (oldest) is at the bottom of the content, the newest at the top.
@@ -415,6 +431,7 @@ static void testBackgroundScrollTarget(void) {
 int main(void) {
     testBackgroundScrollTarget();
     testBackgroundRowTop();
+    testSplitRowCap();
     testFixedBackgroundSections();
     testDesktopActionAnimation();
     testBurst();
