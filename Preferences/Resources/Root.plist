@@ -118,6 +118,50 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
+			<string>分屏窗口定位</string>
+			<key>footerText</key>
+			<string>打开分屏后在这段时间内自动补正位置，越长越稳、越短越快；设为 0 只校正一次。键盘收起后按下面的延迟重新检查一次。</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>label</key>
+			<string>分屏打开后校正总时长（秒）</string>
+			<key>key</key>
+			<string>SplitPlacementWindow</string>
+			<key>defaults</key>
+			<string>local.notifybubbles</string>
+			<key>default</key>
+			<real>0.35</real>
+			<key>min</key>
+			<real>0.0</real>
+			<key>max</key>
+			<real>1.0</real>
+			<key>showValue</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>label</key>
+			<string>键盘收起后检查延迟（秒）</string>
+			<key>key</key>
+			<string>KeyboardRecheckDelay</string>
+			<key>defaults</key>
+			<string>local.notifybubbles</string>
+			<key>default</key>
+			<real>0.1</real>
+			<key>min</key>
+			<real>0.0</real>
+			<key>max</key>
+			<real>0.5</real>
+			<key>showValue</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
 			<string>气泡与角标</string>
 			<key>footerText</key>
 			<string>单击分屏图标执行打开操作，长按清除图标及对应 App；常用容器支持长按调整顺序。不使用双击。</string>

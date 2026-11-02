@@ -55,7 +55,8 @@ prefs=plistlib.loads((root/"Preferences/Resources/Root.plist").read_bytes())
 assert {item["key"] for item in prefs["items"] if "key" in item}=={
     "Enabled","ShowOnLock","ShowOnHome","ShowInApps","IconSize","IconOpacity",
     "ClosePreviousSplit","HideInScreenshots",
-    "DebugLogging","HotspotAutoClose","HotspotIdleMinutes"}
+    "DebugLogging","HotspotAutoClose","HotspotIdleMinutes",
+    "SplitPlacementWindow","KeyboardRecheckDelay"}
 print("PASS: package identity, versions, preference keys and SpringBoard-only injection")
 print("PASS: scheme-aware control fragments: "+", ".join("control."+s+" -> "+a for s,a in SCHEMES.items())+" (default "+DEFAULT_SCHEME+")")
 

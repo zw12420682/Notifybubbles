@@ -468,7 +468,19 @@ static const CFTimeInterval kTickReconcileInterval = 2.0;
             BOOL keyboardUp = NFBKeyboardVisible();
             BOOL wasUp = weakSelf.lastKeyboardUpForPlacement;
             weakSelf.lastKeyboardUpForPlacement = keyboardUp;
-            if (!keyboardUp && wasUp) NFBRecheckSplitPlacement();
+            if (!keyboardUp && wasUp) {
+                // The user's delay lets the system finish retracting the keyboard
+                // before the window is measured again.
+                double delay = NFBNumber(@"KeyboardRecheckDelay", 0.1);
+                if (!isfinite(delay) || delay < 0) delay = 0;
+                if (delay > 0.5) delay = 0.5;
+                if (delay <= 0) {
+                    NFBRecheckSplitPlacement();
+                } else {
+                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)),
+                        dispatch_get_main_queue(), ^{ NFBRecheckSplitPlacement(); });
+                }
+            }
             [weakSelf setNeedsRefresh];
         });
         [self reloadPreferences];

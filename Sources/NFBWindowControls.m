@@ -215,6 +215,17 @@ static double visualScale(UIView *window) {
     @try { return ((double (*)(id, SEL))objc_msgSend)(window, getter); }
     @catch (__unused NSException *exception) { return NAN; }
 }
+static NSTimeInterval NFBPlacementWindow(void) {
+    id value = CFBridgingRelease(CFPreferencesCopyAppValue(CFSTR("SplitPlacementWindow"),
+        CFSTR("local.notifybubbles")));
+    double seconds = [value respondsToSelector:@selector(doubleValue)] ? [value doubleValue] : 0.35;
+    if (!isfinite(seconds)) seconds = 0.35;
+    if (seconds < 0) seconds = 0;
+    if (seconds > 1.0) seconds = 1.0;
+    return seconds;
+}
+// One correction every step; at least one retry is scheduled inside any window.
+static const NSTimeInterval NFBPlacementStep = 0.1;
 void NFBResetSplitPlacement(void) {
     lastApp = nil; lastWindow = nil; placementGeneration++;
 }
@@ -233,9 +244,13 @@ void NFBObserveSplitPlacement(NSString *app) {
         // final position when it appears, not after a visible jump. TrollOpen may
         // still be laying out, so the same pass is repeated a few times shortly
         // after; the repeats are bounded and stop as soon as the target holds.
-        const NSTimeInterval retries[] = {0.0, 0.05, 0.15, 0.35};
-        for (size_t attempt = 0; attempt < sizeof(retries) / sizeof(retries[0]); attempt++) {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(retries[attempt] * NSEC_PER_SEC)),
+        // The user sets how long corrections may keep running. The first pass is
+        // always immediate; later ones follow every NFBPlacementStep seconds up to
+        // that window, so any duration between 0 and 1s is covered without steps.
+        NSTimeInterval window = NFBPlacementWindow();
+        for (NSTimeInterval delay = 0;; delay += NFBPlacementStep) {
+        if (delay > window + 0.0001) break;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
                 UIView *window = weakWindow;
             // Placement follows the actual current window, not the rail fallback.
