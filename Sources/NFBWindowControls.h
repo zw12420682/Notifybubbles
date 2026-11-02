@@ -6,6 +6,8 @@ CGRect NFBSplitFrameInView(UIView *root);
 BOOL NFBSplitFrameClassUnavailable(void);
 void NFBObserveSplitSwitch(NSString *app, BOOL enabled);
 void NFBObserveSplitPlacement(NSString *app);
+// Re-apply the split placement after the keyboard goes away.
+void NFBRecheckSplitPlacement(void);
 void NFBResetSplitPlacement(void);
 
 // Layout target only; does not change TrollOpen action or close targets.
@@ -18,3 +20,4 @@ BOOL NFBCloseCurrentSplit(void);
 UIView *NFBDesktopActionWindow(void);
 CGRect NFBWindowFrameInView(UIView *window, UIView *root);
 
+// placement: immediate apply, bounded retries, recheck on keyboard change

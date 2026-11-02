@@ -459,7 +459,11 @@ static const CFTimeInterval kTickReconcileInterval = 2.0;
         _columnParkedEver = NO;
         [self restoreRailMetric];
         __weak NFBManager *weakSelf = self;
-        NFBKeyboardInstall(^{ [weakSelf setNeedsRefresh]; });
+        NFBKeyboardInstall(^{
+            // A keyboard change re-checks both the split placement and the column.
+            NFBRecheckSplitPlacement();
+            [weakSelf setNeedsRefresh];
+        });
         [self reloadPreferences];
     }
     return self;

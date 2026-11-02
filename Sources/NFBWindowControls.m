@@ -207,6 +207,14 @@ void NFBObserveSplitSwitch(NSString *app, BOOL enabled) {
     } @catch (NSException *exception) { NFBDebugLog(@"split-switch: %@", exception); }
 }
 
+static double visualScale(UIView *window) {
+    SEL getter = NSSelectorFromString(@"visualScale");
+    if (!window || ![window respondsToSelector:getter]) return NAN;
+    NSMethodSignature *sig = NFBSignature(window, getter);
+    if (!sig || sig.numberOfArguments != 2 || strcmp(sig.methodReturnType, @encode(double))) return NAN;
+    @try { return ((double (*)(id, SEL))objc_msgSend)(window, getter); }
+    @catch (__unused NSException *exception) { return NAN; }
+}
 void NFBResetSplitPlacement(void) {
     lastApp = nil; lastWindow = nil; placementGeneration++;
 }
@@ -221,8 +229,14 @@ void NFBObserveSplitPlacement(NSString *app) {
         lastWindow = view; lastApp = [app copy];
         NSUInteger generation = ++placementGeneration;
         __weak UIView *weakWindow = view;
-        // Let TrollOpen finish restoring its previous layout before applying ours.
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.75 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        // Apply the placement immediately: the window should already be in its
+        // final position when it appears, not after a visible jump. TrollOpen may
+        // still be laying out, so the same pass is repeated a few times shortly
+        // after; the repeats are bounded and stop as soon as the target holds.
+        const NSTimeInterval retries[] = {0.0, 0.05, 0.15, 0.35};
+        for (size_t attempt = 0; attempt < sizeof(retries) / sizeof(retries[0]); attempt++) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(retries[attempt] * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
                 UIView *window = weakWindow;
             // Placement follows the actual current window, not the rail fallback.
             NSInteger scene = orientationOf(window, @"sceneOrientation");
@@ -243,7 +257,10 @@ void NFBObserveSplitPlacement(NSString *app) {
                 BOOL canSync = syncSig && syncSig.numberOfArguments == 3 &&
                     strcmp(syncSig.methodReturnType, @encode(void)) == 0 &&
                     strcmp([syncSig getArgumentTypeAtIndex:2], @encode(BOOL)) == 0;
-                ((void (*)(id, SEL, double))objc_msgSend)(window, scale, 0.86);
+                // Idempotent: only ask for the scale when it differs, so a retry
+                // does not restart TrollOpen's own resize animation.
+                BOOL alreadyScaled = fabs(visualScale(window) - 0.86) < 0.005;
+                if (!alreadyScaled) ((void (*)(id, SEL, double))objc_msgSend)(window, scale, 0.86);
                 if (canSync) ((void (*)(id, SEL, BOOL))objc_msgSend)(window, sync, YES);
                 [window setNeedsLayout]; [window layoutIfNeeded];
                 UIView *parent = window.superview;
@@ -259,7 +276,18 @@ void NFBObserveSplitPlacement(NSString *app) {
                 NFBDebugLog(@"placement: %@ requested scale=0.86 frame=%@", app, NSStringFromCGRect(window.frame));
             } @catch (NSException *exception) { NFBDebugLog(@"placement: %@", exception); }
         });
+        }
     } @catch (NSException *exception) { NFBDebugLog(@"placement lookup: %@", exception); }
+}
+
+// Re-apply the split placement once the keyboard has gone: the dismissal can
+// change the available area, and the window must end up at the same spot.
+void NFBRecheckSplitPlacement(void) {
+    if (!NSThread.isMainThread) return;
+    NSString *app = NFBTrollVisibleApp();
+    if (!app.length) return;
+    lastApp = nil; lastWindow = nil;
+    NFBObserveSplitPlacement(app);
 }
 
 // Supply the ended tap expected by the original handler without dispatching a
