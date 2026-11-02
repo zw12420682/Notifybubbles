@@ -242,6 +242,8 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic) BOOL holdsClearedColumn;
 @property(nonatomic) BOOL desktopActionToggle;
 @property(nonatomic) BOOL desktopActionParked;
+// Previous keyboard visibility, so only a dismissal re-runs the placement.
+@property(nonatomic) BOOL lastKeyboardUpForPlacement;
 // The app whose row the background viewport last scrolled to.
 @property(nonatomic, copy) NSString *lastFocusedBackgroundApp;
 // Set when a focus change arrived while the user was scrolling; the next
@@ -460,8 +462,13 @@ static const CFTimeInterval kTickReconcileInterval = 2.0;
         [self restoreRailMetric];
         __weak NFBManager *weakSelf = self;
         NFBKeyboardInstall(^{
-            // A keyboard change re-checks both the split placement and the column.
-            NFBRecheckSplitPlacement();
+            // Only a dismissal re-checks the placement: while the keyboard is
+            // coming up the system is already moving the window, and a second
+            // placement pass there fights it and makes the window jump.
+            BOOL keyboardUp = NFBKeyboardVisible();
+            BOOL wasUp = weakSelf.lastKeyboardUpForPlacement;
+            weakSelf.lastKeyboardUpForPlacement = keyboardUp;
+            if (!keyboardUp && wasUp) NFBRecheckSplitPlacement();
             [weakSelf setNeedsRefresh];
         });
         [self reloadPreferences];
