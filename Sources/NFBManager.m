@@ -645,7 +645,7 @@ static NSString *NFBFrontmostAppID(void) {
         if ([app isEqualToString:floating] || [app isEqualToString:front]) continue;
         [targets addObject:app];
     }
-    if (!targets.count) return;
+    if (!targets.count) { [self refresh]; return; }
     NFBDebugLog(@"gesture: clear-background -> %lu apps", (unsigned long)targets.count);
     [self.dismissedSwitcher addObjectsFromArray:targets];
     [self closeAppsInOrder:targets];
@@ -721,12 +721,19 @@ static NSString *NFBFrontmostAppID(void) {
             [self scheduleAutoCollapse];
             [self refresh];
             return;
-        case NFBActionClearUnread:
+        case NFBActionClearBackground:
             self.desktopActionTouchTarget = nil;
-            [self clearUnreadKeepingExpanded];
-            // No unread count, no X: the app buttons themselves stay, and the
-            // open column keeps its own real 5s clock instead of folding at once.
-            if (self.edgeExpanded) [self holdClearedColumnAndRestartClock];
+            // Same clear as the X button, then drop the unread records; the app on
+            // screen (fullscreen or in the split) is never touched.
+            [self clearBackground];
+            // Unread records go too: the whole point of the hold is a clean slate.
+            // The open app and any split app were skipped above, so nothing that is
+            // on screen loses its row.
+            self.holdsClearedColumn = NO;
+            if (![self acceptGestureForKey:@"desktopUnread"]) { [self refresh]; return; }
+            [self.store clearUnreadRecords];
+            self.pendingRecord = nil;
+            [self refresh];
             return;
         case NFBActionNone:
             break;

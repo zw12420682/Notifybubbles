@@ -4,7 +4,7 @@
 // Which of the collapse control's three gestures may act in a given state.
 // The slot is a house button inside a split and a collapse control outside one:
 //   split      tap = toggle the desktop split, hold = Open console (unchanged)
-//   expanded   tap = fold, hold = clear unread records and keep it expanded
+//   expanded   tap = fold, hold = clear background (current app kept) + unread
 //   collapsed  tap = unfold, a left swipe on the visible control = unfold too,
 //              hold = nothing
 // One table keeps the manager, the delegate and the tests on the same rules.
@@ -39,9 +39,9 @@ static inline bool NFBActionGestureAllowed(NFBActionMode mode, NFBActionGesture 
         case NFBActionModeExpanded:
             return gesture == NFBActionTap || gesture == NFBActionHold;
         case NFBActionModeCollapsed:
-            // A tap or a left swipe unfolds; a hold has no job here, so it is
-            // refused before it can act or turn itself into a tap.
-            return gesture == NFBActionTap || gesture == NFBActionSwipeLeft;
+            // A tap or a left swipe unfolds; the hold clears the background too.
+            return gesture == NFBActionTap || gesture == NFBActionSwipeLeft ||
+                gesture == NFBActionHold;
     }
     return false;
 }
@@ -55,7 +55,7 @@ typedef enum {
     NFBActionOpenConsole = 2,   // split: hold opens the Open console
     NFBActionFoldColumn = 3,    // expanded: tap folds
     NFBActionUnfoldColumn = 4,  // collapsed: tap or left swipe unfolds
-    NFBActionClearUnread = 5,   // expanded: hold clears unread, stays expanded
+    NFBActionClearBackground = 5, // hold outside a split: clear background, keep the open app
 } NFBActionEffect;
 
 static inline NFBActionEffect NFBActionEffectFor(NFBActionMode mode, NFBActionGesture gesture, bool enabled, bool locked) {
@@ -65,7 +65,8 @@ static inline NFBActionEffect NFBActionEffectFor(NFBActionMode mode, NFBActionGe
     if (mode == NFBActionModeSplit)
         return (gesture == NFBActionTap) ? NFBActionToggleSplit : NFBActionOpenConsole;
     if (mode == NFBActionModeExpanded)
-        return (gesture == NFBActionTap) ? NFBActionFoldColumn : NFBActionClearUnread;
+        return (gesture == NFBActionTap) ? NFBActionFoldColumn : NFBActionClearBackground;
+    if (gesture == NFBActionHold) return NFBActionClearBackground;
     if (gesture == NFBActionSwipeLeft) return NFBActionUnfoldColumn;
     if (gesture == NFBActionTap) return NFBActionUnfoldColumn;
     return NFBActionNone;

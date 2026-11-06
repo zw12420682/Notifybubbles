@@ -49,24 +49,26 @@ int main(void) {
           "collapsed tap unfolds");
     check(NFBActionEffectFor(NFBActionModeCollapsed, NFBActionSwipeLeft, true, false) == NFBActionUnfoldColumn,
           "collapsed left swipe unfolds");
-    check(NFBActionEffectFor(NFBActionModeCollapsed, NFBActionHold, true, false) == NFBActionNone,
-          "collapsed hold is a no-op");
-    check(NFBActionGestureAllowed(NFBActionModeCollapsed, NFBActionHold, true, false) == false,
-          "collapsed refuses the hold so it cannot turn into a tap");
+    check(NFBActionEffectFor(NFBActionModeCollapsed, NFBActionHold, true, false) == NFBActionClearBackground,
+          "collapsed hold clears the background instead of doing nothing");
+    check(NFBActionGestureAllowed(NFBActionModeCollapsed, NFBActionHold, true, false) == true,
+          "collapsed accepts the hold (clear background)");
     check(NFBActionGestureAllowed(NFBActionModeCollapsed, NFBActionTap, true, false) == true,
           "collapsed keeps its tap");
 
     // --- expanded: the tap folds, the hold clears unread, the swipe is a no-op
     check(NFBActionEffectFor(NFBActionModeExpanded, NFBActionTap, true, false) == NFBActionFoldColumn,
           "expanded tap folds");
-    check(NFBActionEffectFor(NFBActionModeExpanded, NFBActionHold, true, false) == NFBActionClearUnread,
-          "expanded hold clears unread");
+    check(NFBActionEffectFor(NFBActionModeExpanded, NFBActionHold, true, false) == NFBActionClearBackground,
+          "expanded hold clears the background and unread records");
+    check(NFBActionEffectFor(NFBActionModeCollapsed, NFBActionHold, true, false) == NFBActionClearBackground,
+          "collapsed hold clears the background too");
     check(NFBActionEffectFor(NFBActionModeExpanded, NFBActionSwipeLeft, true, false) == NFBActionNone,
           "expanded left swipe is a no-op, never a fold");
     check(NFBActionGestureAllowed(NFBActionModeExpanded, NFBActionSwipeLeft, true, false) == false,
           "expanded refuses the swipe");
-    check(NFBActionEffectFor(NFBActionModeExpanded, NFBActionTap, true, false) != NFBActionClearUnread,
-          "an expanded tap never clears unread");
+    check(NFBActionEffectFor(NFBActionModeExpanded, NFBActionTap, true, false) != NFBActionClearBackground,
+          "an expanded tap never clears the background");
 
     // --- enabled / locked: nothing acts, in any mode, and nothing is claimed
     NFBActionMode modes[] = {NFBActionModeSplit, NFBActionModeExpanded, NFBActionModeCollapsed};
