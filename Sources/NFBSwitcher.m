@@ -69,6 +69,25 @@ BOOL NFBQuitSwitcherCard(NSString *bundleID, NSString *front, NSString *floating
                 NFBDebugLog(@"switcher: protected shared layout for %@", bundleID);
                 return NO;
             }
+            // Check every matching layout before a bundle-wide deletion. One
+            // matching card may share the foreground or floating app.
+            BOOL allMatchingSafe = YES;
+            for (id other in snapshot) {
+                NSArray *otherIDs = NFBLayoutBundleIDs(other);
+                if (!otherIDs) { allMatchingSafe = NO; break; }
+                if (![otherIDs containsObject:bundleID]) continue;
+                if ([otherIDs containsObject:front ?: @""] || [otherIDs containsObject:floating ?: @""]) {
+                    allMatchingSafe = NO; break;
+                }
+            }
+            if (!allMatchingSafe) {
+                NFBDebugLog(@"switcher: skipped bundle deletion with unknown/protected layout %@", bundleID);
+                return NO;
+            }
+            if (NFBInvokeDeleteLayoutsForBundle(controller, bundleID)) {
+                NFBDebugLog(@"switcher: bundle-card deletion requested %@ on %@", bundleID, name);
+                return YES;
+            }
             if (NFBInvokeQuitLayout(controller, layout)) {
                 NFBDebugLog(@"switcher: native card-quit requested %@ on %@", bundleID, name);
                 return YES;

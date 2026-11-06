@@ -684,7 +684,12 @@ static NSString *NFBFrontmostAppID(void) {
                 }
                 NSInteger pid = NFBRunningProcessID(app);
                 BOOL cardRequested = NFBQuitSwitcherCard(app, state.frontApp ?: front, state.floatingApp ?: floating);
-                BOOL accepted = cardRequested || NFBTerminateApp(app);
+                // Card deletion and process termination are independent jobs:
+                // deleting a card must not short-circuit the termination request.
+                BOOL processRequested = NFBTerminateApp(app);
+                BOOL accepted = cardRequested || processRequested;
+                NFBDebugLog(@"clear-background: requests %@ card=%d process=%d pid=%ld",
+                    app, cardRequested, processRequested, (long)pid);
                 if (!accepted) {
                     NFBErrorLog(@"clear-background: termination unavailable for %@ pid=%ld", app, (long)pid);
                     [self showOpenNotice:@"部分后台未能退出，请打开调试日志查看退出接口结果"];

@@ -76,3 +76,20 @@ static inline BOOL NFBInvokeQuitLayout(id controller, id layout) {
     @try { [call invokeWithTarget:controller]; return YES; }
     @catch (NSException *error) { NFBErrorLog(@"switcher quit threw %@", error); return NO; }
 }
+
+// Captured on the user's iOS 16 device: v24@0:8@16. This is a bundle string,
+// not a display-item or process object. A void return means only request sent.
+static inline BOOL NFBInvokeDeleteLayoutsForBundle(id controller, NSString *bundleID) {
+    if (![bundleID isKindOfClass:NSString.class] || !bundleID.length) return NO;
+    SEL selector = NSSelectorFromString(@"_deleteAppLayoutsMatchingBundleIdentifier:");
+    if (!controller || ![controller respondsToSelector:selector]) return NO;
+    NSMethodSignature *sig = NFBSignature(controller, selector);
+    if (!sig || sig.numberOfArguments != 3 || strcmp(sig.methodReturnType, @encode(void)) ||
+        [sig getArgumentTypeAtIndex:2][0] != '@') return NO;
+    NSInvocation *call = [NSInvocation invocationWithMethodSignature:sig];
+    call.selector = selector;
+    __unsafe_unretained id argument = bundleID;
+    [call setArgument:&argument atIndex:2];
+    @try { [call invokeWithTarget:controller]; return YES; }
+    @catch (NSException *error) { NFBErrorLog(@"switcher bundle deletion threw %@", error); return NO; }
+}

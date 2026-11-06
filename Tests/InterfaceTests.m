@@ -63,6 +63,25 @@
 - (void)_quitAppsRepresentedByAppLayout:(__unused id)layout forReason:(__unused id)reason { self.calls++; }
 @end
 
+@interface BundleCardFixture : NSObject
+@property(nonatomic) NSUInteger calls;
+@property(nonatomic, copy) NSString *bundle;
+- (void)_deleteAppLayoutsMatchingBundleIdentifier:(id)bundle;
+@end
+@implementation BundleCardFixture
+- (void)_deleteAppLayoutsMatchingBundleIdentifier:(id)bundle {
+    if (![bundle isKindOfClass:NSString.class]) abort();
+    self.calls++; self.bundle = bundle;
+}
+@end
+@interface WrongBundleCardFixture : NSObject
+@property(nonatomic) NSUInteger calls;
+- (NSInteger)_deleteAppLayoutsMatchingBundleIdentifier:(id)bundle;
+@end
+@implementation WrongBundleCardFixture
+- (NSInteger)_deleteAppLayoutsMatchingBundleIdentifier:(__unused id)bundle { self.calls++; return 1; }
+@end
+
 @interface HotspotFixture : NSObject {
 @public int _numberOfNetworkTetheredDevices;
 }
@@ -119,6 +138,13 @@ int main(void) {
     BadHotspotFixture *bad=[BadHotspotFixture new];
     Check(!NFBHotspotClientCount(bad,&clients) && bad.calls==0);
     Check(!NFBMISSetOff(bad) && bad.calls==0);
+    BundleCardFixture *card = [BundleCardFixture new];
+    Check(NFBInvokeDeleteLayoutsForBundle(card, @"com.example.background"));
+    Check(card.calls == 1 && [card.bundle isEqual:@"com.example.background"]);
+    Check(!NFBInvokeDeleteLayoutsForBundle(card, @"") && card.calls == 1);
+    Check(!NFBInvokeDeleteLayoutsForBundle([NSObject new], @"com.example.background"));
+    WrongBundleCardFixture *wrongCard = [WrongBundleCardFixture new];
+    Check(!NFBInvokeDeleteLayoutsForBundle(wrongCard, @"com.example.background") && wrongCard.calls == 0);
     QuitLayoutFixture *quit = [QuitLayoutFixture new];
     id layout = [NSObject new];
     Check(NFBInvokeQuitLayout(quit, layout) && quit.calls == 1 && quit.received == layout);
