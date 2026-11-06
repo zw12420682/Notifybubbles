@@ -44,6 +44,25 @@
 }
 @end
 
+@interface QuitLayoutFixture : NSObject
+@property(nonatomic) NSUInteger calls;
+@property(nonatomic, strong) id received;
+- (void)_quitAppsRepresentedByAppLayout:(id)layout forReason:(NSInteger)reason;
+@end
+@implementation QuitLayoutFixture
+- (void)_quitAppsRepresentedByAppLayout:(id)layout forReason:(NSInteger)reason {
+    if (!layout || reason != 1) abort();
+    self.calls++; self.received = layout;
+}
+@end
+@interface BadQuitLayoutFixture : NSObject
+@property(nonatomic) NSUInteger calls;
+- (void)_quitAppsRepresentedByAppLayout:(id)layout forReason:(id)reason;
+@end
+@implementation BadQuitLayoutFixture
+- (void)_quitAppsRepresentedByAppLayout:(__unused id)layout forReason:(__unused id)reason { self.calls++; }
+@end
+
 @interface HotspotFixture : NSObject {
 @public int _numberOfNetworkTetheredDevices;
 }
@@ -100,6 +119,13 @@ int main(void) {
     BadHotspotFixture *bad=[BadHotspotFixture new];
     Check(!NFBHotspotClientCount(bad,&clients) && bad.calls==0);
     Check(!NFBMISSetOff(bad) && bad.calls==0);
+    QuitLayoutFixture *quit = [QuitLayoutFixture new];
+    id layout = [NSObject new];
+    Check(NFBInvokeQuitLayout(quit, layout) && quit.calls == 1 && quit.received == layout);
+    Check(!NFBInvokeQuitLayout(quit, nil) && quit.calls == 1);
+    Check(!NFBInvokeQuitLayout([NSObject new], layout));
+    BadQuitLayoutFixture *badQuit = [BadQuitLayoutFixture new];
+    Check(!NFBInvokeQuitLayout(badQuit, layout) && badQuit.calls == 0);
     BundleExitFixture *bundleExit = [BundleExitFixture new];
     Check(NFBInvokeBundleTerminate(bundleExit, @"com.example.background"));
     Check(bundleExit.calls == 1 && [bundleExit.receivedBundle isEqual:@"com.example.background"]);

@@ -642,6 +642,15 @@ static NSString *NFBFrontmostAppID(void) {
     NFBWindowState *initial = NFBCurrentWindowState();
     NSString *front = initial.home ? nil : initial.frontApp;
     NSString *floating = initial.floatingApp ?: NFBTrollVisibleApp();
+    id springboard = UIApplication.sharedApplication;
+    BOOL homeKnown = NFBBooleanGetterCompatible(springboard, @selector(isShowingHomescreen));
+    if (!initial || !homeKnown || (!initial.home && !front.length)) {
+        NFBErrorLog(@"clear-background: refused because foreground identity is unknown");
+        [self.store clearUnreadRecords]; self.pendingRecord = nil;
+        [self showOpenNotice:@"无法确认当前 App，已清未读；为保护前台暂不清理后台"];
+        [self refresh];
+        return;
+    }
     NSArray *freshSwitcher = NFBReadSwitcherApps();
     NSArray<NSString *> *targets = NFBBackgroundCleanupTargets(freshSwitcher ?: self.lastSwitcher,
         [self orderedAppsForRemoval], front, floating);
@@ -668,8 +677,14 @@ static NSString *NFBFrontmostAppID(void) {
                     NFBDebugLog(@"clear-background: skipped %@ (protected=%d)", app, protected);
                     return;
                 }
+                // Foreground protection must be identifiable at execution time too.
+                if (!state || (!state.home && !state.frontApp.length)) {
+                    NFBErrorLog(@"clear-background: deferred %@ (foreground unknown)", app);
+                    return;
+                }
                 NSInteger pid = NFBRunningProcessID(app);
-                BOOL accepted = NFBTerminateApp(app);
+                BOOL cardRequested = NFBQuitSwitcherCard(app, state.frontApp ?: front, state.floatingApp ?: floating);
+                BOOL accepted = cardRequested || NFBTerminateApp(app);
                 if (!accepted) {
                     NFBErrorLog(@"clear-background: termination unavailable for %@ pid=%ld", app, (long)pid);
                     [self showOpenNotice:@"部分后台未能退出，请打开调试日志查看退出接口结果"];
@@ -689,6 +704,7 @@ static NSString *NFBFrontmostAppID(void) {
                         if (!NFBExitStillCurrent([exitVersions[app] unsignedIntegerValue],
                             [self.generations[app] unsignedIntegerValue],
                             self.enabled && self.exitEpoch == exitEpoch, NO, nowProtected)) return;
+                        if (!latest || (!latest.home && !latest.frontApp.length)) return;
                         NSInteger remaining = NFBRunningProcessID(app);
                         if (pid > 1 && remaining == pid) {
                             BOOL forced = NFBTerminateSurvivingProcess(app, pid);
@@ -698,6 +714,15 @@ static NSString *NFBFrontmostAppID(void) {
                         } else {
                             NFBDebugLog(@"clear-background: verification %@ before=%ld after=%ld",
                                 app, (long)pid, (long)remaining);
+                        }
+                        NSArray *cards = NFBReadSwitcherApps();
+                        if (cards && [cards containsObject:app]) {
+                            NFBErrorLog(@"clear-background: card still present %@ pid=%ld", app, (long)remaining);
+                            [self showOpenNotice:@"部分后台卡片未移除，请保留调试日志"];
+                        } else if (cards) {
+                            NFBDebugLog(@"clear-background: card removal verified %@", app);
+                        } else {
+                            NFBErrorLog(@"clear-background: card verification unavailable %@", app);
                         }
                         [self refresh];
                     });

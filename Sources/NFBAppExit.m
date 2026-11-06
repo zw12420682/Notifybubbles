@@ -106,7 +106,21 @@ static pid_t NFBPID(id application) {
 NSInteger NFBRunningProcessID(NSString *bundleID) {
     if (NFBIsSystemDesktop(bundleID)) return 0;
     if (!NSThread.isMainThread) return 0;
-    return NFBPID(NFBApplicationForBundle(bundleID));
+    // Verified iOS 16 service lookup; SBApplication.pid is absent on some builds.
+    id service = NFBGet(NSClassFromString(@"FBSSystemService"), @"sharedService");
+    SEL sel = NSSelectorFromString(@"pidForApplication:");
+    NSMethodSignature *sig = NFBSignature(service, sel);
+    if (sig && sig.numberOfArguments == 3 && [sig getArgumentTypeAtIndex:2][0] == '@' &&
+        strcmp(sig.methodReturnType, @encode(int)) == 0) {
+        @try {
+            int pid = ((int (*)(id, SEL, id))objc_msgSend)(service, sel, bundleID);
+            if (pid > 1) return pid;
+        } @catch (__unused NSException *error) {}
+    }
+    id application = NFBApplicationForBundle(bundleID);
+    pid_t pid = NFBPID(application);
+    if (pid <= 1) pid = NFBPID(NFBGet(application, @"process"));
+    return pid;
 }
 static BOOL NFBTerminateBySignal(id application) {
     pid_t pid = NFBPID(application);
@@ -126,7 +140,7 @@ BOOL NFBTerminateApp(NSString *bundleID) {
         Class fbsClass = NSClassFromString(@"FBSSystemService");
         id fbsService = NFBGet(fbsClass, @"sharedService") ?: NFBSingleton(@"FBSSystemService");
         if (NFBInvokeBundleTerminate(fbsService, bundleID)) {
-            NFBDebugLog(@"exit: FBSSystemService accepted %@", bundleID);
+            NFBDebugLog(@"exit: FBSSystemService request sent %@ (completion unknown)", bundleID);
             return YES;
         }
         id application = NFBApplicationForBundle(bundleID);
@@ -152,7 +166,10 @@ BOOL NFBTerminateApp(NSString *bundleID) {
 BOOL NFBTerminateSurvivingProcess(NSString *bundleID, NSInteger capturedPID) {
     if (!NSThread.isMainThread || NFBIsSystemDesktop(bundleID) || capturedPID <= 1) return NO;
     id application = NFBApplicationForBundle(bundleID);
-    pid_t currentPID = NFBPID(application);
-    if (currentPID != capturedPID) return NO;
-    return NFBTerminateBySignal(application);
+    NSInteger currentPID = NFBRunningProcessID(bundleID);
+    if (currentPID != capturedPID || currentPID <= 1 || currentPID > INT_MAX) return NO;
+    (void)application;
+    int result = kill((pid_t)currentPID, SIGKILL);
+    NFBDebugLog(@"exit: verified same-pid kill %ld -> %d", (long)currentPID, result);
+    return result == 0;
 }

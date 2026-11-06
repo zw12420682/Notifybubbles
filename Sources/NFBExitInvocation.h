@@ -54,3 +54,25 @@ static inline BOOL NFBInvokeBundleTerminate(id service, NSString *bundleID) {
     return NFBInvokeTerminate(service,
         NSSelectorFromString(@"terminateApplication:forReason:andReport:withDescription:"), bundleID);
 }
+
+// Native switcher swipe-away path, documented in the open-source QuitAll tweak.
+// Never call an ABI-guessed method: layout object + signed integer reason only.
+static inline BOOL NFBInvokeQuitLayout(id controller, id layout) {
+    SEL sel = NSSelectorFromString(@"_quitAppsRepresentedByAppLayout:forReason:");
+    if (!controller || !layout || ![controller respondsToSelector:sel]) return NO;
+    NSMethodSignature *sig = NFBSignature(controller, sel);
+    if (!sig || sig.numberOfArguments != 4 || strcmp(sig.methodReturnType, @encode(void)) ||
+        [sig getArgumentTypeAtIndex:2][0] != '@') return NO;
+    const char *t = [sig getArgumentTypeAtIndex:3];
+    NSInvocation *call = [NSInvocation invocationWithMethodSignature:sig];
+    call.selector = sel;
+    __unsafe_unretained id value = layout;
+    [call setArgument:&value atIndex:2];
+    if (t[0] == 'q' || t[0] == 'l') {
+        NSInteger reason = 1; [call setArgument:&reason atIndex:3];
+    } else if (t[0] == 'i') {
+        int reason = 1; [call setArgument:&reason atIndex:3];
+    } else return NO;
+    @try { [call invokeWithTarget:controller]; return YES; }
+    @catch (NSException *error) { NFBErrorLog(@"switcher quit threw %@", error); return NO; }
+}
