@@ -1,3 +1,4 @@
+#import "NFBBackgroundCleanup.h"
 #import "NFBWindowKind.h"
 #import "NFBRightEdgeAction.h"
 #import "NFBContainerLayout.h"
@@ -35,6 +36,16 @@ static void Check(BOOL value, NSString *message) {
 }
 int main(void) {
     @autoreleasepool {
+        NSArray *cleanup = NFBBackgroundCleanupTargets(
+            @[@"front", @"split", @"offscreen", @"other", @"offscreen", @"com.apple.springboard"],
+            @[@"front", @"pluginOnly", @"__notifybubbles.clearall__"], @"front", @"split");
+        Check([cleanup isEqualToArray:@[@"offscreen", @"other", @"pluginOnly"]],
+              @"Batch cleanup includes offscreen switcher apps and protects both visible apps");
+        Check(NFBBackgroundCleanupTargets(@[@"front", @"split"], nil, @"front", @"split").count == 0,
+              @"Only protected apps means no termination targets");
+        Check([NFBBackgroundCleanupTargets(nil, @[@"offline"], nil, nil) isEqualToArray:@[@"offline"]],
+              @"Unavailable switcher preserves the plugin fallback without crashing");
+
         NFBStore *revisionStore = [NFBStore new];
         id revisionDestination = [NSObject new];
         Check([revisionStore putApp:@"revision" notification:@"same" request:Request(1) destination:revisionDestination], @"First revision inserted");

@@ -121,8 +121,17 @@ BOOL NFBTerminateApp(NSString *bundleID) {
     if (!NSThread.isMainThread) return NO;
     if (![bundleID isKindOfClass:NSString.class] || !bundleID.length) return NO;
     @try {
+        // iOS 16's public private-service header names FBSSystemService. Unlike
+        // the legacy FBSystemService path it accepts a bundle ID, not a process.
+        Class fbsClass = NSClassFromString(@"FBSSystemService");
+        id fbsService = NFBGet(fbsClass, @"sharedService") ?: NFBSingleton(@"FBSSystemService");
+        if (NFBInvokeBundleTerminate(fbsService, bundleID)) {
+            NFBDebugLog(@"exit: FBSSystemService accepted %@", bundleID);
+            return YES;
+        }
         id application = NFBApplicationForBundle(bundleID);
         if (!application) {
+            if (NFBTerminateViaBackBoard(bundleID)) return YES;
             NFBDebugLog(@"exit: no SBApplication for %@", bundleID);
             return NO;
         }
@@ -138,4 +147,12 @@ BOOL NFBTerminateApp(NSString *bundleID) {
         NFBErrorLog(@"exit: failed for %@: %@", bundleID, error);
         return NO;
     }
+}
+
+BOOL NFBTerminateSurvivingProcess(NSString *bundleID, NSInteger capturedPID) {
+    if (!NSThread.isMainThread || NFBIsSystemDesktop(bundleID) || capturedPID <= 1) return NO;
+    id application = NFBApplicationForBundle(bundleID);
+    pid_t currentPID = NFBPID(application);
+    if (currentPID != capturedPID) return NO;
+    return NFBTerminateBySignal(application);
 }

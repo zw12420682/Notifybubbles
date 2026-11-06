@@ -7,3 +7,6 @@ BOOL NFBTerminateApp(NSString *bundleID);
 
 // Identity snapshot for delayed exits; zero means unavailable.
 NSInteger NFBRunningProcessID(NSString *bundleID);
+// Fallback only if the same captured process survived a service request. Caller
+// must re-check front/split protection immediately before calling.
+BOOL NFBTerminateSurvivingProcess(NSString *bundleID, NSInteger capturedPID);

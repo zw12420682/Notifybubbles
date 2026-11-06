@@ -22,6 +22,7 @@
 #import "NFBOpenEdge.h"
 #import "NFBNotificationPolicy.h"
 #import "NFBAppExit.h"
+#import "NFBBackgroundCleanup.h"
 #import "NFBKeyboard.h"
 #import "NFBEdgeSections.h"
 #import "NFBBackgroundScroll.h"
@@ -635,33 +636,76 @@ static NSString *NFBFrontmostAppID(void) {
 // occupying the floating window, mirroring the long-press exit path but for the
 // whole background at once.
 - (void)clearBackground {
-    NSString *floating = NFBTrollVisibleApp();
-    id sb = UIApplication.sharedApplication;
-    NSString *front = nil;
-    if ([sb respondsToSelector:@selector(isShowingHomescreen)] && ![sb isShowingHomescreen])
-        front = NFBFrontmostAppID();
-    NSMutableArray<NSString *> *targets = [NSMutableArray array];
-    for (NSString *app in [self orderedAppsForRemoval]) {
-        if ([app isEqualToString:floating] || [app isEqualToString:front]) continue;
-        [targets addObject:app];
-    }
+    // Read the real switcher now: plugin rows may be filtered, clipped, or already
+    // consumed and are not the full set of background applications.
+    NFBInvalidateWindowState();
+    NFBWindowState *initial = NFBCurrentWindowState();
+    NSString *front = initial.home ? nil : initial.frontApp;
+    NSString *floating = initial.floatingApp ?: NFBTrollVisibleApp();
+    NSArray *freshSwitcher = NFBReadSwitcherApps();
+    NSArray<NSString *> *targets = NFBBackgroundCleanupTargets(freshSwitcher ?: self.lastSwitcher,
+        [self orderedAppsForRemoval], front, floating);
+    // All three entry points have the same unread semantics, even when every
+    // switcher entry is protected and there is no process to close.
+    [self.store clearUnreadRecords];
+    self.pendingRecord = nil;
     if (!targets.count) { [self refresh]; return; }
-    NFBDebugLog(@"gesture: clear-background -> %lu apps", (unsigned long)targets.count);
-    [self.dismissedSwitcher addObjectsFromArray:targets];
-    [self closeAppsInOrder:targets];
+    NFBDebugLog(@"gesture: clear-background -> %lu targets front=%@ split=%@",
+        (unsigned long)targets.count, front, floating);
     NSDictionary *exitVersions = [self.generations copy];
     NSUInteger exitEpoch = self.exitEpoch;
-    [targets enumerateObjectsUsingBlock:^(NSString *app, __unused NSUInteger index, __unused BOOL *stop) {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((0.35 + index * 0.16) * NSEC_PER_SEC)),
-                       dispatch_get_main_queue(), ^{
-            NFBInvalidateWindowState();
-            NFBWindowState *state = NFBCurrentWindowState();
-            BOOL protected = [app isEqual:state.frontApp] || [app isEqual:state.floatingApp];
-            if (NFBExitStillCurrent([exitVersions[app] unsignedIntegerValue], [self.generations[app] unsignedIntegerValue], self.enabled && self.exitEpoch == exitEpoch, NO, protected)) NFBTerminateApp(app);
-            [self refresh];
-        });
+    [targets enumerateObjectsUsingBlock:^(NSString *app, NSUInteger index, __unused BOOL *stop) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((0.05 + index * 0.12) * NSEC_PER_SEC)),
+            dispatch_get_main_queue(), ^{
+                NFBInvalidateWindowState();
+                NFBWindowState *state = NFBCurrentWindowState();
+                BOOL protected = [app isEqual:state.frontApp] || [app isEqual:state.floatingApp] ||
+                    [app isEqual:front] || [app isEqual:floating] || [app isEqual:NFBTrollVisibleApp()];
+                BOOL valid = NFBExitStillCurrent([exitVersions[app] unsignedIntegerValue],
+                    [self.generations[app] unsignedIntegerValue],
+                    self.enabled && self.exitEpoch == exitEpoch, NO, protected);
+                if (!valid) {
+                    NFBDebugLog(@"clear-background: skipped %@ (protected=%d)", app, protected);
+                    return;
+                }
+                NSInteger pid = NFBRunningProcessID(app);
+                BOOL accepted = NFBTerminateApp(app);
+                if (!accepted) {
+                    NFBErrorLog(@"clear-background: termination unavailable for %@ pid=%ld", app, (long)pid);
+                    [self showOpenNotice:@"部分后台未能退出，请打开调试日志查看退出接口结果"];
+                    return;
+                }
+                // Only mark plugin rows removed after a request was accepted.
+                // System switcher cards are not assumed gone solely on this flag.
+                [self.dismissedSwitcher addObject:app];
+                [self.store closeApp:app];
+                [self refresh];
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)),
+                    dispatch_get_main_queue(), ^{
+                        NFBInvalidateWindowState();
+                        NFBWindowState *latest = NFBCurrentWindowState();
+                        BOOL nowProtected = [app isEqual:latest.frontApp] || [app isEqual:latest.floatingApp] ||
+                            [app isEqual:front] || [app isEqual:floating] || [app isEqual:NFBTrollVisibleApp()];
+                        if (!NFBExitStillCurrent([exitVersions[app] unsignedIntegerValue],
+                            [self.generations[app] unsignedIntegerValue],
+                            self.enabled && self.exitEpoch == exitEpoch, NO, nowProtected)) return;
+                        NSInteger remaining = NFBRunningProcessID(app);
+                        if (pid > 1 && remaining == pid) {
+                            BOOL forced = NFBTerminateSurvivingProcess(app, pid);
+                            NFBDebugLog(@"clear-background: same-process fallback %@ pid=%ld accepted=%d",
+                                app, (long)pid, forced);
+                            if (!forced) NFBErrorLog(@"clear-background: process still alive %@ pid=%ld", app, (long)pid);
+                        } else {
+                            NFBDebugLog(@"clear-background: verification %@ before=%ld after=%ld",
+                                app, (long)pid, (long)remaining);
+                        }
+                        [self refresh];
+                    });
+            });
     }];
+    [self refresh];
 }
+
 - (void)clearAllTapped:(UITapGestureRecognizer *)gesture {
     if (gesture.state != UIGestureRecognizerStateEnded || [self isLocked] || ![self acceptGestureForKey:@"clearAll"]) return;
     if (!NFBTrollVisibleApp().length) {
@@ -723,17 +767,10 @@ static NSString *NFBFrontmostAppID(void) {
             return;
         case NFBActionClearBackground:
             self.desktopActionTouchTarget = nil;
-            // Same clear as the X button, then drop the unread records; the app on
-            // screen (fullscreen or in the split) is never touched.
-            [self clearBackground];
-            // Unread records go too: the whole point of the hold is a clean slate.
-            // The open app and any split app were skipped above, so nothing that is
-            // on screen loses its row.
+            if (![self acceptGestureForKey:@"clearBackground"]) return;
             self.holdsClearedColumn = NO;
-            if (![self acceptGestureForKey:@"desktopUnread"]) { [self refresh]; return; }
-            [self.store clearUnreadRecords];
-            self.pendingRecord = nil;
-            [self refresh];
+            [self clearBackground];
+            [self scheduleAutoCollapse];
             return;
         case NFBActionNone:
             break;

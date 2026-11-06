@@ -28,6 +28,22 @@
 - (BOOL)badArgument:(__unused double)process { self.calls++; return YES; }
 - (void)throwingExit:(__unused id)process { [NSException raise:@"Fixture" format:@"expected"]; }
 @end
+// FBSSystemService fixture: the first argument is a bundle identifier, never a
+// process object. Verify the actual production wrapper's argument and ABI.
+@interface BundleExitFixture : NSObject
+@property(nonatomic, copy) NSString *receivedBundle;
+@property(nonatomic) NSUInteger calls;
+- (void)terminateApplication:(id)bundle forReason:(NSInteger)reason andReport:(BOOL)report withDescription:(id)text;
+@end
+@implementation BundleExitFixture
+- (void)terminateApplication:(id)bundle forReason:(NSInteger)reason andReport:(BOOL)report withDescription:(id)text {
+    if (![bundle isKindOfClass:NSString.class] || ![bundle isEqual:@"com.example.background"] ||
+        reason != 1 || report || ![text isEqual:@"NotifyBubbles exit"]) abort();
+    self.receivedBundle = bundle;
+    self.calls++;
+}
+@end
+
 @interface HotspotFixture : NSObject {
 @public int _numberOfNetworkTetheredDevices;
 }
@@ -84,6 +100,11 @@ int main(void) {
     BadHotspotFixture *bad=[BadHotspotFixture new];
     Check(!NFBHotspotClientCount(bad,&clients) && bad.calls==0);
     Check(!NFBMISSetOff(bad) && bad.calls==0);
+    BundleExitFixture *bundleExit = [BundleExitFixture new];
+    Check(NFBInvokeBundleTerminate(bundleExit, @"com.example.background"));
+    Check(bundleExit.calls == 1 && [bundleExit.receivedBundle isEqual:@"com.example.background"]);
+    Check(!NFBInvokeBundleTerminate(bundleExit, @"") && bundleExit.calls == 1);
+    Check(!NFBInvokeBundleTerminate([NSObject new], @"com.example.background"));
     Fixture *fixture = [Fixture new]; id process = [NSObject new];
     Check([NFBCheckedObject(fixture,@"objectValue") isEqual:@"value"]);
     Check([NFBCheckedObject(Fixture.class,@"classValue") isEqual:@"class"]);

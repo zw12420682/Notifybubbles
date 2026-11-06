@@ -46,3 +46,11 @@ static inline BOOL NFBInvokeTerminate(id service, SEL selector, id process) {
     }
 }
 
+
+// FBSSystemService on iOS 16 takes an application bundle identifier, not an
+// FBProcess/SBApplication object. Keep this explicit and test the actual argument.
+static inline BOOL NFBInvokeBundleTerminate(id service, NSString *bundleID) {
+    if (![bundleID isKindOfClass:NSString.class] || !bundleID.length) return NO;
+    return NFBInvokeTerminate(service,
+        NSSelectorFromString(@"terminateApplication:forReason:andReport:withDescription:"), bundleID);
+}
