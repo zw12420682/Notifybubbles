@@ -407,6 +407,7 @@ static double NFBNumber(NSString *key, double fallback) {
 - (void)showOpenNotice:(NSString *)message;
 - (BOOL)isLocked;
 - (void)clearBackground;
+- (void)sweepAwayBubbles:(NSArray<NSString *> *)apps exitVersions:(NSDictionary *)exitVersions;
 - (void)clearAllTapped:(UITapGestureRecognizer *)gesture;
 - (void)styleClearAllButton:(NFBBubble *)button;
 - (void)shakeBubble:(NFBBubble *)button;
@@ -632,6 +633,59 @@ static NSString *NFBFrontmostAppID(void) {
     return NFBString(NFBGet(NFBGet(UIApplication.sharedApplication, frontKey), bundleKey));
 }
 
+// Clearing is one motion, not one reflow per app. Every leaving bubble is
+// detached from the bookkeeping first, so a mid-sweep refresh (tick, late
+// notification, verification pass) cannot race the same view with a second exit
+// animation. They then shrink away bottom-up and the column settles once, after
+// the last one is gone.
+- (void)sweepAwayBubbles:(NSArray<NSString *> *)apps exitVersions:(NSDictionary *)exitVersions {
+    NSMutableArray<NFBBubble *> *leaving = [NSMutableArray arrayWithCapacity:apps.count];
+    for (NSString *app in apps) {
+        NFBBubble *button = self.buttons[app];
+        if (!button) continue;
+        [self.buttons removeObjectForKey:app];
+        if (![self.favoriteApps containsObject:app]) [self.icons removeObjectForKey:app];
+        button.userInteractionEnabled = NO;
+        [button.layer removeAllAnimations];
+        [leaving addObject:button];
+    }
+    // Bottom-up: the column drains toward the dock instead of blinking out.
+    [leaving sortUsingComparator:^NSComparisonResult(NFBBubble *a, NFBBubble *b) {
+        if (a.center.y > b.center.y) return NSOrderedAscending;
+        if (a.center.y < b.center.y) return NSOrderedDescending;
+        return NSOrderedSame;
+    }];
+    __weak typeof(self) weakSelf = self;
+    void (^settle)(void) = ^{
+        typeof(self) self_ = weakSelf;
+        if (!self_) return;
+        for (NSString *app in apps) {
+            // An app that received a new notification during the sweep stays.
+            if (![self_.generations[app] isEqual:exitVersions[app]]) continue;
+            [self_.store closeApp:app];
+        }
+        [self_ refresh];
+    };
+    if (UIAccessibilityIsReduceMotionEnabled() || !leaving.count) {
+        for (NFBBubble *button in leaving) [button removeFromSuperview];
+        settle();
+        return;
+    }
+    static const NSTimeInterval step = 0.045, duration = 0.16;
+    NSUInteger count = leaving.count;
+    [leaving enumerateObjectsUsingBlock:^(NFBBubble *button, NSUInteger index, __unused BOOL *stop) {
+        [UIView animateWithDuration:duration delay:index * step
+            options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseIn
+            animations:^{
+                button.transform = CGAffineTransformMakeScale(0.62, 0.62);
+                button.alpha = 0;
+            } completion:^(__unused BOOL done) {
+                [button removeFromSuperview];
+                if (index + 1 == count) settle();
+            }];
+    }];
+}
+
 // "一键清理后台": terminate every app in the switcher/row except the one still
 // occupying the floating window, mirroring the long-press exit path but for the
 // whole background at once.
@@ -663,6 +717,10 @@ static NSString *NFBFrontmostAppID(void) {
         (unsigned long)targets.count, front, floating);
     NSDictionary *exitVersions = [self.generations copy];
     NSUInteger exitEpoch = self.exitEpoch;
+    // Visual removal starts on the press, not on the first accepted request: the
+    // column must react immediately while the exits are still being dispatched.
+    for (NSString *app in targets) [self.dismissedSwitcher addObject:app];
+    [self sweepAwayBubbles:targets exitVersions:exitVersions];
     [targets enumerateObjectsUsingBlock:^(NSString *app, NSUInteger index, __unused BOOL *stop) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((0.05 + index * 0.12) * NSEC_PER_SEC)),
             dispatch_get_main_queue(), ^{
@@ -695,11 +753,10 @@ static NSString *NFBFrontmostAppID(void) {
                     [self showOpenNotice:@"部分后台未能退出，请打开调试日志查看退出接口结果"];
                     return;
                 }
-                // Only mark plugin rows removed after a request was accepted.
-                // System switcher cards are not assumed gone solely on this flag.
+                // The row left in the sweep at press time; this pass only owns the
+                // process. Re-flowing here again would make the column stutter once
+                // per app, which is exactly what the batch settle avoids.
                 [self.dismissedSwitcher addObject:app];
-                [self.store closeApp:app];
-                [self refresh];
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)),
                     dispatch_get_main_queue(), ^{
                         NFBInvalidateWindowState();
