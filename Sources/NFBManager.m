@@ -649,12 +649,29 @@ static NSString *NFBFrontmostAppID(void) {
         [button.layer removeAllAnimations];
         [leaving addObject:button];
     }
-    // Bottom-up: the column drains toward the dock instead of blinking out.
-    [leaving sortUsingComparator:^NSComparisonResult(NFBBubble *a, NFBBubble *b) {
-        if (a.center.y > b.center.y) return NSOrderedAscending;
-        if (a.center.y < b.center.y) return NSOrderedDescending;
-        return NSOrderedSame;
+    // Rows clipped by their viewport leave instantly: giving them a delay slot
+    // made a visible pause in the middle of the sweep.
+    UIView *root = self.window.rootViewController.view;
+    NSMutableArray<NFBBubble *> *visible = [NSMutableArray arrayWithCapacity:leaving.count];
+    NSMutableDictionary<NSValue *, NSNumber *> *screenY = [NSMutableDictionary dictionary];
+    for (NFBBubble *button in leaving) {
+        CGRect r = root ? [button convertRect:button.bounds toView:root] : CGRectNull;
+        UIView *clip = button.superview;
+        CGRect c = (root && clip) ? [clip convertRect:clip.bounds toView:root] : CGRectNull;
+        if (button.hidden || button.alpha < 0.01 || CGRectIsNull(r) || !CGRectIntersectsRect(r, c)) {
+            [button removeFromSuperview];
+            continue;
+        }
+        screenY[[NSValue valueWithNonretainedObject:button]] = @(CGRectGetMidY(r));
+        [visible addObject:button];
+    }
+    // Bottom-up in screen space (the two viewports are separate superviews).
+    [visible sortUsingComparator:^NSComparisonResult(NFBBubble *a, NFBBubble *b) {
+        CGFloat ya = screenY[[NSValue valueWithNonretainedObject:a]].doubleValue;
+        CGFloat yb = screenY[[NSValue valueWithNonretainedObject:b]].doubleValue;
+        return ya > yb ? NSOrderedAscending : (ya < yb ? NSOrderedDescending : NSOrderedSame);
     }];
+    leaving = visible;
     __weak typeof(self) weakSelf = self;
     void (^settle)(void) = ^{
         typeof(self) self_ = weakSelf;
@@ -672,7 +689,7 @@ static NSString *NFBFrontmostAppID(void) {
         return;
     }
     static const NSTimeInterval step = 0.045, duration = 0.16;
-    NSUInteger count = leaving.count;
+    __block NSUInteger remaining = leaving.count;
     [leaving enumerateObjectsUsingBlock:^(NFBBubble *button, NSUInteger index, __unused BOOL *stop) {
         [UIView animateWithDuration:duration delay:index * step
             options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseIn
@@ -681,7 +698,7 @@ static NSString *NFBFrontmostAppID(void) {
                 button.alpha = 0;
             } completion:^(__unused BOOL done) {
                 [button removeFromSuperview];
-                if (index + 1 == count) settle();
+                if (--remaining == 0) settle();
             }];
     }];
 }
@@ -1789,15 +1806,17 @@ static NSString *NFBFrontmostAppID(void) {
         // last, so replaying it puts the newest at the bottom of the column.
         for (NSString *app in self.lastSwitcher ?: @[]) {
             if ([notified containsObject:app]) continue;
+            if ([self.dismissedSwitcher containsObject:app] || [self.closingApps containsObject:app]) continue;
             if ([switcherGroup containsObject:app]) continue;
             [switcherGroup addObject:app];
         }
     }
     // Every column now lists the real app switcher; the split/expanded column only
     // *shows* three rows and scrolls the rest, the collapsed one shows four.
-    NSArray<NSString *> *recentGroup = collapse
-        ? switcherGroup
-        : (self.lastSwitcher ?: @[]);
+    NSMutableArray<NSString *> *liveSwitcher = [NSMutableArray array];
+    if (!collapse) for (NSString *app in self.lastSwitcher ?: @[])
+        if (![self.dismissedSwitcher containsObject:app] && ![self.closingApps containsObject:app]) [liveSwitcher addObject:app];
+    NSArray<NSString *> *recentGroup = collapse ? switcherGroup : liveSwitcher;
     NSMutableOrderedSet<NSString *> *columnApps = [NSMutableOrderedSet orderedSet];
     if (collapse) {
         // Collapsed: unread first (top), recent backgrounds below it, so a newly
