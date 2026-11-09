@@ -648,6 +648,9 @@ static NSString *NFBFrontmostAppID(void) {
         [self.buttons removeObjectForKey:app];
         if (![self.favoriteApps containsObject:app]) [self.icons removeObjectForKey:app];
         button.userInteractionEnabled = NO;
+        // Claims the app for this sweep: the tick, a switcher diff or a rebuilt
+        // row must not start a burst on a bubble that is already shrinking.
+        [self.closingApps addObject:app];
         [button.layer removeAllAnimations];
         [leaving addObject:button];
     }
@@ -678,6 +681,8 @@ static NSString *NFBFrontmostAppID(void) {
     void (^settle)(void) = ^{
         typeof(self) self_ = weakSelf;
         if (!self_) return;
+        // A lingering claim would hide the app if it is opened again later.
+        for (NSString *app in apps) [self_.closingApps removeObject:app];
         [self_ refresh];
     };
     // The store is the source of the column's membership, so the rows have to
@@ -1313,7 +1318,8 @@ static NSString *NFBFrontmostAppID(void) {
                 NSSet *oldSet = [NSSet setWithArray:self.lastSwitcher ?: @[]];
                 NSMutableArray *removed = [NSMutableArray array];
                 for (NSString *app in self.store.appIDs)
-                    if ([oldSet containsObject:app] && ![set containsObject:app]) [removed addObject:app];
+                    if ([oldSet containsObject:app] && ![set containsObject:app] &&
+                        ![self.closingApps containsObject:app]) [removed addObject:app];
                 if (removed.count) { [self closeAppsInOrder:removed]; dirty = YES; }
                 for (NSString *app in current) {
                     // A new card in the switcher is the "external badge" edge: the app
@@ -1729,8 +1735,12 @@ static NSString *NFBFrontmostAppID(void) {
         if (![self.store.appIDs containsObject:reopened]) [self.store pinApp:reopened];
     }
     NSMutableArray<NSString *> *apps = [NSMutableArray array];
+    // Swept rows are neither rebuilt nor read as "still here": their notification
+    // rows would otherwise reappear right after the store dropped them.
+    NSSet<NSString *> *sweeping = [self.closingApps copy];
     for (NSString *app in self.store.appIDs) {
         if (NFBIsSystemDesktop(app)) continue;
+        if ([sweeping containsObject:app]) continue;
         BOOL fromSwitcher = [self.lastSwitcher containsObject:app];
         BOOL notificationsAllowed = fromSwitcher || NFBSystemNotificationsAllowed(app, ^{ [NFBManager.shared setNeedsRefresh]; });
         if (fromSwitcher || notificationsAllowed) [apps addObject:app];
