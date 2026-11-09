@@ -1956,7 +1956,11 @@ static NSString *NFBFrontmostAppID(void) {
         return;
     }
     if (![self shouldShow]) {
-        NFBUpdateOpenEdgeSplitIconsVisible(NO); self.window.hidden = YES;
+        // A hidden window still spans the screen. Leaving interaction on made it
+        // an invisible touch shield over whatever app was underneath.
+        NFBUpdateOpenEdgeSplitIconsVisible(NO);
+        self.window.hidden = YES;
+        self.window.rootViewController.view.userInteractionEnabled = NO;
         self.layoutRecording = NO;
         return;
     }
@@ -1970,6 +1974,15 @@ static NSString *NFBFrontmostAppID(void) {
         return;
     }
     [self ensureWindow];
+    // A clear is one continuous motion: the reads it triggers (switcher diff,
+    // frontmost lookup while apps die) must not hide the column halfway through
+    // and reveal it again when the sweep settles. That blink was the "flash".
+    if (self.closingApps.count) {
+        self.window.hidden = NO;
+        self.window.rootViewController.view.userInteractionEnabled = YES;
+        [self setColumnOffscreen:NO];
+        NFBDebugLog(@"sweep: column held visible (window=%d)", !self.window.hidden);
+    }
     NFBSetCaptureHidden(self.window.rootViewController.view, self.hideInScreenshots);
     [self setColumnOffscreen:NO];
     UIView *root = self.window.rootViewController.view;
