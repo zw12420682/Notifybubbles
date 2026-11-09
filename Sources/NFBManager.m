@@ -639,91 +639,28 @@ static NSString *NFBFrontmostAppID(void) {
     return NFBString(NFBGet(NFBGet(UIApplication.sharedApplication, frontKey), bundleKey));
 }
 
-// Clearing is one motion, not one reflow per app. Every leaving bubble is
-// detached from the bookkeeping first, so a mid-sweep refresh (tick, late
-// notification, verification pass) cannot race the same view with a second exit
-// animation. They then shrink away bottom-up and the column settles once, after
-// the last one is gone.
+// The single teardown entry for a clear: rows are detached from the bookkeeping
+// and removed from their superview in the same pass, so no refresh can race the
+// same view and no second animation can start on it.
 - (void)sweepAwayBubbles:(NSArray<NSString *> *)apps exitVersions:(NSDictionary *)exitVersions {
-    CFTimeInterval sweepStart = CACurrentMediaTime();
-    NFBDebugLog(@"sweep: start apps=%lu", (unsigned long)apps.count);
-    NSMutableArray<NFBBubble *> *leaving = [NSMutableArray arrayWithCapacity:apps.count];
+    // No exit animation on purpose. Every staged version (staggered sweep,
+    // instant teardown, deferred commit) produced a visible blink on device, and
+    // a blink is worse than no motion. Removing the rows in one pass, on one
+    // frame, cannot flash: there is no intermediate state to see.
     for (NSString *app in apps) {
         NFBBubble *button = self.buttons[app];
-        if (!button) continue;
+        if (button) {
+            [button.layer removeAllAnimations];
+            [button removeFromSuperview];
+        }
         [self.buttons removeObjectForKey:app];
         if (![self.favoriteApps containsObject:app]) [self.icons removeObjectForKey:app];
-        button.userInteractionEnabled = NO;
-        // Claims the app for this sweep: the tick, a switcher diff or a rebuilt
-        // row must not start a burst on a bubble that is already shrinking.
-        [self.closingApps addObject:app];
-        [button.layer removeAllAnimations];
-        [leaving addObject:button];
+        // An app that received a new notification during the clear stays.
+        if (![self.generations[app] isEqual:exitVersions[app]]) continue;
+        [self.store closeApp:app];
     }
-    // Rows clipped by their viewport leave instantly: giving them a delay slot
-    // made a visible pause in the middle of the sweep.
-    UIView *root = self.window.rootViewController.view;
-    NSMutableArray<NFBBubble *> *visible = [NSMutableArray arrayWithCapacity:leaving.count];
-    NSMutableDictionary<NSValue *, NSNumber *> *screenY = [NSMutableDictionary dictionary];
-    for (NFBBubble *button in leaving) {
-        CGRect r = root ? [button convertRect:button.bounds toView:root] : CGRectNull;
-        UIView *clip = button.superview;
-        CGRect c = (root && clip) ? [clip convertRect:clip.bounds toView:root] : CGRectNull;
-        if (button.hidden || button.alpha < 0.01 || CGRectIsNull(r) || !CGRectIntersectsRect(r, c)) {
-            [button removeFromSuperview];
-            continue;
-        }
-        screenY[[NSValue valueWithNonretainedObject:button]] = @(CGRectGetMidY(r));
-        [visible addObject:button];
-    }
-    // Bottom-up in screen space (the two viewports are separate superviews).
-    [visible sortUsingComparator:^NSComparisonResult(NFBBubble *a, NFBBubble *b) {
-        CGFloat ya = screenY[[NSValue valueWithNonretainedObject:a]].doubleValue;
-        CGFloat yb = screenY[[NSValue valueWithNonretainedObject:b]].doubleValue;
-        return ya > yb ? NSOrderedAscending : (ya < yb ? NSOrderedDescending : NSOrderedSame);
-    }];
-    leaving = visible;
-    __weak typeof(self) weakSelf = self;
-    void (^settle)(void) = ^{
-        typeof(self) self_ = weakSelf;
-        if (!self_) return;
-        // A lingering claim would hide the app if it is opened again later.
-        NFBDebugLog(@"sweep: settle after %.2fs", CACurrentMediaTime() - sweepStart);
-        for (NSString *app in apps) [self_.closingApps removeObject:app];
-        [self_ refresh];
-    };
-    // Rows leave the store only when their exit has played. Committing the empty
-    // list on the first frame blanked the column instantly, so there was nothing
-    // to animate: the user saw a single disappearance instead of a sweep. The
-    // closing claim keeps any refresh from rebuilding these rows meanwhile.
-    void (^commitRows)(void) = ^{
-        typeof(self) self_ = weakSelf;
-        if (!self_) return;
-        for (NSString *app in apps) {
-            // An app that received a new notification during the sweep stays.
-            if (![self_.generations[app] isEqual:exitVersions[app]]) continue;
-            [self_.store closeApp:app];
-        }
-        settle();
-    };
-    if (UIAccessibilityIsReduceMotionEnabled() || !leaving.count) {
-        for (NFBBubble *button in leaving) [button removeFromSuperview];
-        commitRows();
-        return;
-    }
-    static const NSTimeInterval step = 0.045, duration = 0.16;
-    __block NSUInteger remaining = leaving.count;
-    [leaving enumerateObjectsUsingBlock:^(NFBBubble *button, NSUInteger index, __unused BOOL *stop) {
-        [UIView animateWithDuration:duration delay:index * step
-            options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseIn
-            animations:^{
-                button.transform = CGAffineTransformMakeScale(0.62, 0.62);
-                button.alpha = 0;
-            } completion:^(__unused BOOL done) {
-                [button removeFromSuperview];
-                if (--remaining == 0) commitRows();
-            }];
-    }];
+    NFBDebugLog(@"clear-background: rows removed without animation (%lu)", (unsigned long)apps.count);
+    [self refresh];
 }
 
 // "一键清理后台": terminate every app in the switcher/row except the one still
@@ -775,8 +712,8 @@ static NSString *NFBFrontmostAppID(void) {
         (unsigned long)targets.count, front, floating);
     NSDictionary *exitVersions = [self.generations copy];
     NSUInteger exitEpoch = self.exitEpoch;
-    // Visual removal starts on the press, not on the first accepted request: the
-    // column must react immediately while the exits are still being dispatched.
+    // Rows leave on the press, not on the first accepted request: the column must
+    // react immediately while the exits are still being dispatched.
     for (NSString *app in targets) [self.dismissedSwitcher addObject:app];
     [self sweepAwayBubbles:targets exitVersions:exitVersions];
     [targets enumerateObjectsUsingBlock:^(NSString *app, NSUInteger index, __unused BOOL *stop) {
@@ -811,9 +748,8 @@ static NSString *NFBFrontmostAppID(void) {
                     [self showOpenNotice:@"部分后台未能退出，请打开调试日志查看退出接口结果"];
                     return;
                 }
-                // The row left in the sweep at press time; this pass only owns the
-                // process. Re-flowing here again would make the column stutter once
-                // per app, which is exactly what the batch settle avoids.
+                // The row was already removed at press time; this pass only owns
+                // the process. Re-flowing here would stutter once per app.
                 [self.dismissedSwitcher addObject:app];
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)),
                     dispatch_get_main_queue(), ^{
@@ -1934,6 +1870,13 @@ static NSString *NFBFrontmostAppID(void) {
             [self burstBubble:button];
             continue;
         }
+        // During a clear the rows were already taken away in one pass; any that
+        // remain here must vanish without a second, visibly different animation.
+        if (self.clearingBackground) {
+            [button.layer removeAllAnimations];
+            [button removeFromSuperview];
+            continue;
+        }
         [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : 0.2 delay:0
             options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseInOut animations:^{
             button.alpha = 0; button.transform = CGAffineTransformMakeTranslation(self.iconSize + 20, 0);
@@ -2237,18 +2180,13 @@ static NSString *NFBFrontmostAppID(void) {
         railFrame.size.width, railFrame.size.height, plan.diameter, split);
     CGFloat childDuration = layoutDuration;
     BOOL hideEdgeIcons = NO;
-    // Rows that are still fading out live inside the rail. Hiding the container
-    // or dropping its alpha to zero as soon as the list became empty erased them
-    // in a single frame - the clear looked like an instant disappearance and the
-    // sweep never got to play. Keep the container while a sweep is in flight.
-    BOOL sweepInFlight = self.closingApps.count > 0;
-    self.rail.hidden = rowCount == 0 && !sweepInFlight;
-    self.railMaterial.hidden = (rowCount == 0 && !sweepInFlight) || height <= 0;
+    self.rail.hidden = rowCount == 0;
+    self.railMaterial.hidden = rowCount == 0 || height <= 0;
     // The whole visible column - unread rows included - is half hidden in the
     // collapsed fullscreen state: the rail, every row and the control share the
     // same shift and the same 0.5 alpha, so no unread icon stays fully visible.
     CGFloat columnAlpha = halfHiddenColumn ? 0.5 : 1;
-    CGFloat targetRailAlpha = (rowCount || sweepInFlight) ? columnAlpha : 0;
+    CGFloat targetRailAlpha = rowCount ? columnAlpha : 0;
     CGFloat targetMaterialAlpha = rowCount && height > 0 ? 0.55 * columnAlpha : 0;
     BOOL railSizeChanged = !CGSizeEqualToSize(self.rail.bounds.size, railFrame.size);
     // Narrow only the visible edge material. Keep the rail's padded area so icon
