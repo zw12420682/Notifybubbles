@@ -311,6 +311,10 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, strong) NSMutableSet<NSString *> *dismissedSwitcher;
 @property(nonatomic, strong) NSMutableSet<NSString *> *closingApps;
 @property(nonatomic) BOOL clearingBackground;
+@property(nonatomic) CFTimeInterval lastClearAt;
+@property(nonatomic) CGFloat lastClearTapY;
+@property(nonatomic) CFTimeInterval lastClearTapAt;
+@property(nonatomic) CFTimeInterval lastSweepLogAt;
 @property(nonatomic) NSUInteger clearEpoch;
 @property(nonatomic) NSUInteger exitEpoch;
 @property(nonatomic,strong) NSMutableDictionary<NSString *,NSNumber *> *retractTokens;
@@ -682,6 +686,7 @@ static NSString *NFBFrontmostAppID(void) {
         typeof(self) self_ = weakSelf;
         if (!self_) return;
         // A lingering claim would hide the app if it is opened again later.
+        NFBDebugLog(@"sweep: settle after %.2fs", CACurrentMediaTime() - sweepStart);
         for (NSString *app in apps) [self_.closingApps removeObject:app];
         [self_ refresh];
     };
@@ -701,6 +706,8 @@ static NSString *NFBFrontmostAppID(void) {
     }
     static const NSTimeInterval step = 0.045, duration = 0.16;
     __block NSUInteger remaining = leaving.count;
+    CFTimeInterval sweepStart = CACurrentMediaTime();
+    NFBDebugLog(@"sweep: start apps=%lu visible=%lu", (unsigned long)apps.count, (unsigned long)leaving.count);
     [leaving enumerateObjectsUsingBlock:^(NFBBubble *button, NSUInteger index, __unused BOOL *stop) {
         [UIView animateWithDuration:duration delay:index * step
             options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseIn
@@ -725,6 +732,14 @@ static NSString *NFBFrontmostAppID(void) {
         NFBDebugLog(@"clear-background: ignored, a clear is already running");
         return;
     }
+    // The trailing long-press fires again right after the first clear finished.
+    // A genuine second clear needs a new, deliberate press.
+    CFTimeInterval clearNow = CACurrentMediaTime();
+    if (clearNow - self.lastClearAt < 1.0) {
+        NFBDebugLog(@"clear-background: ignored, %.2fs after the previous clear", clearNow - self.lastClearAt);
+        return;
+    }
+    self.lastClearAt = clearNow;
     self.clearingBackground = YES;
     self.clearEpoch += 1;
     // Read the real switcher now: plugin rows may be filtered, clipped, or already
@@ -1636,6 +1651,14 @@ static NSString *NFBFrontmostAppID(void) {
     BOOL idle = NFBColumnMotionIdle(self.columnSliding, self.columnTouchesKnown,
                                    CGAffineTransformIsIdentity(root.transform),
                                    self.columnParked, self.window.hidden);
+    // A row that was tapped vanished before its tap flashed, and the invisible
+    // column underneath woke up: never reveal a parked column within 0.6s of a
+    // tap on a row. Logged so a genuine miss is still visible in the log.
+    if (!offscreen && self.columnParked && self.lastClearTapAt > 0 &&
+        CACurrentMediaTime() - self.lastClearTapAt < 0.6) {
+        NFBDebugLog(@"column: reveal refused %.2fs after row tap", CACurrentMediaTime() - self.lastClearTapAt);
+        return;
+    }
     if (!NFBColumnSlideNeeded(offscreen, self.columnTargetOffscreen)) {
         // The state on screen is already the one asked for. Reconcile a screen
         // that disagrees (an interrupted commit) without animating it back.
@@ -1872,6 +1895,17 @@ static NSString *NFBFrontmostAppID(void) {
     // clearing unread is the top control's hold gesture, regardless of count.
     BOOL showClearAll = NFBBottomCloseVisible(split);
     if (showClearAll) [displayApps addObject:NFBClearAllID];
+    if (self.closingApps.count) {
+        CFTimeInterval traceNow = CACurrentMediaTime();
+        if (traceNow - self.lastSweepLogAt > 1.0) {
+            self.lastSweepLogAt = traceNow;
+            NSUInteger live = 0;
+            for (NSString *app in self.closingApps) if (self.buttons[app]) live++;
+            NFBDebugLog(@"sweep: layout rows=%lu sweeping=%lu rebuilt=%lu railHidden=%d clear=%.2f",
+                (unsigned long)displayApps.count, (unsigned long)self.closingApps.count,
+                (unsigned long)live, self.rail.hidden, self.rail.alpha);
+        }
+    }
     BOOL orderChanged = ![self.lastLayoutApps isEqualToArray:displayApps];
     self.lastLayoutApps = [displayApps copy];
     for (NSString *appID in self.buttons.allKeys) {
@@ -2664,6 +2698,7 @@ static NSString *NFBFrontmostAppID(void) {
         [self showOpenNotice:@"TrollOpen 全屏接口不可用，请确认已安装适配的 1.3.7 隐根版并重启桌面"];
 }
 - (void)closeBubble:(NFBBubble *)button {
+    self.lastClearTapAt = CACurrentMediaTime();
     if (self.buttons[button.appID] != button) return;
     if (![self acceptGestureForKey:button.appID ?: @"close"]) return;
     NSString *app = button.appID;
