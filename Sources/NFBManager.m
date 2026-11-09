@@ -395,6 +395,7 @@ static double NFBNumber(NSString *key, double fallback) {
 // Previous keyboard state, so refresh can spot the up/down edges.
 @property(nonatomic) BOOL keyboardUp;
 - (void)refresh;
+- (void)traceClearView:(NSString *)event;
 - (void)scheduleAutoCollapse;
 - (void)resetAutoCollapseTimer;
 - (void)setColumnOffscreen:(BOOL)offscreen;
@@ -670,6 +671,31 @@ static NSString *NFBFrontmostAppID(void) {
 // "一键清理后台": terminate every app in the switcher/row except the one still
 // occupying the floating window, mirroring the long-press exit path but for the
 // whole background at once.
+// Diagnostic only: bounded to three seconds after a clear and behind the
+// existing debug switch. Presentation values expose in-flight animation state.
+- (void)traceClearView:(NSString *)event {
+    if (!NFBDebugLoggingEnabled() || self.lastClearAt <= 0 ||
+        CACurrentMediaTime() - self.lastClearAt > 3.0) return;
+    UIView *root = self.window.rootViewController.view;
+    UIView *host = self.fixedBackgroundHost;
+    CALayer *live = (CALayer *)host.layer.presentationLayer;
+    NFBDebugLog(@"clear-view: %@ dt=%.3f windowHidden=%d rootHidden=%d rootAlpha=%.2f rootTransform=%@ host=%p hidden=%d alpha=%.2f frame=%@ liveFrame=%@ liveAlpha=%.2f animations=%@ offset=%@ stored=%lu rows=%lu",
+        event, CACurrentMediaTime()-self.lastClearAt, self.window.hidden,
+        root.hidden, root.alpha, NSStringFromCGAffineTransform(root.transform), host,
+        host.hidden, host.alpha, NSStringFromCGRect(host.frame),
+        live ? NSStringFromCGRect(live.frame) : @"none", live ? live.opacity : -1.0,
+        host.layer.animationKeys, NSStringFromCGPoint(self.fixedBackgroundHost.contentOffset),
+        (unsigned long)self.store.appIDs.count, (unsigned long)self.lastLayoutApps.count);
+    for (UIView *view in host.subviews) {
+        if (![view isKindOfClass:NFBBubble.class]) continue;
+        NFBBubble *b = (NFBBubble *)view;
+        CALayer *v = (CALayer *)b.layer.presentationLayer;
+        NFBDebugLog(@"clear-view: child app=%@ view=%p tracked=%d hidden=%d alpha=%.2f frame=%@ liveFrame=%@ animations=%@",
+            b.appID, b, self.buttons[b.appID] == b, b.hidden, b.alpha,
+            NSStringFromCGRect(b.frame), v ? NSStringFromCGRect(v.frame) : @"none", b.layer.animationKeys);
+    }
+}
+
 - (void)clearBackground {
     // A second clear while the first one is still sweeping would run the exit
     // requests and the animation twice: the column blinks out, comes back, and
@@ -686,6 +712,15 @@ static NSString *NFBFrontmostAppID(void) {
         return;
     }
     self.lastClearAt = clearNow;
+    [self traceClearView:@"before-clear"];
+    // Samples are observational only; epoch prevents mixing two clear sessions.
+    NSUInteger traceEpoch = self.clearEpoch + 1;
+    if (NFBDebugLoggingEnabled()) for (NSUInteger sample = 1; sample <= 15; sample++) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(sample * 0.2 * NSEC_PER_SEC)),
+            dispatch_get_main_queue(), ^{
+                if (self.clearEpoch == traceEpoch) [self traceClearView:@"sample"];
+            });
+    }
     self.clearingBackground = YES;
     self.clearEpoch += 1;
     // Read the real switcher now: plugin rows may be filtered, clipped, or already
@@ -1694,6 +1729,7 @@ static NSString *NFBFrontmostAppID(void) {
 
 - (void)refresh {
     NSAssert(NSThread.isMainThread, @"UI must be on main thread");
+    [self traceClearView:@"refresh-enter"];
     self.refreshScheduled = NO;
     self.layoutRecording = YES;
     [self updatePrivacy];
@@ -1871,6 +1907,7 @@ static NSString *NFBFrontmostAppID(void) {
     for (NSString *appID in self.buttons.allKeys) {
         if ([displayApps containsObject:appID]) continue;
         NFBBubble *button = self.buttons[appID];
+        [self traceClearView:[NSString stringWithFormat:@"remove %@ view=%p", appID, button]];
         [self.buttons removeObjectForKey:appID];
         button.userInteractionEnabled = NO;
         if (!split && [appID isEqualToString:NFBClearAllID]) {
@@ -2098,7 +2135,9 @@ static NSString *NFBFrontmostAppID(void) {
                 animations:^{
                     self.fixedBackgroundHost.frame = fixedBackgroundFrame;
                     self.fixedBackgroundMaterial.frame = fixedMaterial;
-                } completion:nil];
+                } completion:^(BOOL finished) {
+                    [self traceClearView:[NSString stringWithFormat:@"host-animation-complete finished=%d", finished]];
+                }];
         }
         CGFloat backgroundContent = NFBEdgeRowsHeight(fixedApps.count, side, step);
         self.fixedBackgroundHost.contentSize = CGSizeMake(side, backgroundContent);
@@ -2306,10 +2345,12 @@ static NSString *NFBFrontmostAppID(void) {
             }
             self.buttons[appID] = button;
             [parent addSubview:button];
+            [self traceClearView:[NSString stringWithFormat:@"create %@ view=%p parent=%p", appID, button, parent]];
         }
         button.hidden = hideEdgeIcons;
         if (button.superview != parent) {
             // Preserve screen position when moving between unread strip and rail.
+            [self traceClearView:[NSString stringWithFormat:@"reparent %@ view=%p from=%p to=%p", appID, button, button.superview, parent]];
             CGPoint position = [button.superview convertPoint:button.center toView:parent];
             [parent addSubview:button];
             button.center = position;
@@ -2413,6 +2454,7 @@ static NSString *NFBFrontmostAppID(void) {
     if (laidOut) self.lastLayoutAt = CACurrentMediaTime();
     self.layoutRecording = NO;
     self.lastRefreshIncomplete = !laidOut;
+    [self traceClearView:@"refresh-end"];
 }
 - (void)layoutFavorites:(CGRect)frame diameter:(CGFloat)diameter active:(NSString *)active duration:(NSTimeInterval)duration {
     UIView *root = self.window.rootViewController.view;
@@ -2735,6 +2777,7 @@ static NSString *NFBFrontmostAppID(void) {
     });
 }
 - (void)burstBubble:(NFBBubble *)button {
+    [self traceClearView:[NSString stringWithFormat:@"burst %@ view=%p", button.appID, button]];
     UIView *root = self.window.rootViewController.view;
     CGFloat measured = button.imageView.bounds.size.width;
     // During a size animation the diameter can read 0, which collapsed the ring
