@@ -1976,8 +1976,8 @@ static NSString *NFBFrontmostAppID(void) {
     // A split opened while the keyboard is up kept the whole column parked off
     // the edge, so its split icons never appeared. The split owns the column:
     // typing only pushes it aside when there is no floating window.
-    NSString *splitNow = NFBTrollVisibleApp() ?: floatingApp;
-    if (keyboardUp && !splitNow.length) {
+    NSString *splitHoldsColumn = NFBTrollVisibleApp() ?: floatingApp;
+    if (keyboardUp && !splitHoldsColumn.length) {
         [self setColumnOffscreen:YES];
         self.layoutRecording = NO;
         return;
@@ -2241,14 +2241,14 @@ static NSString *NFBFrontmostAppID(void) {
     // or dropping its alpha to zero as soon as the list became empty erased them
     // in a single frame - the clear looked like an instant disappearance and the
     // sweep never got to play. Keep the container while a sweep is in flight.
-    BOOL sweeping = self.closingApps.count > 0;
-    self.rail.hidden = rowCount == 0 && !sweeping;
-    self.railMaterial.hidden = (rowCount == 0 && !sweeping) || height <= 0;
+    BOOL sweepInFlight = self.closingApps.count > 0;
+    self.rail.hidden = rowCount == 0 && !sweepInFlight;
+    self.railMaterial.hidden = (rowCount == 0 && !sweepInFlight) || height <= 0;
     // The whole visible column - unread rows included - is half hidden in the
     // collapsed fullscreen state: the rail, every row and the control share the
     // same shift and the same 0.5 alpha, so no unread icon stays fully visible.
     CGFloat columnAlpha = halfHiddenColumn ? 0.5 : 1;
-    CGFloat targetRailAlpha = (rowCount || sweeping) ? columnAlpha : 0;
+    CGFloat targetRailAlpha = (rowCount || sweepInFlight) ? columnAlpha : 0;
     CGFloat targetMaterialAlpha = rowCount && height > 0 ? 0.55 * columnAlpha : 0;
     BOOL railSizeChanged = !CGSizeEqualToSize(self.rail.bounds.size, railFrame.size);
     // Narrow only the visible edge material. Keep the rail's padded area so icon
