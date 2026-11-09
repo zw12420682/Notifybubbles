@@ -310,6 +310,8 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, strong) NSArray<NSString *> *lastSwitcher;
 @property(nonatomic, strong) NSMutableSet<NSString *> *dismissedSwitcher;
 @property(nonatomic, strong) NSMutableSet<NSString *> *closingApps;
+@property(nonatomic) BOOL clearingBackground;
+@property(nonatomic) NSUInteger clearEpoch;
 @property(nonatomic) NSUInteger exitEpoch;
 @property(nonatomic,strong) NSMutableDictionary<NSString *,NSNumber *> *retractTokens;
 @property(nonatomic) NSUInteger presentationEpoch;
@@ -676,13 +678,17 @@ static NSString *NFBFrontmostAppID(void) {
     void (^settle)(void) = ^{
         typeof(self) self_ = weakSelf;
         if (!self_) return;
-        for (NSString *app in apps) {
-            // An app that received a new notification during the sweep stays.
-            if (![self_.generations[app] isEqual:exitVersions[app]]) continue;
-            [self_.store closeApp:app];
-        }
         [self_ refresh];
     };
+    // The store is the source of the column's membership, so the rows have to
+    // leave it before the first frame. Otherwise the next refresh (the tick, the
+    // verification pass, a late notification) rebuilds the very bubbles that are
+    // still fading, which is what made the column blink out and back.
+    for (NSString *app in apps) {
+        // An app that received a new notification during the sweep stays.
+        if (![self.generations[app] isEqual:exitVersions[app]]) continue;
+        [self.store closeApp:app];
+    }
     if (UIAccessibilityIsReduceMotionEnabled() || !leaving.count) {
         for (NFBBubble *button in leaving) [button removeFromSuperview];
         settle();
@@ -707,6 +713,15 @@ static NSString *NFBFrontmostAppID(void) {
 // occupying the floating window, mirroring the long-press exit path but for the
 // whole background at once.
 - (void)clearBackground {
+    // A second clear while the first one is still sweeping would run the exit
+    // requests and the animation twice: the column blinks out, comes back, and
+    // leaves again. One clear owns the column until it settled.
+    if (self.clearingBackground) {
+        NFBDebugLog(@"clear-background: ignored, a clear is already running");
+        return;
+    }
+    self.clearingBackground = YES;
+    self.clearEpoch += 1;
     // Read the real switcher now: plugin rows may be filtered, clipped, or already
     // consumed and are not the full set of background applications.
     NFBInvalidateWindowState();
@@ -719,6 +734,7 @@ static NSString *NFBFrontmostAppID(void) {
         NFBErrorLog(@"clear-background: refused because foreground identity is unknown");
         [self.store clearUnreadRecords]; self.pendingRecord = nil;
         [self showOpenNotice:@"无法确认当前 App，已清未读；为保护前台暂不清理后台"];
+        self.clearingBackground = NO;
         [self refresh];
         return;
     }
@@ -729,7 +745,7 @@ static NSString *NFBFrontmostAppID(void) {
     // switcher entry is protected and there is no process to close.
     [self.store clearUnreadRecords];
     self.pendingRecord = nil;
-    if (!targets.count) { [self refresh]; return; }
+    if (!targets.count) { self.clearingBackground = NO; [self refresh]; return; }
     NFBDebugLog(@"gesture: clear-background -> %lu targets front=%@ split=%@",
         (unsigned long)targets.count, front, floating);
     NSDictionary *exitVersions = [self.generations copy];
@@ -807,6 +823,13 @@ static NSString *NFBFrontmostAppID(void) {
                     });
             });
     }];
+    // The column is free again once the last verification pass is done. A clear
+    // that produced no target at all releases it immediately above.
+    NSUInteger epoch = self.clearEpoch;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((0.05 + targets.count * 0.12 + 0.6) * NSEC_PER_SEC)),
+        dispatch_get_main_queue(), ^{
+            if (self.clearEpoch == epoch) self.clearingBackground = NO;
+        });
     [self refresh];
 }
 
