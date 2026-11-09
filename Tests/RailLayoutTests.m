@@ -306,6 +306,19 @@ int main(void) {
     check(CGRectGetHeight(longl.rail) > 2 * 57, "long list keeps a viewport");
     check(NFBSplitMetricsValid(48, 0, W, W), "valid metric");
     check(!NFBSplitMetricsValid(0, 0, W, W), "zero metric rejected");
+    // Device regression: a full-width transient split produced diameter=1,
+    // overwrote the 32.6 cache and made fullscreen fall back to 52.3.
+    check(!NFBSplitMetricsValid(1, 0, W, W), "transient one-point metric rejected");
+    double retainedDiameter = 32.6;
+    double retainedTop = 186;
+    if (NFBSplitMetricsValid(1, 0, W, W)) {
+        retainedDiameter = 1;
+        retainedTop = 78;
+    }
+    NFBRailPlan retained = NFBPlanRail(W, H, safe, TOP, 52.3, splitPosition,
+        false, CGRectZero, false, 0.7, true, 0, 4, 0,
+        retainedTop, retainedDiameter, W, true, false);
+    check(fabs(retained.diameter - 32.6) < 0.001, "invalid split preserves prior fullscreen diameter");
 
     // --- persisted split geometry: restored before any split is opened
     // A slot anchor inside a split window that starts at y=200. Kept below 256 on

@@ -2126,7 +2126,14 @@ static NSString *NFBFrontmostAppID(void) {
             (unsigned long)notifiedCount, (double)self.splitRailTop, (double)self.splitRailDiameter,
             (double)self.splitRailScreenWidth, self.splitRailMeasured, edgeRailHugging(halfHiddenColumn, self.edgeExpanded));
     BOOL railMeasuredNow = NO;
-    if (splitNow && plan.toggleTop > 0) {
+    BOOL validRailMeasurement = splitUsable && isfinite(plan.toggleTop) && plan.toggleTop > 0 &&
+        NFBSplitMetricsValid(plan.diameter, 0, bounds.size.width, bounds.size.width);
+    if (splitNow && !validRailMeasurement) {
+        NFBDebugLog(@"rail-metric: rejected diameter=%.2f top=%.2f screen=%@ splitFrame=%@ cachedDiameter=%.2f cachedTop=%.2f measured=%d",
+            plan.diameter, plan.toggleTop, NSStringFromCGSize(bounds.size), NSStringFromCGRect(splitA),
+            self.splitRailDiameter, self.splitRailTop, self.splitRailMeasured);
+    }
+    if (splitNow && validRailMeasurement) {
         // A genuinely laid-out split column is the reference the fullscreen column
         // reuses: the same button-slot top (plan.toggleTop, not the content top one
         // row below it) and the diameter its actual space allowed. The slot top is
