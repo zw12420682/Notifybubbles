@@ -703,13 +703,17 @@ static NSString *NFBFrontmostAppID(void) {
         (unsigned long)apps.count, (unsigned long)exitOverlay.subviews.count);
     [self refresh];
     if (exitOverlay) {
-        [UIView animateWithDuration:0.18 delay:0
-            options:UIViewAnimationOptionCurveEaseOut | UIViewAnimationOptionAllowUserInteraction
+        // Keep the first half visible so the exit reads as a shrink, not a flash.
+        [UIView animateKeyframesWithDuration:0.35 delay:0
+            options:UIViewKeyframeAnimationOptionCalculationModeLinear | UIViewKeyframeAnimationOptionAllowUserInteraction
             animations:^{
-                for (UIView *picture in exitOverlay.subviews) {
-                    picture.transform = CGAffineTransformMakeScale(0.65, 0.65);
-                    picture.alpha = 0;
-                }
+                [UIView addKeyframeWithRelativeStartTime:0 relativeDuration:1 animations:^{
+                    for (UIView *picture in exitOverlay.subviews)
+                        picture.transform = CGAffineTransformMakeScale(0.30, 0.30);
+                }];
+                [UIView addKeyframeWithRelativeStartTime:0.5 relativeDuration:0.5 animations:^{
+                    for (UIView *picture in exitOverlay.subviews) picture.alpha = 0;
+                }];
             } completion:^(__unused BOOL finished) {
                 // No manager/store changes in an animation completion: a new
                 // notification or a new clear cannot be removed by this callback.
