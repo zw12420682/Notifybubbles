@@ -1280,7 +1280,11 @@ static NSString *NFBFrontmostAppID(void) {
                 for (NSString *app in self.store.appIDs)
                     if ([oldSet containsObject:app] && ![set containsObject:app] &&
                         ![self.closingApps containsObject:app]) [removed addObject:app];
-                if (removed.count) { [self closeAppsInOrder:removed]; dirty = YES; }
+                if (removed.count) {
+                    if (self.clearingBackground)
+                        NFBDebugLog(@"tick: switcher diff removed %lu while clearing", (unsigned long)removed.count);
+                    [self closeAppsInOrder:removed]; dirty = YES;
+                }
                 for (NSString *app in current) {
                     // A new card in the switcher is the "external badge" edge: the app
                     // gained a background card outside the plugin.
@@ -1288,12 +1292,20 @@ static NSString *NFBFrontmostAppID(void) {
                     if (![oldSet containsObject:app])
                         self.generations[app] = @([self.generations[app] unsignedIntegerValue] + 1);
                     if (![self.dismissedSwitcher containsObject:app] && ![self.store.appIDs containsObject:app]) {
+                        if (self.clearingBackground || self.dismissedSwitcher.count)
+                            NFBDebugLog(@"tick: switcher added %@ (current=%lu old=%lu dismissed=%lu)",
+                                app, (unsigned long)current.count, (unsigned long)oldSet.count,
+                                (unsigned long)self.dismissedSwitcher.count);
                         [self.store pinApp:app];
                         self.generations[app] = @([self.generations[app] unsignedIntegerValue] + 1);
                         dirty = YES;
                     }
                 }
                 if (![current isEqualToArray:self.lastSwitcher ?: @[]]) dirty = YES;
+                if (self.clearingBackground)
+                    NFBDebugLog(@"tick: clearing current=%lu stored=%lu rows=%lu dirty=%d",
+                        (unsigned long)current.count, (unsigned long)self.store.appIDs.count,
+                        (unsigned long)self.lastLayoutApps.count, dirty);
                 self.lastSwitcher = current;
             }
         }
