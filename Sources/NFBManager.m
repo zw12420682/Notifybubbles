@@ -645,6 +645,8 @@ static NSString *NFBFrontmostAppID(void) {
 // animation. They then shrink away bottom-up and the column settles once, after
 // the last one is gone.
 - (void)sweepAwayBubbles:(NSArray<NSString *> *)apps exitVersions:(NSDictionary *)exitVersions {
+    CFTimeInterval sweepStart = CACurrentMediaTime();
+    NFBDebugLog(@"sweep: start apps=%lu", (unsigned long)apps.count);
     NSMutableArray<NFBBubble *> *leaving = [NSMutableArray arrayWithCapacity:apps.count];
     for (NSString *app in apps) {
         NFBBubble *button = self.buttons[app];
@@ -706,8 +708,6 @@ static NSString *NFBFrontmostAppID(void) {
     }
     static const NSTimeInterval step = 0.045, duration = 0.16;
     __block NSUInteger remaining = leaving.count;
-    CFTimeInterval sweepStart = CACurrentMediaTime();
-    NFBDebugLog(@"sweep: start apps=%lu visible=%lu", (unsigned long)apps.count, (unsigned long)leaving.count);
     [leaving enumerateObjectsUsingBlock:^(NFBBubble *button, NSUInteger index, __unused BOOL *stop) {
         [UIView animateWithDuration:duration delay:index * step
             options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseIn
