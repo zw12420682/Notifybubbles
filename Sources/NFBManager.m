@@ -648,10 +648,45 @@ static NSString *NFBFrontmostAppID(void) {
 // and removed from their superview in the same pass, so no refresh can race the
 // same view and no second animation can start on it.
 - (void)sweepAwayBubbles:(NSArray<NSString *> *)apps exitVersions:(NSDictionary *)exitVersions {
-    // No exit animation on purpose. Every staged version (staggered sweep,
-    // instant teardown, deferred commit) produced a visible blink on device, and
-    // a blink is worse than no motion. Removing the rows in one pass, on one
-    // frame, cannot flash: there is no intermediate state to see.
+    // Animate disposable pictures, never live rows. The model and original
+    // views still leave synchronously, exactly as in the verified 0.48.123.
+    UIView *root = self.window.rootViewController.view;
+    UIView *exitOverlay = nil;
+    if (!UIAccessibilityIsReduceMotionEnabled() && root && !self.window.hidden) {
+        exitOverlay = [[UIView alloc] initWithFrame:root.bounds];
+        exitOverlay.userInteractionEnabled = NO;
+        exitOverlay.accessibilityElementsHidden = YES;
+        exitOverlay.clipsToBounds = YES;
+        for (NSString *app in apps) {
+            NFBBubble *button = self.buttons[app];
+            if (!button.superview || button.hidden || button.alpha < 0.01) continue;
+            CGRect frame = [button convertRect:button.bounds toView:root];
+            CGRect visible = CGRectIntersection(frame, root.bounds);
+            CGFloat opacity = button.alpha;
+            BOOL hidden = NO;
+            for (UIView *parent = button.superview; parent && parent != root; parent = parent.superview) {
+                if (parent.hidden) { hidden = YES; break; }
+                opacity *= parent.alpha;
+                if (parent.clipsToBounds)
+                    visible = CGRectIntersection(visible, [parent convertRect:parent.bounds toView:root]);
+            }
+            if (hidden || opacity < 0.01 || CGRectIsNull(visible) || CGRectIsEmpty(visible)) continue;
+            UIView *picture = [button snapshotViewAfterScreenUpdates:NO];
+            if (!picture) continue;
+            // Preserve viewport clipping and half-hidden appearance. Each wrapper
+            // scales around its own centre; the overlay itself never moves.
+            UIView *clip = [[UIView alloc] initWithFrame:visible];
+            clip.clipsToBounds = YES;
+            clip.userInteractionEnabled = NO;
+            picture.userInteractionEnabled = NO;
+            picture.frame = CGRectOffset(frame, -visible.origin.x, -visible.origin.y);
+            picture.alpha = opacity;
+            [clip addSubview:picture];
+            [exitOverlay addSubview:clip];
+        }
+        if (exitOverlay.subviews.count) [root addSubview:exitOverlay];
+        else exitOverlay = nil;
+    }
     for (NSString *app in apps) {
         NFBBubble *button = self.buttons[app];
         if (button) {
@@ -664,8 +699,23 @@ static NSString *NFBFrontmostAppID(void) {
         if (![self.generations[app] isEqual:exitVersions[app]]) continue;
         [self.store closeApp:app];
     }
-    NFBDebugLog(@"clear-background: rows removed without animation (%lu)", (unsigned long)apps.count);
+    NFBDebugLog(@"clear-background: rows removed (%lu), exit snapshots=%lu",
+        (unsigned long)apps.count, (unsigned long)exitOverlay.subviews.count);
     [self refresh];
+    if (exitOverlay) {
+        [UIView animateWithDuration:0.18 delay:0
+            options:UIViewAnimationOptionCurveEaseOut | UIViewAnimationOptionAllowUserInteraction
+            animations:^{
+                for (UIView *picture in exitOverlay.subviews) {
+                    picture.transform = CGAffineTransformMakeScale(0.65, 0.65);
+                    picture.alpha = 0;
+                }
+            } completion:^(__unused BOOL finished) {
+                // No manager/store changes in an animation completion: a new
+                // notification or a new clear cannot be removed by this callback.
+                [exitOverlay removeFromSuperview];
+            }];
+    }
 }
 
 // "一键清理后台": terminate every app in the switcher/row except the one still
