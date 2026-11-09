@@ -1,4 +1,6 @@
-"""Regression: an unconfirmed empty snapshot must not resurrect cleared rows."""
+"""Regression: an unconfirmed empty snapshot must not resurrect cleared rows.
+Captured on device: row creation at +0.55s, then burst removal at +1.00s.
+"""
 from pathlib import Path
 s = (Path(__file__).resolve().parents[1] / 'Sources/NFBManager.m').read_text()
 start = s.index('NSSet *set = [NSSet setWithArray:current];')
