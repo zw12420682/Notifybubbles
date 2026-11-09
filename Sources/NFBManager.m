@@ -692,18 +692,23 @@ static NSString *NFBFrontmostAppID(void) {
         for (NSString *app in apps) [self_.closingApps removeObject:app];
         [self_ refresh];
     };
-    // The store is the source of the column's membership, so the rows have to
-    // leave it before the first frame. Otherwise the next refresh (the tick, the
-    // verification pass, a late notification) rebuilds the very bubbles that are
-    // still fading, which is what made the column blink out and back.
-    for (NSString *app in apps) {
-        // An app that received a new notification during the sweep stays.
-        if (![self.generations[app] isEqual:exitVersions[app]]) continue;
-        [self.store closeApp:app];
-    }
+    // Rows leave the store only when their exit has played. Committing the empty
+    // list on the first frame blanked the column instantly, so there was nothing
+    // to animate: the user saw a single disappearance instead of a sweep. The
+    // closing claim keeps any refresh from rebuilding these rows meanwhile.
+    void (^commitRows)(void) = ^{
+        typeof(self) self_ = weakSelf;
+        if (!self_) return;
+        for (NSString *app in apps) {
+            // An app that received a new notification during the sweep stays.
+            if (![self_.generations[app] isEqual:exitVersions[app]]) continue;
+            [self_.store closeApp:app];
+        }
+        settle();
+    };
     if (UIAccessibilityIsReduceMotionEnabled() || !leaving.count) {
         for (NFBBubble *button in leaving) [button removeFromSuperview];
-        settle();
+        commitRows();
         return;
     }
     static const NSTimeInterval step = 0.045, duration = 0.16;
@@ -716,7 +721,7 @@ static NSString *NFBFrontmostAppID(void) {
                 button.alpha = 0;
             } completion:^(__unused BOOL done) {
                 [button removeFromSuperview];
-                if (--remaining == 0) settle();
+                if (--remaining == 0) commitRows();
             }];
     }];
 }
@@ -1968,7 +1973,11 @@ static NSString *NFBFrontmostAppID(void) {
     // screen left the material strip painted in the top-right corner while the
     // icons themselves collapsed, which reads as a stray shadow, so the column
     // slides out while typing and slides back when the keyboard goes away.
-    if (keyboardUp) {
+    // A split opened while the keyboard is up kept the whole column parked off
+    // the edge, so its split icons never appeared. The split owns the column:
+    // typing only pushes it aside when there is no floating window.
+    NSString *splitNow = NFBTrollVisibleApp() ?: floatingApp;
+    if (keyboardUp && !splitNow.length) {
         [self setColumnOffscreen:YES];
         self.layoutRecording = NO;
         return;
@@ -2216,15 +2225,30 @@ static NSString *NFBFrontmostAppID(void) {
     // edge. Children keep a short but real duration.
     BOOL viewportResized = !CGSizeEqualToSize(self.rail.bounds.size, railFrame.size) ||
         !CGSizeEqualToSize(self.favoritesRail.bounds.size, favoritesFrame.size);
-    CGFloat childDuration = viewportResized ? (UIAccessibilityIsReduceMotionEnabled() ? 0 : 0.22) : layoutDuration;
+    // A viewport change must move container and rows on one clock. Two different
+    // durations let the row's frame land before its size (or the reverse), which
+    // is what made an icon occasionally jump larger or off its position.
+    if (viewportResized) layoutDuration = UIAccessibilityIsReduceMotionEnabled() ? 0 : 0.22;
+    // Size and position of every row are committed in the blocks below; logging a
+    // viewport change with the diameter it resolves to names the pass that moved
+    // an icon, instead of guessing from a screenshot.
+    if (viewportResized) NFBDebugLog(@"layout: viewport %.0fx%.0f -> %.0fx%.0f diameter=%.1f split=%d",
+        self.rail.bounds.size.width, self.rail.bounds.size.height,
+        railFrame.size.width, railFrame.size.height, plan.diameter, split);
+    CGFloat childDuration = layoutDuration;
     BOOL hideEdgeIcons = NO;
-    self.rail.hidden = rowCount == 0;
-    self.railMaterial.hidden = rowCount == 0;
+    // Rows that are still fading out live inside the rail. Hiding the container
+    // or dropping its alpha to zero as soon as the list became empty erased them
+    // in a single frame - the clear looked like an instant disappearance and the
+    // sweep never got to play. Keep the container while a sweep is in flight.
+    BOOL sweeping = self.closingApps.count > 0;
+    self.rail.hidden = rowCount == 0 && !sweeping;
+    self.railMaterial.hidden = (rowCount == 0 && !sweeping) || height <= 0;
     // The whole visible column - unread rows included - is half hidden in the
     // collapsed fullscreen state: the rail, every row and the control share the
     // same shift and the same 0.5 alpha, so no unread icon stays fully visible.
     CGFloat columnAlpha = halfHiddenColumn ? 0.5 : 1;
-    CGFloat targetRailAlpha = rowCount ? columnAlpha : 0;
+    CGFloat targetRailAlpha = (rowCount || sweeping) ? columnAlpha : 0;
     CGFloat targetMaterialAlpha = rowCount && height > 0 ? 0.55 * columnAlpha : 0;
     BOOL railSizeChanged = !CGSizeEqualToSize(self.rail.bounds.size, railFrame.size);
     // Narrow only the visible edge material. Keep the rail's padded area so icon
