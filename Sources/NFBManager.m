@@ -1300,16 +1300,20 @@ static NSString *NFBFrontmostAppID(void) {
         NSArray *current = NFBReadSwitcherApps();
         if (current) {
             NSSet *set = [NSSet setWithArray:current];
-            [self.dismissedSwitcher intersectSet:set];
+            // Do not prune dismissal markers using a snapshot we have not yet
+            // accepted. A first empty read retains lastSwitcher; pruning here
+            // exposed that stale list and rebuilt every just-cleared bubble.
             if (current.count == 0 && self.lastSwitcher.count > 0) {
                 // Require two consecutive empty reads to reject intermediate snapshots.
                 if (++self.emptyReads >= 2) {
                     [self closeAppsInOrder:[self orderedAppsForRemoval]];
                     self.lastSwitcher = current; self.emptyReads = 0;
+                    [self.dismissedSwitcher intersectSet:set];
                     dirty = YES;
                 }
             } else {
                 self.emptyReads = 0;
+                [self.dismissedSwitcher intersectSet:set];
                 NSSet *oldSet = [NSSet setWithArray:self.lastSwitcher ?: @[]];
                 NSMutableArray *removed = [NSMutableArray array];
                 for (NSString *app in self.store.appIDs)
