@@ -270,6 +270,10 @@ static double NFBNumber(NSString *key, double fallback) {
 - (void)refreshIfNeeded;
 // The layout pass is running: further requests join it instead of nesting.
 @property(nonatomic) BOOL layoutRecording;
+// YES when the last finished pass returned before laying the column out
+// (disabled / hidden / keyboard). Stable between passes, so the tick only
+// reacts to a real transition instead of its own refresh window.
+@property(nonatomic) BOOL lastRefreshIncomplete;
 // Same-round probe reuse on the 20 Hz watcher path (NFBProbePolicy.h).
 // The probe stamps are ivars declared in the @implementation below (a class
 // extension may hold declarations only, not variables), for the same-reason
@@ -1310,7 +1314,10 @@ static NSString *NFBFrontmostAppID(void) {
     current.keyboard = keyboard;
     current.expanded = self.edgeExpanded;
     current.split = self.splitLayout;
-    current.incomplete = self.layoutRecording;
+    // A pass that is running right now is not a change: every tick would then
+    // differ from the previous one and force a layout forever (the device log
+    // showed one identical re-layout every 0.5s while the keyboard was up).
+    current.incomplete = self.lastRefreshIncomplete;
     // Same value the capture flag was last written with (see -refresh).
     current.captureHidden = self.hideInScreenshots;
     // The comparison is the only thing that notices front app / home / badge
@@ -1901,6 +1908,7 @@ static NSString *NFBFrontmostAppID(void) {
             if (self.presentationEpoch==presentationEpoch && !self.enabled) self.window.hidden = YES;
         });
         self.layoutRecording = NO;
+        self.lastRefreshIncomplete = YES;
         return;
     }
     if (![self shouldShow]) {
@@ -1910,6 +1918,7 @@ static NSString *NFBFrontmostAppID(void) {
         self.window.hidden = YES;
         self.window.rootViewController.view.userInteractionEnabled = NO;
         self.layoutRecording = NO;
+        self.lastRefreshIncomplete = YES;
         return;
     }
     // A keyboard owns the space this column would occupy. Letting it stay on
@@ -1923,6 +1932,7 @@ static NSString *NFBFrontmostAppID(void) {
     if (keyboardUp && !splitHoldsColumn.length) {
         [self setColumnOffscreen:YES];
         self.layoutRecording = NO;
+        self.lastRefreshIncomplete = YES;
         return;
     }
     [self ensureWindow];
@@ -2390,6 +2400,7 @@ static NSString *NFBFrontmostAppID(void) {
     self.lastRefreshComplete = laidOut;
     if (laidOut) self.lastLayoutAt = CACurrentMediaTime();
     self.layoutRecording = NO;
+    self.lastRefreshIncomplete = !laidOut;
 }
 - (void)layoutFavorites:(CGRect)frame diameter:(CGFloat)diameter active:(NSString *)active duration:(NSTimeInterval)duration {
     UIView *root = self.window.rootViewController.view;
