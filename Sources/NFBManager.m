@@ -197,6 +197,7 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, strong) UITapGestureRecognizer *desktopActionTap;
 @property(nonatomic, strong) UILongPressGestureRecognizer *desktopActionHold;
 @property(nonatomic, strong) UISwipeGestureRecognizer *desktopActionSwipe;
+@property(nonatomic, strong) UISwipeGestureRecognizer *backgroundUnfoldSwipe;
 @property(nonatomic, weak) UIView *desktopActionTarget;
 @property(nonatomic, weak) UIView *desktopActionTouchTarget;
 @property(nonatomic, weak) UIView *observedActionTarget;
@@ -204,6 +205,7 @@ static double NFBNumber(NSString *key, double fallback) {
 - (void)desktopActionTapped:(UITapGestureRecognizer *)gesture;
 - (void)desktopActionHeld:(UILongPressGestureRecognizer *)gesture;
 - (void)desktopActionSwiped:(UISwipeGestureRecognizer *)gesture;
+- (void)backgroundUnfoldSwiped:(UISwipeGestureRecognizer *)gesture;
 - (NFBActionMode)desktopActionMode;
 - (void)performDesktopAction:(NFBActionEffect)effect;
 - (void)clearUnreadKeepingExpanded;
@@ -968,6 +970,15 @@ static NSString *NFBFrontmostAppID(void) {
     // the clear is then refused; the split house button is unchanged.
     if ([self desktopActionMode] == NFBActionModeExpanded) [self touchColumn];
     [self performDesktopAction:NFBActionEffectFor([self desktopActionMode], NFBActionHold, YES, NO)];
+}
+- (void)backgroundUnfoldSwiped:(UISwipeGestureRecognizer *)gesture {
+    if (gesture.state != UIGestureRecognizerStateEnded ||
+        gesture.direction != UISwipeGestureRecognizerDirectionLeft ||
+        !self.enabled || [self isLocked] ||
+        [self desktopActionMode] != NFBActionModeCollapsed ||
+        NFBTrollVisibleApp().length) return;
+    NFBDebugLog(@"gesture: collapsed background left swipe -> unfold");
+    [self performDesktopAction:NFBActionUnfoldColumn];
 }
 - (void)desktopActionSwiped:(UISwipeGestureRecognizer *)gesture {
     if (gesture.state != UIGestureRecognizerStateEnded || !self.enabled || [self isLocked]) return;
@@ -2182,6 +2193,13 @@ static NSString *NFBFrontmostAppID(void) {
         self.fixedBackgroundHost = [NFBRail new];
         self.fixedBackgroundHost.clipsToBounds = YES;
         self.fixedBackgroundHost.delegate = self;
+        self.backgroundUnfoldSwipe = [[UISwipeGestureRecognizer alloc]
+            initWithTarget:self action:@selector(backgroundUnfoldSwiped:)];
+        self.backgroundUnfoldSwipe.direction = UISwipeGestureRecognizerDirectionLeft;
+        self.backgroundUnfoldSwipe.numberOfTouchesRequired = 1;
+        self.backgroundUnfoldSwipe.delegate = self;
+        self.backgroundUnfoldSwipe.cancelsTouchesInView = YES;
+        [self.fixedBackgroundHost addGestureRecognizer:self.backgroundUnfoldSwipe];
         self.fixedBackgroundHost.showsVerticalScrollIndicator = NO;
         self.fixedBackgroundHost.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
         [root addSubview:self.fixedBackgroundMaterial];
@@ -2923,7 +2941,25 @@ static NSString *NFBFrontmostAppID(void) {
     }
     return nil;
 }
+// Only this host's scroll pan may recognise alongside its left swipe. Vertical
+// scrolling stays native; no global simultaneous-recognition exemption.
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)other {
+    return (gesture == self.backgroundUnfoldSwipe && other == self.fixedBackgroundHost.panGestureRecognizer) ||
+        (other == self.backgroundUnfoldSwipe && gesture == self.fixedBackgroundHost.panGestureRecognizer);
+}
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldRequireFailureOfGestureRecognizer:(UIGestureRecognizer *)other {
+    // A left swipe beginning on an icon must not release into an app-opening tap.
+    // No hold dependency: existing long-press timing remains unchanged.
+    return other == self.backgroundUnfoldSwipe &&
+        [gesture isKindOfClass:UITapGestureRecognizer.class] &&
+        [gesture.view isDescendantOfView:self.fixedBackgroundHost];
+}
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldReceiveTouch:(UITouch *)touch {
+    if (gesture == self.backgroundUnfoldSwipe) {
+        return self.enabled && ![self isLocked] &&
+            [self desktopActionMode] == NFBActionModeCollapsed &&
+            !NFBTrollVisibleApp().length && !self.fixedBackgroundHost.hidden;
+    }
     if (gesture == self.desktopActionTap || gesture == self.desktopActionHold ||
         gesture == self.desktopActionSwipe) {
         self.desktopActionTouchTarget = self.desktopActionTarget;
