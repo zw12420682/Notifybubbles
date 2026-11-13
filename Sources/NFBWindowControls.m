@@ -21,6 +21,7 @@ static BOOL movieIsActive;
 // Rail-only reference. Never populated from the resized desktop proxy.
 static CGRect portraitRailReference;
 static CGSize portraitRailScreen;
+static __weak UIView *portraitRailRoot;
 static id currentWindow(void) {
     return NFBCurrentWindowState().floatingWindow;
 }
@@ -36,6 +37,7 @@ CGRect NFBSplitFrameInView(UIView *root) {
             if (!CGRectIsEmpty(frame) && isfinite(frame.origin.x) && isfinite(frame.origin.y)) {
                 portraitRailReference = frame;
                 portraitRailScreen = root.bounds.size;
+                portraitRailRoot = root;
             }
             return frame;
         }
@@ -515,13 +517,17 @@ BOOL NFBUpdateMovieMode(BOOL enabled) {
             // band; shrink uniformly only if the existing video cannot fit.
             CGRect lower = moviePortrait ? [moviePortrait convertRect:moviePortrait.bounds toView:parent] : CGRectZero;
             if (CGRectIsEmpty(lower)) {
-                CGFloat width = area.size.width * 0.86;
-                // Use the actual width-derived desktop scale. Reserve a full
-                // landscape-video band instead of letting desktop claim 86% height.
-                CGFloat videoBand = area.size.width * 9.0 / 16.0;
-                CGFloat height = MIN(area.size.height * 0.86, area.size.height-videoBand-2);
-                width = height * area.size.width / area.size.height;
-                lower = CGRectMake(CGRectGetMinX(area), CGRectGetMaxY(area)-height, width, height);
+                // Desktop occupies exactly the normal portrait footprint. Only
+                // the video fits the remaining space; never shrink this pane
+                // to reserve a video band (that widened the black gap).
+                lower = CGRectMake(CGRectGetMinX(area), CGRectGetMinY(area) + area.size.height * 0.14,
+                    area.size.width * 0.86, area.size.height * 0.86);
+                if (portraitRailRoot.window && !CGRectIsEmpty(portraitRailReference) &&
+                    CGSizeEqualToSize(portraitRailScreen, area.size)) {
+                    CGRect reference = [portraitRailRoot convertRect:portraitRailReference toView:parent];
+                    if (!CGRectIsEmpty(reference) && isfinite(reference.origin.x) && isfinite(reference.origin.y) &&
+                        isfinite(reference.size.width) && isfinite(reference.size.height)) lower = reference;
+                }
                 if (!movieDesktopAnchor) {
                     movieDesktopAnchor = [UIView new];
                     movieDesktopAnchor.userInteractionEnabled = NO;

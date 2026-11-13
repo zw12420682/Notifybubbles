@@ -6,7 +6,8 @@ assert 'CGAffineTransformScale(basis, ratio, ratio)' in s
 assert '!movieDesktopAttempted' in s
 assert 'if (!NFBDesktopSplitActive()) movieOwnsDesktop = NFBShowDesktopInSplit' in s
 assert 'basis.a /= sx' in s
-assert 'CGFloat videoBand = area.size.width * 9.0 / 16.0' in s
+assert 'CGFloat videoBand =' not in s
+assert '[portraitRailRoot convertRect:portraitRailReference toView:parent]' in s
 assert 'NFBMovieLowerFrameInView(root)' not in m
 assert 'BOOL hideForPosition = floatingApp.length && !atBottomLeft;' in m
 print('PASS: video aspect-fit above unchanged portrait; desktop fallback; original rail position gate')
