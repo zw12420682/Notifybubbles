@@ -2147,8 +2147,10 @@ static NSString *NFBFrontmostAppID(void) {
         CGFloat movieSide = plan.diameter + 14;
         CGFloat movieGap = 9;
         CGFloat movieX = CGRectGetMinX(plan.toggle);
-        CGFloat movieTop = MAX(safe.top, 12);
-        CGFloat movieBottom = CGRectGetHeight(bounds) - MAX(safe.bottom, 12);
+        CGRect lower = NFBMovieLowerFrameInView(root);
+        if (CGRectIsNull(lower) || CGRectIsEmpty(lower)) lower = splitFrame;
+        CGFloat movieTop = MAX(CGRectGetMinY(lower), MAX(safe.top, 12));
+        CGFloat movieBottom = MIN(CGRectGetMaxY(lower), CGRectGetHeight(bounds) - MAX(safe.bottom, 12));
         plan.toggle = CGRectMake(movieX, movieTop, movieSide, movieSide);
         plan.toggleTop = movieTop;
         plan.rowsTop = movieTop + movieSide + movieGap;

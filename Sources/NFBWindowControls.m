@@ -1,4 +1,6 @@
 #import "NFBWindowControls.h"
+#import "NFBDesktopHost.h"
+#import "NFBSystemDesktop.h"
 #import "NFBTrollOpen.h"
 #import "NFBWindowState.h"
 #import "NFBInterfaces.h"
@@ -14,6 +16,8 @@
 static __weak UIView *lastWindow;
 static NSString *lastApp;
 static NSUInteger placementGeneration;
+static UIView *movieDesktopAnchor;
+static BOOL movieIsActive;
 static id currentWindow(void) {
     return NFBCurrentWindowState().floatingWindow;
 }
@@ -22,8 +26,9 @@ CGRect NFBSplitFrameInView(UIView *root) {
     if (!NSThread.isMainThread || !root.window) return CGRectNull;
     @try {
         id object = attachmentWindow();
-        if (![object isKindOfClass:UIView.class]) return CGRectNull;
-        UIView *view = object;
+        if (![object isKindOfClass:UIView.class] && !(movieIsActive && NFBDesktopSplitActive())) return CGRectNull;
+        UIView *view = [object isKindOfClass:UIView.class] ? object : nil;
+        if (!view && movieIsActive && NFBDesktopSplitActive()) view = movieDesktopAnchor;
         if (!view.window || view.hidden || CGRectIsEmpty(view.bounds)) return CGRectNull;
         return [view convertRect:view.bounds toView:root];
     } @catch (__unused NSException *exception) { return CGRectNull; }
@@ -138,7 +143,7 @@ static UIView *attachmentWindow(void) {
     } @catch (NSException *exception) { NFBDebugLog(@"attachment lookup: %@", exception); return nil; }
 }
 UIView *NFBDesktopActionWindow(void) {
-    return attachmentWindow();
+    return attachmentWindow() ?: ((movieIsActive && NFBDesktopSplitActive()) ? movieDesktopAnchor : nil);
 }
 CGRect NFBWindowFrameInView(UIView *window, UIView *root) {
     if (!NSThread.isMainThread || !root.window || !window) return CGRectNull;
@@ -146,7 +151,7 @@ CGRect NFBWindowFrameInView(UIView *window, UIView *root) {
     @catch (__unused NSException *exception) { return CGRectNull; }
 }
 NSString *NFBSplitAttachmentApp(void) {
-    @try { return appOfWindow(attachmentWindow()); }
+    @try { return appOfWindow(attachmentWindow()) ?: ((movieIsActive && NFBDesktopSplitActive()) ? NFBSystemDesktopBundleID : nil); }
     @catch (__unused NSException *exception) { return nil; }
 }
 void NFBObserveSplitSwitch(NSString *app, BOOL enabled) {
@@ -387,6 +392,8 @@ BOOL NFBCloseCurrentSplit(void) {
 @property(nonatomic) CGPoint center;
 @property(nonatomic) CGFloat radius;
 @property(nonatomic) BOOL moved;
+@property(nonatomic) CGAffineTransform transform;
+@property(nonatomic,strong) NSMapTable<UIView *, NSNumber *> *radii;
 @end
 @implementation NFBMovieRecord
 @end
@@ -394,7 +401,31 @@ static NSMapTable<UIView *, NFBMovieRecord *> *movieRecords;
 static NSMapTable<UIView *, UIView *> *movieBackdrops;
 static CFTimeInterval movieReadAt;
 static BOOL movieWasEnabled;
-static BOOL movieIsActive;
+static __weak UIView *moviePortrait;
+static BOOL movieOwnsDesktop;
+static BOOL movieDesktopAttempted;
+static CGRect movieLowerScreen;
+static BOOL movieLandscape(UIView *view) {
+    NSInteger a = orientationOf(view, @"sceneOrientation"), b = orientationOf(view, @"containerOrientation");
+    return a == 3 || a == 4 || b == 3 || b == 4;
+}
+// Only descend through host-sized wrappers, not into arbitrary app controls.
+static void movieSquare(UIView *view, NFBMovieRecord *record, NSUInteger depth) {
+    if (depth > 5) return;
+    if (view.layer.cornerRadius > 0) {
+        if (![record.radii objectForKey:view]) [record.radii setObject:@(view.layer.cornerRadius) forKey:view];
+        view.layer.cornerRadius = 0;
+    }
+    for (UIView *child in view.subviews) {
+        if (child.bounds.size.width >= view.bounds.size.width * 0.9 &&
+            child.bounds.size.height >= view.bounds.size.height * 0.9) movieSquare(child, record, depth+1);
+    }
+}
+CGRect NFBMovieLowerFrameInView(UIView *root) {
+    if (!movieIsActive || !root.window || CGRectIsEmpty(movieLowerScreen)) return CGRectNull;
+    if (moviePortrait.window) return [moviePortrait convertRect:moviePortrait.bounds toView:root];
+    return [root convertRect:movieLowerScreen fromView:movieDesktopAnchor.window];
+}
 static void movieCollect(UIView *view, Class cls, NSMutableArray<UIView *> *out) {
     if (view.hidden || view.alpha < 0.01) return;
     if ([view isKindOfClass:cls]) {
@@ -408,7 +439,10 @@ static void movieCollect(UIView *view, Class cls, NSMutableArray<UIView *> *out)
 static void movieRestore(UIView *view) {
     NFBMovieRecord *record = [movieRecords objectForKey:view];
     if (!record) return;
+    for (UIView *wrapper in record.radii.keyEnumerator.allObjects)
+        wrapper.layer.cornerRadius = [[record.radii objectForKey:wrapper] doubleValue];
     view.layer.cornerRadius = record.radius;
+    view.transform = record.transform;
     if (record.moved && view.superview) view.center = record.center;
     [movieRecords removeObjectForKey:view];
 }
@@ -437,6 +471,19 @@ BOOL NFBUpdateMovieMode(BOOL enabled) {
     }
     // A normal portrait-only split remains untouched, even with the option on.
     movieIsActive = enabled && landscape;
+    moviePortrait = nil;
+    for (UIView *view in windows) if (!movieLandscape(view)) { moviePortrait = view; break; }
+    if (moviePortrait) {
+        if (movieOwnsDesktop && NFBDesktopSplitActive()) NFBCloseDesktopSplit();
+        movieOwnsDesktop = NO; movieDesktopAttempted = NO;
+        [movieDesktopAnchor removeFromSuperview]; movieDesktopAnchor = nil;
+    }
+    if (!movieIsActive) {
+        if (movieOwnsDesktop && NFBDesktopSplitActive()) NFBCloseDesktopSplit();
+        movieOwnsDesktop = NO; movieDesktopAttempted = NO;
+        [movieDesktopAnchor removeFromSuperview]; movieDesktopAnchor = nil;
+        movieLowerScreen = CGRectZero;
+    }
     NSHashTable *active = [NSHashTable weakObjectsHashTable];
     NSHashTable *parents = [NSHashTable weakObjectsHashTable];
     if (movieIsActive) for (UIView *view in windows) {
@@ -450,17 +497,45 @@ BOOL NFBUpdateMovieMode(BOOL enabled) {
         if (!record) {
             record = [NFBMovieRecord new]; record.view = view;
             record.center = view.center; record.radius = view.layer.cornerRadius;
+            record.transform = view.transform;
+            record.radii = [NSMapTable weakToStrongObjectsMapTable];
             [movieRecords setObject:record forKey:view];
         }
-        view.layer.cornerRadius = 0;
+        movieSquare(view, record, 0);
+        if (!movieLandscape(view) && record.moved) {
+            view.transform = record.transform; view.center = record.center; record.moved = NO;
+        }
         NSInteger orientation = orientationOf(view, @"sceneOrientation");
         NSInteger container = orientationOf(view, @"containerOrientation");
         if (orientation == 3 || orientation == 4 || container == 3 || container == 4) {
+            // The lower app remains fixed. Top alignment may use the status-bar
+            // band; shrink uniformly only if the existing video cannot fit.
+            CGRect lower = moviePortrait ? [moviePortrait convertRect:moviePortrait.bounds toView:parent] : CGRectZero;
+            if (CGRectIsEmpty(lower)) {
+                CGFloat width = area.size.width * 0.86;
+                CGFloat height = area.size.height * 0.86;
+                lower = CGRectMake(CGRectGetMinX(area), CGRectGetMaxY(area)-height, width, height);
+                if (!movieDesktopAnchor) {
+                    movieDesktopAnchor = [UIView new];
+                    movieDesktopAnchor.userInteractionEnabled = NO;
+                    [parent addSubview:movieDesktopAnchor];
+                }
+                movieDesktopAnchor.frame = lower;
+            }
+            movieLowerScreen = [parent convertRect:lower toView:parent.window];
+            view.transform = record.transform;
             CGRect frame = view.frame;
+            CGFloat room = MAX(1, CGRectGetMinY(lower)-CGRectGetMinY(area)-2);
+            if (frame.size.height > room || frame.size.width > area.size.width) {
+                CGFloat ratio = MIN(1, MIN(room/MAX(1,frame.size.height), area.size.width/MAX(1,frame.size.width)));
+                view.transform = CGAffineTransformScale(record.transform, ratio, ratio);
+                record.moved = YES;
+                frame = view.frame;
+            }
             if (!CGRectIsEmpty(frame) && isfinite(frame.origin.x) && isfinite(frame.origin.y)) {
                 CGPoint target = view.center;
                 target.x += CGRectGetMidX(area) - CGRectGetMidX(frame);
-                target.y += CGRectGetMinY(area) + parent.window.safeAreaInsets.top - CGRectGetMinY(frame);
+                target.y += CGRectGetMinY(area) - CGRectGetMinY(frame);
                 if (fabs(target.x-view.center.x) > 0.5 || fabs(target.y-view.center.y) > 0.5) {
                     view.center = target; record.moved = YES;
                     NFBDebugLog(@"movie: top placement %@ frame=%@", appOfWindow(view), NSStringFromCGRect(view.frame));
@@ -478,6 +553,11 @@ BOOL NFBUpdateMovieMode(BOOL enabled) {
         UIView *lowest = nil;
         for (UIView *child in parent.subviews) if ([windows containsObject:child]) { lowest = child; break; }
         if (lowest) [parent insertSubview:black belowSubview:lowest];
+    }
+    if (movieIsActive && !moviePortrait && movieDesktopAnchor.window && !movieDesktopAttempted) {
+        movieDesktopAttempted = YES;
+        if (!NFBDesktopSplitActive()) movieOwnsDesktop = NFBShowDesktopInSplit(movieDesktopAnchor);
+        NFBDebugLog(@"movie: desktop fallback active=%d", NFBDesktopSplitActive());
     }
     for (UIView *view in movieRecords.keyEnumerator.allObjects)
         if (![active containsObject:view]) movieRestore(view);
