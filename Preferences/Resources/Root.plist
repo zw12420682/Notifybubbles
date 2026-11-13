@@ -17,7 +17,7 @@
 		<dict>
 			<key>cell</key><string>PSGroupCell</string>
 			<key>label</key><string>电影模式（试用）</string>
-			<key>footerText</key><string>检测到横屏分屏窗口时自动移到顶部，浮窗背景纯黑，窗口外层使用直角，右侧图标栏使用全高。只识别窗口方向，不识别视频内容；关闭后恢复原有位置与圆角。</string>
+			<key>footerText</key><string>双击分屏房子键切换电影模式，开启时房子为红色。横屏窗口等比例适配上方空间，背景纯黑，保留原圆角；常用与后台图标区限制在下方窗口范围内。仅识别窗口方向，不识别视频内容。</string>
 		</dict>
 		<dict>
 			<key>cell</key><string>PSSwitchCell</string>

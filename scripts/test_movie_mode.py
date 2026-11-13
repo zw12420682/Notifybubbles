@@ -8,7 +8,7 @@ p=plistlib.loads((r/'Preferences/Resources/Root.plist').read_bytes())
 option=next(x for x in p['items'] if x.get('key')=='MovieMode')
 assert option['default'] is False
 movie=s[s.index('// Movie layout is opt-in'):]
-for token in ('movieRestore(view)', 'view.layer.cornerRadius = record.radius',
+for token in ('movieRestore(view)', 'view.transform = record.transform',
               'view.center = record.center', 'black.userInteractionEnabled = NO',
               'UIColor.blackColor', 'sceneOrientation', 'containerOrientation',
               'miniWindowModeEnabled', 'isClosingWithKeepAliveAnimation'):
@@ -19,3 +19,6 @@ assert 'BOOL validRailMeasurement = !movieActive &&' in m
 assert 'if (movieActive && splitNow)' in m
 assert 'movieBottom - movieSide - movieGap - plan.rowsTop' in m
 print('PASS: movie option defaults off; reversible layout; no lifecycle/rotation calls; ordinary rail cache isolated')
+
+assert "movieSquare" not in movie
+assert "cornerRadius =" not in movie

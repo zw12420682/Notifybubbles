@@ -390,10 +390,8 @@ BOOL NFBCloseCurrentSplit(void) {
 @interface NFBMovieRecord : NSObject
 @property(nonatomic, weak) UIView *view;
 @property(nonatomic) CGPoint center;
-@property(nonatomic) CGFloat radius;
 @property(nonatomic) BOOL moved;
 @property(nonatomic) CGAffineTransform transform;
-@property(nonatomic,strong) NSMapTable<UIView *, NSNumber *> *radii;
 @end
 @implementation NFBMovieRecord
 @end
@@ -408,18 +406,6 @@ static CGRect movieLowerScreen;
 static BOOL movieLandscape(UIView *view) {
     NSInteger a = orientationOf(view, @"sceneOrientation"), b = orientationOf(view, @"containerOrientation");
     return a == 3 || a == 4 || b == 3 || b == 4;
-}
-// Only descend through host-sized wrappers, not into arbitrary app controls.
-static void movieSquare(UIView *view, NFBMovieRecord *record, NSUInteger depth) {
-    if (depth > 5) return;
-    if (view.layer.cornerRadius > 0) {
-        if (![record.radii objectForKey:view]) [record.radii setObject:@(view.layer.cornerRadius) forKey:view];
-        view.layer.cornerRadius = 0;
-    }
-    for (UIView *child in view.subviews) {
-        if (child.bounds.size.width >= view.bounds.size.width * 0.9 &&
-            child.bounds.size.height >= view.bounds.size.height * 0.9) movieSquare(child, record, depth+1);
-    }
 }
 CGRect NFBMovieLowerFrameInView(UIView *root) {
     if (!movieIsActive || !root.window || CGRectIsEmpty(movieLowerScreen)) return CGRectNull;
@@ -439,9 +425,6 @@ static void movieCollect(UIView *view, Class cls, NSMutableArray<UIView *> *out)
 static void movieRestore(UIView *view) {
     NFBMovieRecord *record = [movieRecords objectForKey:view];
     if (!record) return;
-    for (UIView *wrapper in record.radii.keyEnumerator.allObjects)
-        wrapper.layer.cornerRadius = [[record.radii objectForKey:wrapper] doubleValue];
-    view.layer.cornerRadius = record.radius;
     view.transform = record.transform;
     if (record.moved && view.superview) view.center = record.center;
     [movieRecords removeObjectForKey:view];
@@ -496,12 +479,11 @@ BOOL NFBUpdateMovieMode(BOOL enabled) {
         NFBMovieRecord *record = [movieRecords objectForKey:view];
         if (!record) {
             record = [NFBMovieRecord new]; record.view = view;
-            record.center = view.center; record.radius = view.layer.cornerRadius;
+            record.center = view.center;
             record.transform = view.transform;
-            record.radii = [NSMapTable weakToStrongObjectsMapTable];
             [movieRecords setObject:record forKey:view];
         }
-        movieSquare(view, record, 0);
+        // Leave all window and content corner styles owned by Open.
         if (!movieLandscape(view) && record.moved) {
             view.transform = record.transform; view.center = record.center; record.moved = NO;
         }
@@ -513,7 +495,11 @@ BOOL NFBUpdateMovieMode(BOOL enabled) {
             CGRect lower = moviePortrait ? [moviePortrait convertRect:moviePortrait.bounds toView:parent] : CGRectZero;
             if (CGRectIsEmpty(lower)) {
                 CGFloat width = area.size.width * 0.86;
-                CGFloat height = area.size.height * 0.86;
+                // Use the actual width-derived desktop scale. Reserve a full
+                // landscape-video band instead of letting desktop claim 86% height.
+                CGFloat videoBand = area.size.width * 9.0 / 16.0;
+                CGFloat height = MIN(area.size.height * 0.86, area.size.height-videoBand-2);
+                width = height * area.size.width / area.size.height;
                 lower = CGRectMake(CGRectGetMinX(area), CGRectGetMaxY(area)-height, width, height);
                 if (!movieDesktopAnchor) {
                     movieDesktopAnchor = [UIView new];
@@ -523,15 +509,24 @@ BOOL NFBUpdateMovieMode(BOOL enabled) {
                 movieDesktopAnchor.frame = lower;
             }
             movieLowerScreen = [parent convertRect:lower toView:parent.window];
-            view.transform = record.transform;
-            CGRect frame = view.frame;
+            // Open may rewrite bounds while preserving our transform. Never
+            // multiply another fit onto that scale: derive an absolute fit from
+            // a rotation-only transform and the CURRENT bounds every pass.
+            CGAffineTransform basis = view.transform;
+            CGFloat sx = hypot(basis.a, basis.b), sy = hypot(basis.c, basis.d);
+            if (sx > 0.0001 && sy > 0.0001) {
+                basis.a /= sx; basis.b /= sx; basis.c /= sy; basis.d /= sy;
+            } else basis = CGAffineTransformIdentity;
+            basis.tx = 0; basis.ty = 0;
+            CGFloat w = fabs(basis.a)*view.bounds.size.width + fabs(basis.c)*view.bounds.size.height;
+            CGFloat h = fabs(basis.b)*view.bounds.size.width + fabs(basis.d)*view.bounds.size.height;
             CGFloat room = MAX(1, CGRectGetMinY(lower)-CGRectGetMinY(area)-2);
-            if (frame.size.height > room || frame.size.width > area.size.width) {
-                CGFloat ratio = MIN(1, MIN(room/MAX(1,frame.size.height), area.size.width/MAX(1,frame.size.width)));
-                view.transform = CGAffineTransformScale(record.transform, ratio, ratio);
+            CGFloat ratio = MIN(room/MAX(1,h), area.size.width/MAX(1,w));
+            if (isfinite(ratio) && ratio > 0) {
+                view.transform = CGAffineTransformScale(basis, ratio, ratio);
                 record.moved = YES;
-                frame = view.frame;
             }
+            CGRect frame = view.frame;
             if (!CGRectIsEmpty(frame) && isfinite(frame.origin.x) && isfinite(frame.origin.y)) {
                 CGPoint target = view.center;
                 target.x += CGRectGetMidX(area) - CGRectGetMidX(frame);

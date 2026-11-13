@@ -195,6 +195,7 @@ static double NFBNumber(NSString *key, double fallback) {
 
 @property(nonatomic, strong) NFBBubble *desktopActionButton;
 @property(nonatomic, strong) UITapGestureRecognizer *desktopActionTap;
+@property(nonatomic, strong) UITapGestureRecognizer *movieDoubleTap;
 @property(nonatomic, strong) UILongPressGestureRecognizer *desktopActionHold;
 @property(nonatomic, strong) UISwipeGestureRecognizer *desktopActionSwipe;
 @property(nonatomic, strong) UISwipeGestureRecognizer *backgroundUnfoldSwipe;
@@ -960,6 +961,15 @@ static NSString *NFBFrontmostAppID(void) {
     }
     [self refresh];
 }
+- (void)movieDoubleTapped:(UITapGestureRecognizer *)gesture {
+    if (gesture.state != UIGestureRecognizerStateEnded || !self.enabled || [self isLocked] ||
+        self.desktopActionToggle) return;
+    BOOL enabled = !NFBPreference(@"MovieMode", NO);
+    CFPreferencesSetAppValue(CFSTR("MovieMode"), (__bridge CFPropertyListRef)@(enabled), NFBDomain);
+    CFPreferencesAppSynchronize(NFBDomain);
+    NFBDebugLog(@"movie: double tap enabled=%d", enabled);
+    [self refresh];
+}
 - (void)desktopActionTapped:(UITapGestureRecognizer *)gesture {
     if (gesture.state != UIGestureRecognizerStateEnded || !self.enabled || [self isLocked]) return;
     [self performDesktopAction:NFBActionEffectFor([self desktopActionMode], NFBActionTap, YES, NO)];
@@ -1033,6 +1043,11 @@ static NSString *NFBFrontmostAppID(void) {
         button.accessibilityHint = @"单击显示或关闭桌面分屏，长按打开 Open 控制台";
         self.desktopActionTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(desktopActionTapped:)];
         self.desktopActionTap.delegate = self;
+        self.movieDoubleTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(movieDoubleTapped:)];
+        self.movieDoubleTap.numberOfTapsRequired = 2;
+        self.movieDoubleTap.delegate = self;
+        [self.desktopActionTap requireGestureRecognizerToFail:self.movieDoubleTap];
+        [button addGestureRecognizer:self.movieDoubleTap];
         self.desktopActionHold = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(desktopActionHeld:)];
         self.desktopActionHold.minimumPressDuration = 0.45;
         self.desktopActionHold.delegate = self;
@@ -1066,7 +1081,7 @@ static NSString *NFBFrontmostAppID(void) {
         chevronRightIcon = [UIImage systemImageNamed:@"chevron.right"];
     }
     UIImage *glyph = houseIcon;
-    UIColor *tint = UIColor.systemGreenColor;
+    UIColor *tint = NFBPreference(@"MovieMode", NO) ? UIColor.systemRedColor : UIColor.systemGreenColor;
     if (toggleMode) {
         glyph = self.edgeExpanded ? chevronRightIcon : chevronLeftIcon;
         tint = UIColor.systemBlueColor;
@@ -2154,11 +2169,14 @@ static NSString *NFBFrontmostAppID(void) {
         plan.toggle = CGRectMake(movieX, movieTop, movieSide, movieSide);
         plan.toggleTop = movieTop;
         plan.rowsTop = movieTop + movieSide + movieGap;
-        plan.favoritesVisible = NO;
-        plan.favorites = CGRectZero;
-        plan.favoriteHeight = 0;
-        plan.rail = CGRectMake(movieX, plan.rowsTop, movieSide,
-            MAX(0, movieBottom - movieSide - movieGap - plan.rowsTop));
+        CGFloat budget = MAX(0, movieBottom - movieSide - movieGap - plan.rowsTop);
+        NSUInteger movieFavorites = hideFavorites ? 0 : self.favoriteApps.count;
+        NFBContainerHeights movieFit = NFBFitContainers(budget, movieSide, plan.diameter+9,
+            movieFavorites, columnRows);
+        plan.favoritesVisible = self.favoriteApps.count > 0 && movieFit.favorites > 0;
+        plan.favoriteHeight = movieFit.favorites;
+        plan.favorites = CGRectMake(movieX, plan.rowsTop, movieSide, movieFit.favorites);
+        plan.rail = CGRectMake(movieX, plan.rowsTop+movieFit.favorites+movieFit.gap, movieSide, movieFit.regular);
         plan.clearCenterY = movieBottom - movieSide / 2;
     }
     BOOL railMeasuredNow = NO;
@@ -2976,6 +2994,9 @@ static NSString *NFBFrontmostAppID(void) {
         [gesture.view isDescendantOfView:self.fixedBackgroundHost];
 }
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldReceiveTouch:(UITouch *)touch {
+    if (gesture == self.movieDoubleTap)
+        return self.enabled && ![self isLocked] && !self.desktopActionToggle &&
+            [self desktopActionMode] == NFBActionModeSplit;
     if (gesture == self.backgroundUnfoldSwipe) {
         return self.enabled && ![self isLocked] &&
             [self desktopActionMode] == NFBActionModeCollapsed &&
