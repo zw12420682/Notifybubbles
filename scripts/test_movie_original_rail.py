@@ -11,5 +11,5 @@ assert 'if (!NFBDesktopSplitActive()) movieOwnsDesktop = NFBShowDesktopInSplit' 
 start=w.index('static void movieRestore('); end=w.index('BOOL NFBUpdateMovieMode(', start)
 restore=w[start:end]
 assert restore.index('if (record.moved)') < restore.index('view.transform = record.transform')
-assert 'CGRectGetMinY(lower)-CGRectGetMinY(area)-2' in w
+assert 'CGRectGetMinY(lower)-CGRectGetMinY(area)-movieGap' in w
 print('PASS: original rail plan/position gate; untouched portrait restoration; movie actions and top fit retained')

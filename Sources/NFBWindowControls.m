@@ -547,7 +547,9 @@ BOOL NFBUpdateMovieMode(BOOL enabled) {
             basis.tx = 0; basis.ty = 0;
             CGFloat w = fabs(basis.a)*view.bounds.size.width + fabs(basis.c)*view.bounds.size.height;
             CGFloat h = fabs(basis.b)*view.bounds.size.width + fabs(basis.d)*view.bounds.size.height;
-            CGFloat room = MAX(1, CGRectGetMinY(lower)-CGRectGetMinY(area)-2);
+            // Bottom-align above the unchanged lower pane with a fixed 4pt gap.
+            const CGFloat movieGap = 4.0;
+            CGFloat room = MAX(1, CGRectGetMinY(lower)-CGRectGetMinY(area)-movieGap);
             CGFloat ratio = MIN(room/MAX(1,h), area.size.width/MAX(1,w));
             if (isfinite(ratio) && ratio > 0) {
                 view.transform = CGAffineTransformScale(basis, ratio, ratio);
@@ -557,7 +559,7 @@ BOOL NFBUpdateMovieMode(BOOL enabled) {
             if (!CGRectIsEmpty(frame) && isfinite(frame.origin.x) && isfinite(frame.origin.y)) {
                 CGPoint target = view.center;
                 target.x += CGRectGetMidX(area) - CGRectGetMidX(frame);
-                target.y += CGRectGetMinY(area) - CGRectGetMinY(frame);
+                target.y += CGRectGetMinY(lower) - movieGap - CGRectGetMaxY(frame);
                 if (fabs(target.x-view.center.x) > 0.5 || fabs(target.y-view.center.y) > 0.5) {
                     view.center = target; record.moved = YES;
                     NFBDebugLog(@"movie: top placement %@ frame=%@", appOfWindow(view), NSStringFromCGRect(view.frame));
