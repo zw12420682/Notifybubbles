@@ -21,3 +21,6 @@ UIView *NFBDesktopActionWindow(void);
 CGRect NFBWindowFrameInView(UIView *window, UIView *root);
 
 // placement: immediate apply, bounded retries, recheck on keyboard change
+
+// Opt-in layout only; returns YES while a landscape floating scene is visible.
+BOOL NFBUpdateMovieMode(BOOL enabled);

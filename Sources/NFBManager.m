@@ -1803,6 +1803,7 @@ static NSString *NFBFrontmostAppID(void) {
     self.layoutRecording = YES;
     [self updatePrivacy];
     NFBUpdateOpenEdge(self.enabled);
+    BOOL movieActive = NFBUpdateMovieMode(self.enabled && ![self isLocked] && NFBPreference(@"MovieMode", NO));
     // A dismissed app (long-press exit or one-click clear) is only marked
     // "dismissed" so its bubble doesn't instantly reappear while the process is
     // still being torn down — iOS keeps a stale switcher card for a killed app,
@@ -2089,7 +2090,7 @@ static NSString *NFBFrontmostAppID(void) {
     BOOL atBottomLeft = validSplit &&
         fabs(CGRectGetMinX(splitFrame) - CGRectGetMinX(bounds)) <= cornerTolerance &&
         fabs(CGRectGetMaxY(splitFrame) - CGRectGetMaxY(bounds)) <= cornerTolerance;
-    BOOL hideForPosition = floatingApp.length && !atBottomLeft;
+    BOOL hideForPosition = floatingApp.length && !atBottomLeft && !movieActive;
     root.userInteractionEnabled = !hideForPosition;
     CGFloat visibility = hideForPosition ? 0 : 1;
     if (root.alpha != visibility) {
@@ -2140,10 +2141,28 @@ static NSString *NFBFrontmostAppID(void) {
             hideFavorites ? 0 : self.favoriteApps.count, (unsigned long)columnRows,
             (unsigned long)notifiedCount, (double)self.splitRailTop, (double)self.splitRailDiameter,
             (double)self.splitRailScreenWidth, self.splitRailMeasured, edgeRailHugging(halfHiddenColumn, self.edgeExpanded));
+    // Full-height movie rail: reserve only the action slots and safe areas.
+    // Keep app icons at the measured diameter; do not stretch the icons.
+    if (movieActive && splitNow) {
+        CGFloat movieSide = plan.diameter + 14;
+        CGFloat movieGap = 9;
+        CGFloat movieX = CGRectGetMinX(plan.toggle);
+        CGFloat movieTop = MAX(safe.top, 12);
+        CGFloat movieBottom = CGRectGetHeight(bounds) - MAX(safe.bottom, 12);
+        plan.toggle = CGRectMake(movieX, movieTop, movieSide, movieSide);
+        plan.toggleTop = movieTop;
+        plan.rowsTop = movieTop + movieSide + movieGap;
+        plan.favoritesVisible = NO;
+        plan.favorites = CGRectZero;
+        plan.favoriteHeight = 0;
+        plan.rail = CGRectMake(movieX, plan.rowsTop, movieSide,
+            MAX(0, movieBottom - movieSide - movieGap - plan.rowsTop));
+        plan.clearCenterY = movieBottom - movieSide / 2;
+    }
     BOOL railMeasuredNow = NO;
-    BOOL validRailMeasurement = splitUsable && isfinite(plan.toggleTop) && plan.toggleTop > 0 &&
+    BOOL validRailMeasurement = !movieActive && splitUsable && isfinite(plan.toggleTop) && plan.toggleTop > 0 &&
         NFBSplitMetricsValid(plan.diameter, 0, bounds.size.width, bounds.size.width);
-    if (splitNow && !validRailMeasurement) {
+    if (splitNow && !movieActive && !validRailMeasurement) {
         NFBDebugLog(@"rail-metric: rejected diameter=%.2f top=%.2f screen=%@ splitFrame=%@ cachedDiameter=%.2f cachedTop=%.2f measured=%d",
             plan.diameter, plan.toggleTop, NSStringFromCGSize(bounds.size), NSStringFromCGRect(splitA),
             self.splitRailDiameter, self.splitRailTop, self.splitRailMeasured);

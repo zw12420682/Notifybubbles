@@ -378,3 +378,112 @@ BOOL NFBCloseCurrentSplit(void) {
     } @catch (NSException *exception) { NFBDebugLog(@"orange-close: %@", exception); return NO; }
 }
 
+
+
+// Movie layout is opt-in and never changes app lifecycle or orientation.
+// Open already rotates its scene; only the rendered window is repositioned.
+@interface NFBMovieRecord : NSObject
+@property(nonatomic, weak) UIView *view;
+@property(nonatomic) CGPoint center;
+@property(nonatomic) CGFloat radius;
+@property(nonatomic) BOOL moved;
+@end
+@implementation NFBMovieRecord
+@end
+static NSMapTable<UIView *, NFBMovieRecord *> *movieRecords;
+static NSMapTable<UIView *, UIView *> *movieBackdrops;
+static CFTimeInterval movieReadAt;
+static BOOL movieWasEnabled;
+static BOOL movieIsActive;
+static void movieCollect(UIView *view, Class cls, NSMutableArray<UIView *> *out) {
+    if (view.hidden || view.alpha < 0.01) return;
+    if ([view isKindOfClass:cls]) {
+        if (visibleView(view) && appOfWindow(view).length &&
+            boolStateOf(view, @"miniWindowModeEnabled") == 0 &&
+            boolStateOf(view, @"isClosingWithKeepAliveAnimation") != 1) [out addObject:view];
+        return; // Never traverse app content.
+    }
+    for (UIView *child in view.subviews) movieCollect(child, cls, out);
+}
+static void movieRestore(UIView *view) {
+    NFBMovieRecord *record = [movieRecords objectForKey:view];
+    if (!record) return;
+    view.layer.cornerRadius = record.radius;
+    if (record.moved && view.superview) view.center = record.center;
+    [movieRecords removeObjectForKey:view];
+}
+BOOL NFBUpdateMovieMode(BOOL enabled) {
+    if (!NSThread.isMainThread) return NO;
+    CFTimeInterval now = CACurrentMediaTime();
+    if (enabled == movieWasEnabled && now - movieReadAt < 0.2) return movieIsActive;
+    movieReadAt = now; movieWasEnabled = enabled;
+    if (!movieRecords) movieRecords = [NSMapTable weakToStrongObjectsMapTable];
+    if (!movieBackdrops) movieBackdrops = [NSMapTable weakToStrongObjectsMapTable];
+    NSMutableArray<UIView *> *windows = [NSMutableArray array];
+    Class cls = NFBTrollFloatingWindowClass();
+    if (enabled && cls) {
+        for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+            if (![scene isKindOfClass:UIWindowScene.class] ||
+                scene.activationState == UISceneActivationStateBackground ||
+                scene.activationState == UISceneActivationStateUnattached) continue;
+            for (UIWindow *window in ((UIWindowScene *)scene).windows) movieCollect(window, cls, windows);
+        }
+    }
+    BOOL landscape = NO;
+    for (UIView *view in windows) {
+        NSInteger orientation = orientationOf(view, @"sceneOrientation");
+        NSInteger container = orientationOf(view, @"containerOrientation");
+        if (orientation == 3 || orientation == 4 || container == 3 || container == 4) landscape = YES;
+    }
+    // A normal portrait-only split remains untouched, even with the option on.
+    movieIsActive = enabled && landscape;
+    NSHashTable *active = [NSHashTable weakObjectsHashTable];
+    NSHashTable *parents = [NSHashTable weakObjectsHashTable];
+    if (movieIsActive) for (UIView *view in windows) {
+        UIView *parent = view.superview;
+        if (!parent || !parent.window) continue;
+        CGRect area = [parent convertRect:parent.window.bounds fromView:parent.window];
+        // This mode is for a portrait phone containing a landscape scene.
+        if (area.size.width >= area.size.height) continue;
+        [active addObject:view]; [parents addObject:parent];
+        NFBMovieRecord *record = [movieRecords objectForKey:view];
+        if (!record) {
+            record = [NFBMovieRecord new]; record.view = view;
+            record.center = view.center; record.radius = view.layer.cornerRadius;
+            [movieRecords setObject:record forKey:view];
+        }
+        view.layer.cornerRadius = 0;
+        NSInteger orientation = orientationOf(view, @"sceneOrientation");
+        NSInteger container = orientationOf(view, @"containerOrientation");
+        if (orientation == 3 || orientation == 4 || container == 3 || container == 4) {
+            CGRect frame = view.frame;
+            if (!CGRectIsEmpty(frame) && isfinite(frame.origin.x) && isfinite(frame.origin.y)) {
+                CGPoint target = view.center;
+                target.x += CGRectGetMidX(area) - CGRectGetMidX(frame);
+                target.y += CGRectGetMinY(area) + parent.window.safeAreaInsets.top - CGRectGetMinY(frame);
+                if (fabs(target.x-view.center.x) > 0.5 || fabs(target.y-view.center.y) > 0.5) {
+                    view.center = target; record.moved = YES;
+                    NFBDebugLog(@"movie: top placement %@ frame=%@", appOfWindow(view), NSStringFromCGRect(view.frame));
+                }
+            }
+        }
+        UIView *black = [movieBackdrops objectForKey:parent];
+        if (!black) {
+            black = [UIView new]; black.backgroundColor = UIColor.blackColor;
+            black.userInteractionEnabled = NO; black.accessibilityElementsHidden = YES;
+            [movieBackdrops setObject:black forKey:parent];
+        }
+        black.frame = area;
+        // Insert behind the lowest floating sibling, never above another app.
+        UIView *lowest = nil;
+        for (UIView *child in parent.subviews) if ([windows containsObject:child]) { lowest = child; break; }
+        if (lowest) [parent insertSubview:black belowSubview:lowest];
+    }
+    for (UIView *view in movieRecords.keyEnumerator.allObjects)
+        if (![active containsObject:view]) movieRestore(view);
+    for (UIView *parent in movieBackdrops.keyEnumerator.allObjects) if (![parents containsObject:parent]) {
+        [[movieBackdrops objectForKey:parent] removeFromSuperview];
+        [movieBackdrops removeObjectForKey:parent];
+    }
+    return movieIsActive && active.count > 0;
+}
