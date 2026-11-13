@@ -18,6 +18,9 @@ static NSString *lastApp;
 static NSUInteger placementGeneration;
 static UIView *movieDesktopAnchor;
 static BOOL movieIsActive;
+// Rail-only reference. Never populated from the resized desktop proxy.
+static CGRect portraitRailReference;
+static CGSize portraitRailScreen;
 static id currentWindow(void) {
     return NFBCurrentWindowState().floatingWindow;
 }
@@ -26,11 +29,25 @@ CGRect NFBSplitFrameInView(UIView *root) {
     if (!NSThread.isMainThread || !root.window) return CGRectNull;
     @try {
         id object = attachmentWindow();
-        if (![object isKindOfClass:UIView.class] && !(movieIsActive && NFBDesktopSplitActive())) return CGRectNull;
         UIView *view = [object isKindOfClass:UIView.class] ? object : nil;
-        if (!view && movieIsActive && NFBDesktopSplitActive()) view = movieDesktopAnchor;
-        if (!view.window || view.hidden || CGRectIsEmpty(view.bounds)) return CGRectNull;
-        return [view convertRect:view.bounds toView:root];
+        if (view.window && !view.hidden && !CGRectIsEmpty(view.bounds)) {
+            CGRect frame = [view convertRect:view.bounds toView:root];
+            // Match the original 0.48.127 input: the real portrait app window.
+            if (!CGRectIsEmpty(frame) && isfinite(frame.origin.x) && isfinite(frame.origin.y)) {
+                portraitRailReference = frame;
+                portraitRailScreen = root.bounds.size;
+            }
+            return frame;
+        }
+        if (movieIsActive && NFBDesktopSplitActive() && movieDesktopAnchor.window) {
+            if (CGSizeEqualToSize(portraitRailScreen, root.bounds.size) &&
+                !CGRectIsEmpty(portraitRailReference)) return portraitRailReference;
+            // No real portrait measured in this session: use the normal Open
+            // 0.86 portrait footprint, NOT the movie proxy's reduced footprint.
+            CGSize size = root.bounds.size;
+            return CGRectMake(0, size.height * 0.14, size.width * 0.86, size.height * 0.86);
+        }
+        return CGRectNull;
     } @catch (__unused NSException *exception) { return CGRectNull; }
 }
 // The class the attachment lookup depends on is still missing (nil, not merely
