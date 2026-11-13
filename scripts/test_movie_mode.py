@@ -16,8 +16,8 @@ for token in ('movieRestore(view)', 'view.transform = record.transform',
 for token in ('terminateApplication:', 'setSceneOrientation:', 'makeKeyAndVisible', 'setVisualScale:'):
     assert token not in movie, token
 assert 'BOOL validRailMeasurement = !movieActive &&' in m
-assert 'if (movieActive && splitNow)' in m
-assert 'movieBottom - movieSide - movieGap - plan.rowsTop' in m
+assert 'if (movieActive && splitNow)' not in m
+assert 'movieFit' not in m
 print('PASS: movie option defaults off; reversible layout; no lifecycle/rotation calls; ordinary rail cache isolated')
 
 assert "movieSquare" not in movie

@@ -6,8 +6,8 @@ assert 'self.movieDoubleTap.numberOfTapsRequired = 2' in m
 assert '[self.desktopActionTap requireGestureRecognizerToFail:self.movieDoubleTap]' in m
 assert 'CFPreferencesSetAppValue(CFSTR("MovieMode")' in m
 assert 'UIColor.systemRedColor : UIColor.systemGreenColor' in m
-assert 'NFBContainerHeights movieFit = NFBFitContainers' in m
-assert 'plan.favoritesVisible = self.favoriteApps.count > 0 && movieFit.favorites > 0' in m
+assert 'movieFit' not in m
+assert 'plan.favoritesVisible =' not in m
 assert 'movieSquare' not in w
 movie=w[w.index('// Movie layout is opt-in'):]
 assert 'cornerRadius =' not in movie

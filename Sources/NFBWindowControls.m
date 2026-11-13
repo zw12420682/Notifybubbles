@@ -425,8 +425,12 @@ static void movieCollect(UIView *view, Class cls, NSMutableArray<UIView *> *out)
 static void movieRestore(UIView *view) {
     NFBMovieRecord *record = [movieRecords objectForKey:view];
     if (!record) return;
-    view.transform = record.transform;
-    if (record.moved && view.superview) view.center = record.center;
+    // Portrait-only records were never moved: do not overwrite Open's latest
+    // portrait geometry with a stale value on movie exit.
+    if (record.moved) {
+        view.transform = record.transform;
+        if (view.superview) view.center = record.center;
+    }
     [movieRecords removeObjectForKey:view];
 }
 BOOL NFBUpdateMovieMode(BOOL enabled) {

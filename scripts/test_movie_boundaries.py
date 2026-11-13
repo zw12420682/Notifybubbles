@@ -7,7 +7,6 @@ assert '!movieDesktopAttempted' in s
 assert 'if (!NFBDesktopSplitActive()) movieOwnsDesktop = NFBShowDesktopInSplit' in s
 assert 'basis.a /= sx' in s
 assert 'CGFloat videoBand = area.size.width * 9.0 / 16.0' in s
-assert 'CGRect lower = NFBMovieLowerFrameInView(root)' in m
-assert 'CGFloat movieTop = MAX(CGRectGetMinY(lower)' in m
-assert 'CGFloat movieBottom = MIN(CGRectGetMaxY(lower)' in m
-print('PASS: lower-window rail bounds, aspect-fit video, guarded desktop fallback, reversible wrapper corners')
+assert 'NFBMovieLowerFrameInView(root)' not in m
+assert 'BOOL hideForPosition = floatingApp.length && !atBottomLeft;' in m
+print('PASS: video aspect-fit above unchanged portrait; desktop fallback; original rail position gate')

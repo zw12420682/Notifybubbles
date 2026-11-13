@@ -2105,7 +2105,7 @@ static NSString *NFBFrontmostAppID(void) {
     BOOL atBottomLeft = validSplit &&
         fabs(CGRectGetMinX(splitFrame) - CGRectGetMinX(bounds)) <= cornerTolerance &&
         fabs(CGRectGetMaxY(splitFrame) - CGRectGetMaxY(bounds)) <= cornerTolerance;
-    BOOL hideForPosition = floatingApp.length && !atBottomLeft && !movieActive;
+    BOOL hideForPosition = floatingApp.length && !atBottomLeft;
     root.userInteractionEnabled = !hideForPosition;
     CGFloat visibility = hideForPosition ? 0 : 1;
     if (root.alpha != visibility) {
@@ -2156,29 +2156,8 @@ static NSString *NFBFrontmostAppID(void) {
             hideFavorites ? 0 : self.favoriteApps.count, (unsigned long)columnRows,
             (unsigned long)notifiedCount, (double)self.splitRailTop, (double)self.splitRailDiameter,
             (double)self.splitRailScreenWidth, self.splitRailMeasured, edgeRailHugging(halfHiddenColumn, self.edgeExpanded));
-    // Full-height movie rail: reserve only the action slots and safe areas.
-    // Keep app icons at the measured diameter; do not stretch the icons.
-    if (movieActive && splitNow) {
-        CGFloat movieSide = plan.diameter + 14;
-        CGFloat movieGap = 9;
-        CGFloat movieX = CGRectGetMinX(plan.toggle);
-        CGRect lower = NFBMovieLowerFrameInView(root);
-        if (CGRectIsNull(lower) || CGRectIsEmpty(lower)) lower = splitFrame;
-        CGFloat movieTop = MAX(CGRectGetMinY(lower), MAX(safe.top, 12));
-        CGFloat movieBottom = MIN(CGRectGetMaxY(lower), CGRectGetHeight(bounds) - MAX(safe.bottom, 12));
-        plan.toggle = CGRectMake(movieX, movieTop, movieSide, movieSide);
-        plan.toggleTop = movieTop;
-        plan.rowsTop = movieTop + movieSide + movieGap;
-        CGFloat budget = MAX(0, movieBottom - movieSide - movieGap - plan.rowsTop);
-        NSUInteger movieFavorites = hideFavorites ? 0 : self.favoriteApps.count;
-        NFBContainerHeights movieFit = NFBFitContainers(budget, movieSide, plan.diameter+9,
-            movieFavorites, columnRows);
-        plan.favoritesVisible = self.favoriteApps.count > 0 && movieFit.favorites > 0;
-        plan.favoriteHeight = movieFit.favorites;
-        plan.favorites = CGRectMake(movieX, plan.rowsTop, movieSide, movieFit.favorites);
-        plan.rail = CGRectMake(movieX, plan.rowsTop+movieFit.favorites+movieFit.gap, movieSide, movieFit.regular);
-        plan.clearCenterY = movieBottom - movieSide / 2;
-    }
+    // Both movie and ordinary modes use the original 0.48.127 rail plan.
+    // Movie window placement must never override action slots or either viewport.
     BOOL railMeasuredNow = NO;
     BOOL validRailMeasurement = !movieActive && splitUsable && isfinite(plan.toggleTop) && plan.toggleTop > 0 &&
         NFBSplitMetricsValid(plan.diameter, 0, bounds.size.width, bounds.size.width);
