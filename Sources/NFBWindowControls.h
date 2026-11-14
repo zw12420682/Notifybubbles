@@ -29,6 +29,3 @@ CGRect NFBMovieLowerFrameInView(UIView *root);
 
 // Movie-only keyboard settling check, bypassing the 0.2s layout throttle.
 void NFBRecheckMovieLayout(void);
-
-// Movie-only lock transition capture and bounded unlock settling checks.
-void NFBObserveMovieLockState(BOOL locked, BOOL enabled);

@@ -1598,10 +1598,7 @@ static NSString *NFBFrontmostAppID(void) {
     if (button.imageView.image != resolved) button.imageView.image = resolved;
 }
 - (void)updatePrivacy {
-    BOOL locked = [self isLocked];
-    // Capture before desktop teardown or refresh disables the movie layout.
-    NFBObserveMovieLockState(locked, self.enabled && NFBPreference(@"MovieMode", NO));
-    if (!self.enabled || locked) NFBUpdateDesktopSplit(NO);
+    if (!self.enabled || [self isLocked]) NFBUpdateDesktopSplit(NO);
     NFBSetCaptureHidden(self.window.rootViewController.view, self.enabled && self.hideInScreenshots);
 }
 // Coalesced entry point: at most one full layout per runloop turn. Use this for
