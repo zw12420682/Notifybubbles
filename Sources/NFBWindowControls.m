@@ -745,7 +745,7 @@ void NFBObserveMovieLockState(BOOL locked, BOOL enabled) {
                 if (epoch != movieResumeEpoch || movieLockLast || !movieResumePending) return;
                 // Query the actual lock again; delayed work must never reveal
                 // movie UI during a new lock before the next manager tick.
-                id manager = NFBSingleton(@"SBLockScreenManager");
+                id manager = NFBCheckedObject(NSClassFromString(@"SBLockScreenManager"), @"sharedInstance");
                 if (!manager || NFBCheckedBool(manager,@"isUILocked",YES)) return;
                 id setting = CFBridgingRelease(CFPreferencesCopyAppValue(CFSTR("MovieMode"), CFSTR("local.notifybubbles")));
                 id master = CFBridgingRelease(CFPreferencesCopyAppValue(CFSTR("Enabled"), CFSTR("local.notifybubbles")));
