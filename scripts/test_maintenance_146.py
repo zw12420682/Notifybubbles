@@ -12,7 +12,7 @@ assert 'mask.cachedHole=hole' in w
 assert 'CGRectEqualToRect(mask.cachedBounds,black.bounds)' in w
 assert 'desktop-widget: before-transfer' in h
 assert 'desktop-widget-ancestor:' in h
-assert 'session!=self || self.restoring || self.startedHome || self.pendingApp.length' in h
+assert 'session!=self || self.restoring || self.widgetRefreshCancelled || self.pendingApp.length' in h
 # Unchanged geometry reuses the mask; moving pane and slider both update it.
 last=None;updates=0
 for value in [(0,248,335,596,14)]*10+[(0,248,335,596,30)]*10+[(0,151,390,693,30)]*10:

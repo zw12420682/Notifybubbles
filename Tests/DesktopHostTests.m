@@ -437,15 +437,17 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
 }
 - (void)runWidgetRefreshTests:(UIView *)desktop anchor:(UIView *)anchor root:(UIView *)root {
     [UIView setAnimationsEnabled:NO];
-    state.home=NO; state.frontApp=@"com.example.background";
+    state.home=YES; state.frontApp=nil;
     DesktopPagerFixture *pager=[[DesktopPagerFixture alloc] initWithFrame:desktop.bounds];
     pager.pagingEnabled=YES;
     pager.contentSize=CGSizeMake(pager.bounds.size.width*2,pager.bounds.size.height);
     CGPoint original=CGPointMake(pager.bounds.size.width,0);
     [pager setContentOffset:original animated:NO]; pager.moves=0;
-    [desktop addSubview:pager];
-    @try { CheckOpen(NFBShowDesktopInSplit(anchor),@"widget page refresh open",desktop,root); }
+    @try { CheckOpen(NFBShowDesktopInSplit(anchor),@"widget refresh from home before pager attaches",desktop,root); }
     @catch (NSException *e) { [self finishResult:[NSString stringWithFormat:@"FAIL: %@",e]]; return; }
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.25*NSEC_PER_SEC)),dispatch_get_main_queue(), ^{
+        [desktop addSubview:pager];
+    });
     [self awaitWidgetRefresh:pager original:original desktop:desktop anchor:anchor root:root deadline:CACurrentMediaTime()+3];
 }
 - (void)awaitWidgetRefresh:(DesktopPagerFixture *)pager original:(CGPoint)original desktop:(UIView *)desktop

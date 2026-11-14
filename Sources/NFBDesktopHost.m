@@ -50,6 +50,10 @@ static NSArray<UIWindow *> *NFBDesktopWindows(void);
 @property(nonatomic,strong) UIScrollView *refreshScroll;
 @property(nonatomic) CGPoint refreshOffset;
 @property(nonatomic,strong) UIView *refreshCover;
+@property(nonatomic) NSUInteger widgetRefreshAttempts;
+@property(nonatomic) BOOL widgetRefreshFinished;
+@property(nonatomic) BOOL widgetRefreshCancelled;
+- (void)scheduleWidgetRefreshRetry;
 - (void)refreshWidgetPage;
 - (void)finishWidgetRefresh;
 - (void)activateDesktop;
@@ -337,6 +341,9 @@ UIView *NFBDesktopSplitHitTest(UIWindow *window, CGPoint point, UIEvent *event, 
     // inside hit-test changes the responder chain mid-dispatch and stalls the
     // first touch; hand it to the next runloop turn instead.
     if (event) {
+        // A real touch wins over a pending automatic page visit. In-flight
+        // roundtrips already returned the panel above and finish in 0.1s.
+        active.widgetRefreshCancelled = YES;
         static NSUInteger scheduledActivation;
         if (!scheduledActivation) {
             scheduledActivation++;
@@ -641,26 +648,53 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
     self.refreshScroll=nil;
     NFBAttemptCleanup(@"widget cover", ^{ [self.refreshCover removeFromSuperview]; }); self.refreshCover=nil;
 }
+- (void)scheduleWidgetRefreshRetry {
+    if (self.widgetRefreshAttempts >= 6 || self.widgetRefreshFinished || self.widgetRefreshCancelled) {
+        NFBDebugLog(@"desktop-widget: bounded refresh stopped attempts=%lu cancelled=%d done=%d",
+            (unsigned long)self.widgetRefreshAttempts,self.widgetRefreshCancelled,self.widgetRefreshFinished);
+        return;
+    }
+    __weak NFBDesktopSession *weakSession=self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.2*NSEC_PER_SEC)),dispatch_get_main_queue(), ^{
+        NFBDesktopSession *active=weakSession;
+        if (!active || session!=active || active.restoring || active.widgetRefreshCancelled ||
+            active.widgetRefreshFinished || active.pendingApp.length) return;
+        [active refreshWidgetPage];
+    });
+}
 - (void)refreshWidgetPage {
     @try {
-    if (session!=self || self.restoring || self.startedHome || self.pendingApp.length) {
+    if (session!=self || self.restoring || self.widgetRefreshCancelled || self.pendingApp.length ||
+        self.widgetRefreshFinished || self.refreshScroll) {
         NFBDebugLog(@"desktop-widget: refresh skipped session=%d restoring=%d startedHome=%d pending=%d",
             session==self, self.restoring, self.startedHome, self.pendingApp.length>0);
         return;
     }
+    if (self.widgetRefreshAttempts >= 6) return;
+    self.widgetRefreshAttempts++;
     UIScrollView *pager=NFBDesktopPager(self.desktop);
-    if (!pager || pager.dragging || pager.decelerating) {
-        NFBDebugLog(@"desktop widget page refresh: no idle horizontal pager"); return;
+    if (pager && (pager.tracking || pager.dragging || pager.decelerating)) {
+        self.widgetRefreshCancelled=YES;
+        NFBDebugLog(@"desktop-widget: refresh cancelled for user scroll"); return;
+    }
+    if (!pager) {
+        NFBDebugLog(@"desktop-widget: waiting for pager attempt=%lu",(unsigned long)self.widgetRefreshAttempts);
+        [self scheduleWidgetRefreshRetry]; return;
     }
     if (pager.contentSize.width<pager.bounds.size.width*2 || pager.bounds.size.width<=0) {
-        NFBDebugLog(@"desktop widget refresh: only one reachable page; no page roundtrip"); return;
+        NFBDebugLog(@"desktop widget refresh: only one reachable page; no page roundtrip");
+        [self scheduleWidgetRefreshRetry]; return;
     }
     CGPoint original=pager.contentOffset;
     CGFloat width=pager.bounds.size.width;
     CGFloat minimum=-pager.adjustedContentInset.left;
     CGFloat maximum=pager.contentSize.width-width+pager.adjustedContentInset.right;
     CGFloat target=original.x+width<=maximum+0.5 ? MIN(maximum,original.x+width) : MAX(minimum,original.x-width);
-    if (fabs(target-original.x)<width*0.5) return;
+    // Never snap an intermediate user/page-animation position back to a page.
+    CGFloat page=(original.x-minimum)/width;
+    if (!isfinite(page) || fabs(page-round(page))>0.01 || fabs(target-original.x)<width*0.5) {
+        [self scheduleWidgetRefreshRetry]; return;
+    }
     UIView *cover=[self.canvas snapshotViewAfterScreenUpdates:NO];
     if (!cover) {
         // A newly attached host may not yet have a compositor snapshot.
@@ -672,8 +706,14 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
         }];
         if (image) cover=[[UIImageView alloc] initWithImage:image];
     }
-    if (!cover) { NFBErrorLog(@"desktop widget refresh: both cover capture paths failed; page preserved"); return; }
+    if (!cover) {
+        NFBErrorLog(@"desktop widget refresh: both cover capture paths failed; page preserved");
+        [self scheduleWidgetRefreshRetry]; return;
+    }
+    self.widgetRefreshFinished=YES; // At most one roundtrip per session.
     self.refreshScroll=pager; self.refreshOffset=original;
+    NFBDebugLog(@"desktop-widget: roundtrip begin attempt=%lu pager=%@ original=%@ target=%.2f startedHome=%d",
+        (unsigned long)self.widgetRefreshAttempts,NSStringFromClass(pager.class),NSStringFromCGPoint(original),target,self.startedHome);
     cover.frame=self.canvas.bounds; cover.userInteractionEnabled=NO;
     self.refreshCover=cover; if (cover) [self.canvas addSubview:cover];
     // Reproduce the device-proven page exit/reentry, with the original page
@@ -686,6 +726,9 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.1*NSEC_PER_SEC)),dispatch_get_main_queue(), ^{
         NFBDesktopSession *active=weakSession;
         if (!active || session!=active || active.restoring) return;
+        // If native scrolling acquired the pager during the covered visit,
+        // never overwrite the user's new position.
+        if (pager.tracking || pager.dragging || pager.decelerating) active.refreshScroll=nil;
         [active finishWidgetRefresh];
         NFBDebugLog(@"desktop widget page refresh: restored %@ offset=%@",NSStringFromClass(pager.class),NSStringFromCGPoint(original));
     });
@@ -883,6 +926,7 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
     NFBRestoreMovieHosts();
     if (self.restoring) return;
     self.restoring=YES;
+    self.widgetRefreshCancelled=YES;
     if (NFBDebugLoggingEnabled()) {
         NFBDebugLog(@"desktop-widget: restore begin startedHome=%d suppliedAppearance=%d parent=%@ original=%@",
             self.startedHome, self.suppliedAppearance, NSStringFromClass(self.desktop.superview.class),
@@ -1114,12 +1158,18 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
                 if (active && session==active && !active.restoring) {
                     @try {
                         [active.desktop setNeedsLayout]; [active.desktop layoutIfNeeded];
-                        [active refreshWidgetPage];
                         NFBDebugLog(@"desktop widget appearance refreshed for fullscreen background");
                     } @catch (NSException *error) { NFBErrorLog(@"desktop widget activation failed: %@",error); }
                 }
             });
         }
+        // Next turn allows the transplanted desktop to attach its pager. Covers
+        // both startedHome paths without inventing controller lifecycle calls.
+        __weak NFBDesktopSession *widgetSession=next;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            NFBDesktopSession *active=widgetSession;
+            if (active && session==active && !active.restoring) [active refreshWidgetPage];
+        });
         next.timer = [NSTimer timerWithTimeInterval:0.1 target:next selector:@selector(check) userInfo:nil repeats:YES];
         // Keep the 100 ms safety/launch checks; let the run loop coalesce
         // wakeups by up to 10 ms without increasing polling frequency.

@@ -13,7 +13,7 @@ assert 'self.validRailSplitFrame = splitA' in m
 h=(r/'Sources/NFBDesktopHost.m').read_text()
 assert 'desktop-widget-content:' in h
 assert 'post-restore home' in h
-assert 'session!=self || self.restoring || self.startedHome || self.pendingApp.length' in h
+assert 'session!=self || self.restoring || self.widgetRefreshCancelled || self.pendingApp.length' in h
 # Device race: keyboard moves app, a pending retry must not move it back.
 for keyboard, expected in [(True,151),(False,248.02)]:
  top=151
