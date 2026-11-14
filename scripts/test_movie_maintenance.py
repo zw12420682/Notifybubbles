@@ -1,3 +1,4 @@
+"""Maintenance regressions: stable empty state and geometry ownership on restore."""
 from pathlib import Path
 r=Path(__file__).resolve().parents[1]
 m=(r/'Sources/NFBManager.m').read_text();w=(r/'Sources/NFBWindowControls.m').read_text()
