@@ -12,6 +12,7 @@
 #import <substrate.h>
 #endif
 #include <math.h>
+static NSArray<UIWindow *> *NFBDesktopWindows(void);
 
 @interface NFBDesktopSession : NSObject
 @property(nonatomic, strong) UIWindow *window;
@@ -204,8 +205,23 @@ UIView *NFBDesktopSplitHitTest(UIWindow *window, CGPoint point, UIEvent *event, 
     CGPoint local = [active.panel convertPoint:point fromView:window];
     if (![active.panel pointInside:local withEvent:event]) {
         Class floatingClass = NFBTrollFloatingWindowClass();
-        if (floatingClass) return NFBDesktopFloatingHit(window, active.panel, floatingClass, window, point, event);
-        return nil; // Other windows keep UIKit's normal pass-through behavior.
+        UIView *hit = floatingClass ? NFBDesktopFloatingHit(window, active.panel, floatingClass, window, point, event) : nil;
+        if (event && NFBDebugLoggingEnabled()) {
+            static CFTimeInterval lastOutsideLog;
+            CFTimeInterval now = CACurrentMediaTime();
+            if (now - lastOutsideLog > 0.5) {
+                lastOutsideLog = now;
+                NFBDebugLog(@"movie-touch: outside point=%@ desktopWindow=%p class=%@ level=%.1f key=%d hit=%@ hitWindow=%p panel=%@",
+                    NSStringFromCGPoint(point), window, NSStringFromClass(window.class), window.windowLevel,
+                    window.isKeyWindow, NSStringFromClass(hit.class), hit.window, NSStringFromCGRect(active.panel.frame));
+                for (UIWindow *candidate in NFBDesktopWindows()) {
+                    NFBDebugLog(@"movie-touch: window=%p class=%@ level=%.1f hidden=%d alpha=%.2f interaction=%d key=%d",
+                        candidate, NSStringFromClass(candidate.class), candidate.windowLevel, candidate.hidden,
+                        candidate.alpha, candidate.userInteractionEnabled, candidate.isKeyWindow);
+                }
+            }
+        }
+        return hit; // Diagnostics only: preserve the existing routing exactly.
     }
     if (active.refreshScroll) return active.panel;
     // Activating swaps the key window and BFS-scans the desktop subtree. Doing it

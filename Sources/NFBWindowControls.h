@@ -26,3 +26,6 @@ CGRect NFBWindowFrameInView(UIView *window, UIView *root);
 BOOL NFBUpdateMovieMode(BOOL enabled);
 
 CGRect NFBMovieLowerFrameInView(UIView *root);
+
+// Movie-only keyboard settling check, bypassing the 0.2s layout throttle.
+void NFBRecheckMovieLayout(void);

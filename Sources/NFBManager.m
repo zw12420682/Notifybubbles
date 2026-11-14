@@ -248,6 +248,7 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic) BOOL desktopActionParked;
 // Previous keyboard visibility, so only a dismissal re-runs the placement.
 @property(nonatomic) BOOL lastKeyboardUpForPlacement;
+@property(nonatomic) NSUInteger movieKeyboardEpoch;
 // The app whose row the background viewport last scrolled to.
 @property(nonatomic, copy) NSString *lastFocusedBackgroundApp;
 // Set when a focus change arrived while the user was scrolling; the next
@@ -484,6 +485,22 @@ static const CFTimeInterval kTickReconcileInterval = 2.0;
             BOOL keyboardUp = NFBKeyboardVisible();
             BOOL wasUp = weakSelf.lastKeyboardUpForPlacement;
             weakSelf.lastKeyboardUpForPlacement = keyboardUp;
+            if (keyboardUp != wasUp) {
+                NSUInteger epoch = ++weakSelf.movieKeyboardEpoch;
+                if (keyboardUp && weakSelf.enabled && NFBPreference(@"MovieMode", NO)) {
+                    // Bounded movie-only checks after Open's keyboard transaction.
+                    // Never call the portrait placement API on this path.
+                    for (NSNumber *seconds in @[@0.12, @0.32, @0.65]) {
+                        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(seconds.doubleValue * NSEC_PER_SEC)),
+                            dispatch_get_main_queue(), ^{
+                                NFBManager *manager = weakSelf;
+                                if (!manager || manager.movieKeyboardEpoch != epoch || !manager.enabled ||
+                                    [manager isLocked] || !NFBKeyboardVisible() || !NFBPreference(@"MovieMode", NO)) return;
+                                NFBRecheckMovieLayout();
+                            });
+                    }
+                }
+            }
             if (!keyboardUp && wasUp) {
                 // The user's delay lets the system finish retracting the keyboard
                 // before the window is measured again.

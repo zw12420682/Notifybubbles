@@ -607,6 +607,11 @@ BOOL NFBUpdateMovieMode(BOOL enabled) {
         movieDesktopAttempted = YES;
         if (!NFBDesktopSplitActive()) movieOwnsDesktop = NFBShowDesktopInSplit(movieDesktopAnchor);
         NFBDebugLog(@"movie: desktop fallback active=%d", NFBDesktopSplitActive());
+        if (NFBDebugLoggingEnabled()) for (UIView *view in windows) {
+            NFBDebugLog(@"movie-touch: floating app=%@ view=%p window=%p class=%@ level=%.1f hidden=%d interaction=%d frame=%@",
+                appOfWindow(view), view, view.window, NSStringFromClass(view.window.class),
+                view.window.windowLevel, view.hidden, view.userInteractionEnabled, NSStringFromCGRect(view.frame));
+        }
     }
     for (UIView *view in movieRecords.keyEnumerator.allObjects)
         if (![active containsObject:view]) movieRestore(view);
@@ -615,4 +620,17 @@ BOOL NFBUpdateMovieMode(BOOL enabled) {
         [movieBackdrops removeObjectForKey:parent];
     }
     return movieIsActive && active.count > 0;
+}
+
+void NFBRecheckMovieLayout(void) {
+    if (!NSThread.isMainThread) return;
+    movieReadAt = 0;
+    BOOL active = NFBUpdateMovieMode(YES);
+    NFBDebugLog(@"movie-keyboard: recheck active=%d lower=%@", active, NSStringFromCGRect(movieLowerScreen));
+    if (!NFBDebugLoggingEnabled() || !active) return;
+    for (UIView *view in movieRecords.keyEnumerator.allObjects) {
+        NFBDebugLog(@"movie-keyboard: app=%@ view=%p window=%p class=%@ level=%.1f frame=%@ interaction=%d",
+            appOfWindow(view), view, view.window, NSStringFromClass(view.window.class),
+            view.window.windowLevel, NSStringFromCGRect(view.frame), view.userInteractionEnabled);
+    }
 }
