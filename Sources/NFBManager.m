@@ -209,7 +209,6 @@ static double NFBNumber(NSString *key, double fallback) {
 - (void)backgroundUnfoldSwiped:(UISwipeGestureRecognizer *)gesture;
 - (NFBActionMode)desktopActionMode;
 - (void)performDesktopAction:(NFBActionEffect)effect;
-- (void)clearUnreadKeepingExpanded;
 - (void)layoutDesktopAction:(CGRect)frame target:(UIView *)target split:(BOOL)splitNow toggleFrame:(CGRect)toggleFrame duration:(NSTimeInterval)duration;
 
 @property(nonatomic, strong) NFBRail *favoritesRail;
@@ -320,7 +319,6 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, strong) NSMutableSet<NSString *> *closingApps;
 @property(nonatomic) BOOL clearingBackground;
 @property(nonatomic) CFTimeInterval lastClearAt;
-@property(nonatomic) CGFloat lastClearTapY;
 @property(nonatomic) CFTimeInterval lastClearTapAt;
 @property(nonatomic) CFTimeInterval lastSweepLogAt;
 @property(nonatomic) NSUInteger clearEpoch;
@@ -1014,30 +1012,6 @@ static NSString *NFBFrontmostAppID(void) {
     if (gesture.state != UIGestureRecognizerStateEnded || !self.enabled || [self isLocked]) return;
     if (gesture.direction != UISwipeGestureRecognizerDirectionLeft) return;
     [self performDesktopAction:NFBActionEffectFor([self desktopActionMode], NFBActionSwipeLeft, YES, NO)];
-}
-// Long press on the expanded fullscreen control: drop what the bubbles count as
-// unread (and their badges) without touching the apps, the app switcher, the
-// system Notification Centre, or the column itself. Only the store's records go,
-// so pins/order and the background apps that make up the list stay put.
-//
-// Keeping those rows takes two steps. The clear's own refresh must not rebuild
-// them from the now-empty unread list (holdsClearedColumn), and a cleared column
-// has no X, so no later refresh would stamp the clock: the hold stamps it once,
-// with no unread left the column would otherwise fold on the next tick.
-- (void)holdClearedColumnAndRestartClock {
-    self.holdsClearedColumn = YES;
-    [self refresh];
-    self.holdsClearedColumn = NO;
-    [self scheduleAutoCollapse];
-}
-- (void)clearUnreadKeepingExpanded {
-    if (![self acceptGestureForKey:@"desktopUnread"]) return;
-    [self.store clearUnreadRecords];
-    // The record waiting for its bubble has no queued entry, so the store cannot
-    // drop it; releasing it here keeps the badge from reappearing.
-    self.pendingRecord = nil;
-    // Stay expanded; the effect keeps the rows and stamps the 5s clock.
-    self.edgeExpanded = YES;
 }
 - (void)layoutDesktopAction:(CGRect)frame target:(UIView *)target split:(BOOL)splitNow toggleFrame:(CGRect)toggleFrame duration:(NSTimeInterval)duration {
     // This slot does double duty: in a split it is the desktop button, outside one
@@ -2012,7 +1986,7 @@ static NSString *NFBFrontmostAppID(void) {
     for (NSString *appID in self.buttons.allKeys) {
         if ([displayApps containsObject:appID]) continue;
         NFBBubble *button = self.buttons[appID];
-        [self traceClearView:[NSString stringWithFormat:@"remove %@ view=%p", appID, button]];
+        if (NFBDebugLoggingEnabled()) [self traceClearView:[NSString stringWithFormat:@"remove %@ view=%p", appID, button]];
         [self.buttons removeObjectForKey:appID];
         button.userInteractionEnabled = NO;
         if (!split && [appID isEqualToString:NFBClearAllID]) {
@@ -2293,7 +2267,7 @@ static NSString *NFBFrontmostAppID(void) {
                     self.fixedBackgroundHost.frame = fixedBackgroundFrame;
                     self.fixedBackgroundMaterial.frame = fixedMaterial;
                 } completion:^(BOOL finished) {
-                    [self traceClearView:[NSString stringWithFormat:@"host-animation-complete finished=%d", finished]];
+                    if (NFBDebugLoggingEnabled()) [self traceClearView:[NSString stringWithFormat:@"host-animation-complete finished=%d", finished]];
                 }];
         }
         CGFloat backgroundContent = NFBEdgeRowsHeight(fixedApps.count, side, step);
@@ -2502,12 +2476,12 @@ static NSString *NFBFrontmostAppID(void) {
             }
             self.buttons[appID] = button;
             [parent addSubview:button];
-            [self traceClearView:[NSString stringWithFormat:@"create %@ view=%p parent=%p", appID, button, parent]];
+            if (NFBDebugLoggingEnabled()) [self traceClearView:[NSString stringWithFormat:@"create %@ view=%p parent=%p", appID, button, parent]];
         }
         button.hidden = hideEdgeIcons;
         if (button.superview != parent) {
             // Preserve screen position when moving between unread strip and rail.
-            [self traceClearView:[NSString stringWithFormat:@"reparent %@ view=%p from=%p to=%p", appID, button, button.superview, parent]];
+            if (NFBDebugLoggingEnabled()) [self traceClearView:[NSString stringWithFormat:@"reparent %@ view=%p from=%p to=%p", appID, button, button.superview, parent]];
             CGPoint position = [button.superview convertPoint:button.center toView:parent];
             [parent addSubview:button];
             button.center = position;
@@ -2934,7 +2908,7 @@ static NSString *NFBFrontmostAppID(void) {
     });
 }
 - (void)burstBubble:(NFBBubble *)button {
-    [self traceClearView:[NSString stringWithFormat:@"burst %@ view=%p", button.appID, button]];
+    if (NFBDebugLoggingEnabled()) [self traceClearView:[NSString stringWithFormat:@"burst %@ view=%p", button.appID, button]];
     UIView *root = self.window.rootViewController.view;
     CGFloat measured = button.imageView.bounds.size.width;
     // During a size animation the diameter can read 0, which collapsed the ring

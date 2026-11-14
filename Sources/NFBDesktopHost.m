@@ -156,6 +156,16 @@ static void NFBLogWidgetContent(UIView *view, NSUInteger depth, NSUInteger *budg
         view.layer.opacity, (unsigned long)view.layer.sublayers.count, view.layer.contents!=nil);
     for (UIView *child in view.subviews) NFBLogWidgetContent(child,depth+1,budget);
 }
+// Read only ancestors: an invisible parent can blank an otherwise visible host.
+static void NFBLogWidgetAncestors(UIView *view) {
+    if (!NFBDebugLoggingEnabled()) return;
+    NSUInteger depth=0;
+    for (UIView *parent=view.superview; parent && depth<10; parent=parent.superview,depth++)
+        NFBDebugLog(@"desktop-widget-ancestor: host=%p depth=%lu class=%@ hidden=%d alpha=%.2f layerHidden=%d opacity=%.2f bounds=%@ clips=%d mask=%@",
+            view,(unsigned long)depth,NSStringFromClass(parent.class),parent.hidden,parent.alpha,
+            parent.layer.hidden,parent.layer.opacity,NSStringFromCGRect(parent.bounds),parent.clipsToBounds,
+            NSStringFromClass(parent.layer.mask.class));
+}
 static void NFBLogWidgetHosts(UIView *view, NSUInteger depth, NSUInteger *budget) {
     if (!*budget || depth>14) return;
     NSString *name = NSStringFromClass(view.class);
@@ -166,6 +176,7 @@ static void NFBLogWidgetHosts(UIView *view, NSUInteger depth, NSUInteger *budget
             name, view, view.hidden, view.alpha, view.window, NSStringFromCGRect(view.frame), (unsigned long)view.subviews.count);
         if ([name containsString:@"WidgetHost"] || [name containsString:@"RemoteView"])
             NFBLogWidgetContent(view,0,budget);
+        if ([name containsString:@"WidgetHost"]) NFBLogWidgetAncestors(view);
     }
     for (UIView *child in view.subviews) NFBLogWidgetHosts(child,depth+1,budget);
 }
@@ -987,6 +998,11 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
     @try {
         UIView *desktop = NFBDesktopSource(anchor);
         if (!desktop) return NFBDesktopFail(@"没有找到已加载的系统桌面视图");
+        if (NFBDebugLoggingEnabled()) {
+            NFBDebugLog(@"desktop-widget: before-transfer desktop=%p parent=%@ window=%p",
+                desktop,NSStringFromClass(desktop.superview.class),desktop.window);
+            NSUInteger budget=32; NFBLogWidgetHosts(desktop,0,&budget);
+        }
         NFBWindowState *state = NFBCurrentWindowState();
         next.startedHome = state.home;
         next.desktop = desktop; next.originalParent = desktop.superview; next.anchor = anchor;

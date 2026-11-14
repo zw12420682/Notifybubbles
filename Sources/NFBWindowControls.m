@@ -431,6 +431,13 @@ BOOL NFBCloseCurrentSplit(void) {
 @implementation NFBMovieRecord
 @end
 static NSMapTable<UIView *, NFBMovieRecord *> *movieRecords;
+@interface NFBMovieCutoutLayer : CAShapeLayer
+@property(nonatomic) CGRect cachedHole;
+@property(nonatomic) CGRect cachedBounds;
+@property(nonatomic) CGFloat cachedRadius;
+@end
+@implementation NFBMovieCutoutLayer
+@end
 static NSMapTable<UIView *, UIView *> *movieBackdrops;
 static CFTimeInterval movieReadAt;
 static BOOL movieWasEnabled;
@@ -657,19 +664,26 @@ BOOL NFBUpdateMovieMode(BOOL enabled) {
         UIView *black = [movieBackdrops objectForKey:parent];
         if ([touchHosts containsObject:parent.window] && desktopCutout.window) {
             CGRect hole = [desktopCutout convertRect:desktopCutout.bounds toView:black];
-            UIBezierPath *path = [UIBezierPath bezierPathWithRect:black.bounds];
             // Close the rectangular corner leaks around the rounded desktop.
             // Convert the committed pane radius to this backdrop's coordinates.
             CGFloat radius = NFBDesktopSplitCornerRadius();
             CGFloat scale = hole.size.width / MAX(1, desktopCutout.bounds.size.width);
             if (!isfinite(radius) || radius < 0) radius = 0;
             radius = MIN(radius * scale, MIN(hole.size.width, hole.size.height) / 2);
-            [path appendPath:[UIBezierPath bezierPathWithRoundedRect:hole cornerRadius:radius]];
-            CAShapeLayer *mask = [CAShapeLayer layer];
-            mask.frame = black.bounds; mask.fillRule = kCAFillRuleEvenOdd;
-            mask.path = path.CGPath; mask.fillColor = UIColor.blackColor.CGColor;
-            [CATransaction begin]; [CATransaction setDisableActions:YES];
-            black.layer.mask = mask; [CATransaction commit];
+            NFBMovieCutoutLayer *mask = [black.layer.mask isKindOfClass:NFBMovieCutoutLayer.class]
+                ? (NFBMovieCutoutLayer *)black.layer.mask : nil;
+            BOOL cutoutChanged = !mask || !CGRectEqualToRect(mask.cachedHole,hole) ||
+                !CGRectEqualToRect(mask.cachedBounds,black.bounds) || fabs(mask.cachedRadius-radius)>0.001;
+            if (cutoutChanged) {
+                if (!mask) mask = [NFBMovieCutoutLayer layer];
+                UIBezierPath *path = [UIBezierPath bezierPathWithRect:black.bounds];
+                [path appendPath:[UIBezierPath bezierPathWithRoundedRect:hole cornerRadius:radius]];
+                [CATransaction begin]; [CATransaction setDisableActions:YES];
+                mask.frame = black.bounds; mask.fillRule = kCAFillRuleEvenOdd;
+                mask.path = path.CGPath; mask.fillColor = UIColor.blackColor.CGColor;
+                mask.cachedHole=hole; mask.cachedBounds=black.bounds; mask.cachedRadius=radius;
+                black.layer.mask = mask; [CATransaction commit];
+            }
         } else black.layer.mask = nil;
     }
     NFBUpdateMovieDesktopTouchHosts(touchHosts);
