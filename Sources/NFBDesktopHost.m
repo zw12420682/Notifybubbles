@@ -196,6 +196,68 @@ static UIView *NFBDesktopFloatingHit(UIView *view, UIView *panel, Class floating
     }
     return nil;
 }
+// A separate Open host must remain above the elevated desktop window. While
+// borrowed, only native floating-app descendants may accept touches; its empty
+// full-screen root must not shield the lower desktop. Never return a view from
+// another UIWindow and never synthesize/redispatch UIEvents.
+static NSMapTable<UIWindow *, NSNumber *> *movieHostLevels;
+static NSMapTable<UIWindow *, NSNumber *> *movieHostApplied;
+#ifndef NFB_DESKTOP_SIM_TEST
+static Class movieHostHitClass;
+static UIView *(*originalMovieHostHit)(id, SEL, CGPoint, UIEvent *);
+static UIView *NFBMovieHostHit(id object, SEL selector, CGPoint point, UIEvent *event) {
+    if (session && !session.restoring && [movieHostLevels objectForKey:object]) {
+        @try {
+            Class cls = NFBTrollFloatingWindowClass();
+            return cls ? NFBDesktopFloatingHit(object, nil, cls, object, point, event) : nil;
+        } @catch (NSException *error) {
+            NFBErrorLog(@"movie-touch: host hit exception %@", error);
+            return nil;
+        }
+    }
+    return originalMovieHostHit(object, selector, point, event);
+}
+#endif
+static void NFBRestoreMovieHosts(void) {
+    for (UIWindow *host in movieHostLevels.keyEnumerator.allObjects) {
+        CGFloat applied = [[movieHostApplied objectForKey:host] doubleValue];
+        if (fabs(host.windowLevel - applied) < 0.01)
+            host.windowLevel = [[movieHostLevels objectForKey:host] doubleValue];
+    }
+    [movieHostLevels removeAllObjects]; [movieHostApplied removeAllObjects];
+}
+void NFBUpdateMovieDesktopTouchHosts(NSArray<UIWindow *> *hosts) {
+    if (!NSThread.isMainThread) return;
+    if (!session || session.restoring || !hosts.count) { NFBRestoreMovieHosts(); return; }
+    if (!movieHostLevels) movieHostLevels = [NSMapTable weakToStrongObjectsMapTable];
+    if (!movieHostApplied) movieHostApplied = [NSMapTable weakToStrongObjectsMapTable];
+    for (UIWindow *old in movieHostLevels.keyEnumerator.allObjects) if (![hosts containsObject:old]) {
+        if (fabs(old.windowLevel-[[movieHostApplied objectForKey:old] doubleValue]) < 0.01)
+            old.windowLevel = [[movieHostLevels objectForKey:old] doubleValue];
+        [movieHostLevels removeObjectForKey:old]; [movieHostApplied removeObjectForKey:old];
+    }
+    for (UIWindow *host in hosts) {
+        if (host == session.window || host.hidden || host.alpha < 0.01 || !host.userInteractionEnabled) continue;
+#ifndef NFB_DESKTOP_SIM_TEST
+        Class cls = object_getClass(host);
+        if (!movieHostHitClass) {
+            Method method = class_getInstanceMethod(cls, @selector(hitTest:withEvent:));
+            Method base = class_getInstanceMethod(UIWindow.class, @selector(hitTest:withEvent:));
+            if (!method || strcmp(method_getTypeEncoding(method), method_getTypeEncoding(base))) continue;
+            MSHookMessageEx(cls, @selector(hitTest:withEvent:), (IMP)NFBMovieHostHit, (IMP *)&originalMovieHostHit);
+            movieHostHitClass = cls;
+        }
+        if (cls != movieHostHitClass || !originalMovieHostHit) continue;
+#endif
+        if (![movieHostLevels objectForKey:host]) [movieHostLevels setObject:@(host.windowLevel) forKey:host];
+        CGFloat level = session.window.windowLevel + 1;
+        [movieHostApplied setObject:@(level) forKey:host];
+        if (fabs(host.windowLevel-level) > 0.01) {
+            host.windowLevel = level;
+            NFBDebugLog(@"movie-touch: host raised above desktop host=%p level=%.1f desktop=%p",host,level,session.window);
+        }
+    }
+}
 // Use the native home window: its controller and scene remain the desktop owners.
 // This helper is also exercised by the simulator window fixture.
 UIView *NFBDesktopSplitHitTest(UIWindow *window, CGPoint point, UIEvent *event, BOOL *handled) {
@@ -759,6 +821,7 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
     [self adoptDesktopInteraction];
 }
 - (void)restore {
+    NFBRestoreMovieHosts();
     if (self.restoring) return;
     self.restoring=YES;
     [self.timer invalidate]; self.timer=nil;

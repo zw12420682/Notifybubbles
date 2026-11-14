@@ -613,6 +613,12 @@ BOOL NFBUpdateMovieMode(BOOL enabled) {
                 view.window.windowLevel, view.hidden, view.userInteractionEnabled, NSStringFromCGRect(view.frame));
         }
     }
+    NSMutableArray<UIWindow *> *touchHosts = [NSMutableArray array];
+    if (movieIsActive && movieOwnsDesktop && NFBDesktopSplitActive()) {
+        for (UIView *view in windows) if (movieLandscape(view) && view.window &&
+            ![touchHosts containsObject:view.window]) [touchHosts addObject:view.window];
+    }
+    NFBUpdateMovieDesktopTouchHosts(touchHosts);
     for (UIView *view in movieRecords.keyEnumerator.allObjects)
         if (![active containsObject:view]) movieRestore(view);
     for (UIView *parent in movieBackdrops.keyEnumerator.allObjects) if (![parents containsObject:parent]) {

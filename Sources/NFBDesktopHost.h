@@ -8,3 +8,6 @@ void NFBUpdateDesktopSplit(BOOL allowed);
 
 NSString *NFBDesktopSplitError(void);
 NSString *NFBConsumeDesktopSplitFailure(void);
+
+// Scoped to auto movie desktop session; empty list restores borrowed levels.
+void NFBUpdateMovieDesktopTouchHosts(NSArray<UIWindow *> *hosts);

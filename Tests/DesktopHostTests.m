@@ -273,11 +273,25 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
         [movie removeFromSuperview]; movieFixtureEnabled=NO;
         Check([desktop.window hitTest:CGPointMake(1,1) withEvent:nil]==nil,@"empty space still passes through");
         Check(desktop.window.isKeyWindow,@"touch activation gives native desktop focus");
+        UIWindow *separateHost=[[UIWindow alloc] initWithFrame:nativeWindow.bounds];
+        separateHost.windowLevel=30; separateHost.hidden=NO;
+        NFBUpdateMovieDesktopTouchHosts(@[separateHost]);
+        Check(separateHost.windowLevel>nativeWindow.windowLevel,@"movie host above elevated desktop");
+        NFBUpdateMovieDesktopTouchHosts(@[]);
+        Check(separateHost.windowLevel==30,@"movie host original level restored");
+        NFBUpdateMovieDesktopTouchHosts(@[separateHost]);
+        separateHost.windowLevel=1500;
+        NFBUpdateMovieDesktopTouchHosts(@[]);
+        Check(separateHost.windowLevel==1500,@"new external host level is not overwritten");
+        separateHost.windowLevel=30;
+        NFBUpdateMovieDesktopTouchHosts(@[separateHost]);
         // Reattach only after all touch checks to verify session teardown also
         // stops filtering a folder that remains inside the native desktop.
         [desktop addSubview:folderContainer];
         Check(NFBDesktopSuppressFolderTracking(folderContainer.layer,trackingKey),@"tracking filter active immediately before session teardown");
         NFBCloseDesktopSplit(); NFBCloseDesktopSplit();
+        Check(separateHost.windowLevel==30,@"desktop close restores borrowed movie host level");
+        separateHost.hidden=YES;
         Check(!NFBDesktopSuppressFolderTracking(folderContainer.layer,trackingKey),@"ordinary home screen tracking resumes after session closes");
         [folderContainer removeFromSuperview];
         Check(self.appWindow.isKeyWindow,@"desktop close restores previous app key window");
