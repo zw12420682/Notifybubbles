@@ -11,6 +11,6 @@ assert 'session.window.windowLevel + 1' in s
 assert 'host == session.window' in s
 assert 'fabs(host.windowLevel - applied) < 0.01' in s
 assert '- (void)restore {\n    NFBRestoreMovieHosts();' in s
-assert 'movieIsActive && movieOwnsDesktop && NFBDesktopSplitActive()' in w
+assert 'movieIsActive && (movieOwnsDesktop || NFBDesktopIndependentAnchor()) && NFBDesktopSplitActive()' in w
 assert 'NFBUpdateMovieDesktopTouchHosts(touchHosts)' in w
 print('PASS: auto-movie session only; native same-window floating hits; level ownership restoration; no event forwarding')

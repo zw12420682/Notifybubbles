@@ -22,6 +22,7 @@ static NSArray<UIWindow *> *NFBDesktopWindows(void);
 @property(nonatomic, strong) UIView *desktop;
 @property(nonatomic, strong) UIView *originalParent;
 @property(nonatomic, weak) UIView *anchor;
+@property(nonatomic, strong) UIView *independentAnchor;
 @property(nonatomic) NSUInteger originalIndex;
 @property(nonatomic) CGRect originalBounds;
 @property(nonatomic) CGPoint originalCenter;
@@ -921,6 +922,7 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
         if ([view isDescendantOfView:self.panel])
             NFBAttemptCleanup(@"desktop fallback parent", ^{ [self.window addSubview:view]; });
     }
+    [self.independentAnchor removeFromSuperview]; self.independentAnchor=nil;
     NFBAttemptCleanup(@"panel", ^{ [self.panel removeFromSuperview]; });
     NFBAttemptCleanup(@"backdrop", ^{ [self.backgroundFrost removeFromSuperview]; });
     [self.siblingState restore]; self.siblingState=nil;
@@ -1128,5 +1130,37 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
         if (session == next) session = nil;
         [next restore];
         return NO;
+    }
+}
+
+UIView *NFBDesktopIndependentAnchor(void) {
+    return session && !session.restoring ? session.independentAnchor : nil;
+}
+BOOL NFBReplaceSplitWithDesktop(UIView *window) {
+    if (!NSThread.isMainThread || !window.window) return NO;
+    if (NFBDesktopSplitActive()) { NFBCloseDesktopSplit(); return YES; }
+    // Unlike the generic bridge, this verified instance method cannot close a
+    // newly-current landscape window and explicitly preserves the process.
+    SEL close = NSSelectorFromString(@"closeWindowWithoutTerminatingProcessWithoutAnimation");
+    NSMethodSignature *sig = NFBSignature(window, close);
+    if (!sig || sig.numberOfArguments!=2 || strcmp(sig.methodReturnType,@encode(void))) {
+        NFBDesktopFail(@"当前 Open 未提供保留后台的精确关闭接口，未替换桌面");
+        return NO;
+    }
+    if (!NFBShowDesktopInSplit(window)) return NO;
+    NFBDesktopSession *active=session;
+    UIView *proxy=[[UIView alloc] initWithFrame:active.panelFrame];
+    proxy.userInteractionEnabled=NO;
+    [active.window addSubview:proxy];
+    active.independentAnchor=proxy; active.anchor=proxy;
+    @try {
+        NSInvocation *call=[NSInvocation invocationWithMethodSignature:sig];
+        call.selector=close; [call invokeWithTarget:window];
+        NFBInvalidateWindowState();
+        NFBDebugLog(@"desktop: house replaced exact portrait window=%p; process preserved",window);
+        return YES;
+    } @catch (NSException *error) {
+        NFBErrorLog(@"desktop: portrait close failed %@",error);
+        NFBCloseDesktopSplit(); return NO;
     }
 }

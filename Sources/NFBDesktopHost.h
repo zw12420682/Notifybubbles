@@ -13,3 +13,7 @@ NSString *NFBConsumeDesktopSplitFailure(void);
 
 // Scoped to auto movie desktop session; empty list restores borrowed levels.
 void NFBUpdateMovieDesktopTouchHosts(NSArray<UIWindow *> *hosts);
+
+// Explicit house action: close only the supplied portrait window, never its process.
+BOOL NFBReplaceSplitWithDesktop(UIView *window);
+UIView *NFBDesktopIndependentAnchor(void);

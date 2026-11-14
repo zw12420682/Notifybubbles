@@ -43,7 +43,9 @@ CGRect NFBSplitFrameInView(UIView *root) {
             }
             return frame;
         }
-        if (movieIsActive && NFBDesktopSplitActive() && movieDesktopAnchor.window) {
+        UIView *manualAnchor = NFBDesktopIndependentAnchor();
+        if (manualAnchor.window) return [manualAnchor convertRect:manualAnchor.bounds toView:root];
+        if (NFBDesktopSplitActive() && movieDesktopAnchor.window) {
             if (CGSizeEqualToSize(portraitRailScreen, root.bounds.size) &&
                 !CGRectIsEmpty(portraitRailReference)) return portraitRailReference;
             // No real portrait measured in this session: use the normal Open
@@ -164,7 +166,7 @@ static UIView *attachmentWindow(void) {
     } @catch (NSException *exception) { NFBDebugLog(@"attachment lookup: %@", exception); return nil; }
 }
 UIView *NFBDesktopActionWindow(void) {
-    return attachmentWindow() ?: ((movieIsActive && NFBDesktopSplitActive()) ? movieDesktopAnchor : nil);
+    return attachmentWindow() ?: NFBDesktopIndependentAnchor() ?: ((movieIsActive && NFBDesktopSplitActive()) ? movieDesktopAnchor : nil);
 }
 CGRect NFBWindowFrameInView(UIView *window, UIView *root) {
     if (!NSThread.isMainThread || !root.window || !window) return CGRectNull;
@@ -172,7 +174,7 @@ CGRect NFBWindowFrameInView(UIView *window, UIView *root) {
     @catch (__unused NSException *exception) { return CGRectNull; }
 }
 NSString *NFBSplitAttachmentApp(void) {
-    @try { return appOfWindow(attachmentWindow()) ?: ((movieIsActive && NFBDesktopSplitActive()) ? NFBSystemDesktopBundleID : nil); }
+    @try { return appOfWindow(attachmentWindow()) ?: ((NFBDesktopIndependentAnchor() || (movieIsActive && NFBDesktopSplitActive())) ? NFBSystemDesktopBundleID : nil); }
     @catch (__unused NSException *exception) { return nil; }
 }
 void NFBObserveSplitSwitch(NSString *app, BOOL enabled) {
@@ -544,6 +546,8 @@ BOOL NFBUpdateMovieMode(BOOL enabled) {
             // The lower app remains fixed. Top alignment may use the status-bar
             // band; shrink uniformly only if the existing video cannot fit.
             CGRect lower = moviePortrait ? [moviePortrait convertRect:moviePortrait.bounds toView:parent] : CGRectZero;
+            UIView *manualDesktop = NFBDesktopIndependentAnchor();
+            if (CGRectIsEmpty(lower) && manualDesktop.window) lower = [manualDesktop convertRect:manualDesktop.bounds toView:parent];
             if (CGRectIsEmpty(lower)) {
                 // Desktop occupies exactly the normal portrait footprint. Only
                 // the video fits the remaining space; never shrink this pane
@@ -641,22 +645,23 @@ BOOL NFBUpdateMovieMode(BOOL enabled) {
         }
     }
     NSMutableArray<UIWindow *> *touchHosts = [NSMutableArray array];
-    if (movieIsActive && movieOwnsDesktop && NFBDesktopSplitActive()) {
+    if (movieIsActive && (movieOwnsDesktop || NFBDesktopIndependentAnchor()) && NFBDesktopSplitActive()) {
         for (UIView *view in windows) if (movieLandscape(view) && view.window &&
             ![touchHosts containsObject:view.window]) [touchHosts addObject:view.window];
     }
     // The host is now above the desktop for native touch delivery. Its black
     // backdrop must NOT rise over the hosted desktop pixels. Cut only that pane
     // out of the backdrop; keep the rest pure black and all layers noninteractive.
+    UIView *desktopCutout = NFBDesktopIndependentAnchor() ?: movieDesktopAnchor;
     for (UIView *parent in movieBackdrops.keyEnumerator.allObjects) {
         UIView *black = [movieBackdrops objectForKey:parent];
-        if ([touchHosts containsObject:parent.window] && movieDesktopAnchor.window) {
-            CGRect hole = [movieDesktopAnchor convertRect:movieDesktopAnchor.bounds toView:black];
+        if ([touchHosts containsObject:parent.window] && desktopCutout.window) {
+            CGRect hole = [desktopCutout convertRect:desktopCutout.bounds toView:black];
             UIBezierPath *path = [UIBezierPath bezierPathWithRect:black.bounds];
             // Close the rectangular corner leaks around the rounded desktop.
             // Convert the committed pane radius to this backdrop's coordinates.
             CGFloat radius = NFBDesktopSplitCornerRadius();
-            CGFloat scale = hole.size.width / MAX(1, movieDesktopAnchor.bounds.size.width);
+            CGFloat scale = hole.size.width / MAX(1, desktopCutout.bounds.size.width);
             if (!isfinite(radius) || radius < 0) radius = 0;
             radius = MIN(radius * scale, MIN(hole.size.width, hole.size.height) / 2);
             [path appendPath:[UIBezierPath bezierPathWithRoundedRect:hole cornerRadius:radius]];

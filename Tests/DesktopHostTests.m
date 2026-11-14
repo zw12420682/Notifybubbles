@@ -132,6 +132,14 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
     return handled ? hit : [super hitTest:point withEvent:event];
 }
 @end
+@interface DesktopReplaceWindowFixture : UIView
+@property(nonatomic) NSUInteger closeCalls;
+@end
+@implementation DesktopReplaceWindowFixture
+- (void)closeWindowWithoutTerminatingProcessWithoutAnimation {
+    self.closeCalls++; [self removeFromSuperview];
+}
+@end
 @interface TestDelegate : UIResponder <UIApplicationDelegate>
 @property(nonatomic,strong) UIWindow *window;
 @property(nonatomic,strong) UIWindow *appWindow;
@@ -309,6 +317,17 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
         Check(CGAffineTransformIsIdentity(desktop.transform) && !desktop.userInteractionEnabled &&
             !desktop.translatesAutoresizingMaskIntoConstraints,@"original flags");
         for (NSLayoutConstraint *constraint in constraints) Check(constraint.active,@"constraints restored");
+        DesktopReplaceWindowFixture *replace=[[DesktopReplaceWindowFixture alloc] initWithFrame:anchor.frame];
+        [anchor.superview addSubview:replace];
+        CheckOpen(NFBReplaceSplitWithDesktop(replace),@"replace app window with desktop",desktop,root.view);
+        Check(replace.closeCalls==1 && !replace.superview,@"only exact supplied window closes");
+        UIView *independent=NFBDesktopIndependentAnchor();
+        Check(independent.window!=nil,@"desktop keeps independent geometry anchor after original closes");
+        NFBUpdateDesktopSplit(YES);
+        Check(NFBDesktopSplitActive(),@"desktop survives removal of source app window");
+        NFBCloseDesktopSplit();
+        Check(!independent.superview,@"independent anchor removed on desktop close");
+        Check(replace.closeCalls==1,@"desktop close never closes app twice");
         CheckOpen(NFBShowDesktopInSplit(anchor),@"reopen",desktop,root.view);
         [SBLockScreenManager sharedInstance].locked=YES; NFBUpdateDesktopSplit(YES);
         Check(!NFBDesktopSplitActive() && desktop.superview==root.view,@"lock restores desktop");

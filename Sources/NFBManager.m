@@ -942,7 +942,7 @@ static NSString *NFBFrontmostAppID(void) {
             self.desktopActionTouchTarget = nil;
             if (!target || target != self.desktopActionTarget || target != NFBDesktopActionWindow()) { [self refresh]; return; }
             if (![self acceptGestureForKey:@"desktopAction"]) return;
-            if (!NFBShowDesktopInSplit(target)) [self showOpenNotice:NFBDesktopSplitError()];
+            if (!NFBReplaceSplitWithDesktop(target)) [self showOpenNotice:NFBDesktopSplitError()];
             [self refresh];
             return;
         }

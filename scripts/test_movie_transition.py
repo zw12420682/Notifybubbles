@@ -1,7 +1,7 @@
 from pathlib import Path
 s=(Path(__file__).resolve().parents[1]/'Sources/NFBWindowControls.m').read_text()
 assert 'kCAFillRuleEvenOdd' in s
-assert 'movieDesktopAnchor.bounds toView:black' in s
+assert 'desktopCutout.bounds toView:black' in s
 assert '[touchHosts containsObject:parent.window]' in s
 assert 'else black.layer.mask = nil' in s
 assert s.index('black.layer.mask = mask') < s.index('NFBUpdateMovieDesktopTouchHosts(touchHosts)')
