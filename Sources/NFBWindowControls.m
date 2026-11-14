@@ -1,5 +1,6 @@
 #import "NFBWindowControls.h"
 #import "NFBDesktopHost.h"
+#import "NFBKeyboard.h"
 #import "NFBSystemDesktop.h"
 #import "NFBTrollOpen.h"
 #import "NFBWindowState.h"
@@ -282,6 +283,12 @@ void NFBObserveSplitPlacement(NSString *app) {
             NSInteger scene = orientationOf(window, @"sceneOrientation");
             NSInteger container = orientationOf(window, @"containerOrientation");
             if (scene == 3 || scene == 4 || container == 3 || container == 4) return;
+            // Open owns portrait geometry while typing. A queued launch retry
+            // must not restore 0.86/bottom placement after keyboard adaptation.
+            if (NFBKeyboardVisible()) {
+                NFBDebugLog(@"placement: deferred %@ while keyboard visible", app);
+                return;
+            }
             if (!window || generation != placementGeneration || currentWindow() != window ||
                 ![NFBTrollVisibleApp() isEqual:app] ||
                 (!window.superview && ![window isKindOfClass:UIWindow.class])) return;

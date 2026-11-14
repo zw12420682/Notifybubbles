@@ -384,6 +384,9 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic) CGFloat splitRailDiameter;
 @property(nonatomic) CGFloat splitRailTop;
 @property(nonatomic) CGFloat splitRailScreenWidth;
+@property(nonatomic) CGRect validRailSplitFrame;
+@property(nonatomic) CGSize validRailRootSize;
+@property(nonatomic) BOOL validRailSplitFrameKnown;
 @property(nonatomic) BOOL splitRailMeasured;
 // Last split geometry restored from disk (nil/false when none was usable). The
 // restore happens once, on creation; later writes are debounced by the store.
@@ -2165,6 +2168,26 @@ static NSString *NFBFrontmostAppID(void) {
         hideFavorites ? 0 : self.favoriteApps.count, (unsigned long)columnRows, (unsigned long)notifiedCount,
         (double)self.splitRailTop, (double)self.splitRailDiameter, (double)self.splitRailScreenWidth,
         self.splitRailMeasured, edgeRailHugging(halfHiddenColumn, self.edgeExpanded));
+    // A keyboard/scene transaction may briefly report a full-width portrait
+    // frame, leaving only 1pt for icons. Cache the last VALID input, not a plan
+    // with stale app membership; re-run the original planner with current rows.
+    if (splitNow && !NFBSplitMetricsValid(plan.diameter, 0, bounds.size.width, bounds.size.width)) {
+        CGRect railReference = CGRectMake(0, bounds.size.height * 0.14,
+            bounds.size.width * 0.86, bounds.size.height * 0.86);
+        if (self.validRailSplitFrameKnown && CGSizeEqualToSize(self.validRailRootSize, bounds.size))
+            railReference = self.validRailSplitFrame;
+        NFBDebugLog(@"rail-transient: rejected diameter=%.2f split=%@ retained=%@",
+            plan.diameter, NSStringFromCGRect(splitA), NSStringFromCGRect(railReference));
+        plan = NFBPlanRail(bounds.size.width, bounds.size.height, planSafe, top, self.iconSize,
+            NFBFloatingPosition, YES, railReference, YES, self.verticalPosition, collapse,
+            hideFavorites ? 0 : self.favoriteApps.count, (unsigned long)columnRows, (unsigned long)notifiedCount,
+            (double)self.splitRailTop, (double)self.splitRailDiameter, (double)self.splitRailScreenWidth,
+            self.splitRailMeasured, edgeRailHugging(halfHiddenColumn, self.edgeExpanded));
+    } else if (splitNow && NFBSplitMetricsValid(plan.diameter, 0, bounds.size.width, bounds.size.width)) {
+        self.validRailSplitFrame = splitA;
+        self.validRailRootSize = bounds.size;
+        self.validRailSplitFrameKnown = YES;
+    }
     // Keep the old fullscreen placement available if a device asks for it; the
     // default replays the measured split column (see NFBRailLayout.h).
     if (!splitNow && !NFBPreference(@"ColumnReuseSplitMeasure", YES))
@@ -2176,7 +2199,8 @@ static NSString *NFBFrontmostAppID(void) {
     // Both movie and ordinary modes use the original 0.48.127 rail plan.
     // Movie window placement must never override action slots or either viewport.
     BOOL railMeasuredNow = NO;
-    BOOL validRailMeasurement = !movieActive && splitUsable && isfinite(plan.toggleTop) && plan.toggleTop > 0 &&
+    BOOL validRailMeasurement = !movieActive && splitUsable &&
+        CGRectEqualToRect(splitA, self.validRailSplitFrame) && self.validRailSplitFrameKnown && isfinite(plan.toggleTop) && plan.toggleTop > 0 &&
         NFBSplitMetricsValid(plan.diameter, 0, bounds.size.width, bounds.size.width);
     if (splitNow && !movieActive && !validRailMeasurement) {
         NFBDebugLog(@"rail-metric: rejected diameter=%.2f top=%.2f screen=%@ splitFrame=%@ cachedDiameter=%.2f cachedTop=%.2f measured=%d",

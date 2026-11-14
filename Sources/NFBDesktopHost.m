@@ -144,6 +144,17 @@ BOOL NFBLaunchAppFromDesktopIcon(id iconView) {
 static BOOL NFBDesktopAnimationsEnabled(void) {
     return UIView.areAnimationsEnabled && !UIAccessibilityIsReduceMotionEnabled();
 }
+// Read-only diagnostics: inspect actual child/layer state, not just the outer
+// widget's hidden flag. Shared budget bounds work even on a large remote tree.
+static void NFBLogWidgetContent(UIView *view, NSUInteger depth, NSUInteger *budget) {
+    if (!*budget || depth>4) return;
+    --*budget;
+    NFBDebugLog(@"desktop-widget-content: depth=%lu class=%@ hidden=%d alpha=%.2f attached=%d bounds=%@ layer=%@ layerHidden=%d opacity=%.2f sublayers=%lu hasContents=%d",
+        (unsigned long)depth, NSStringFromClass(view.class), view.hidden, view.alpha, view.window!=nil,
+        NSStringFromCGRect(view.bounds), NSStringFromClass(view.layer.class), view.layer.hidden,
+        view.layer.opacity, (unsigned long)view.layer.sublayers.count, view.layer.contents!=nil);
+    for (UIView *child in view.subviews) NFBLogWidgetContent(child,depth+1,budget);
+}
 static void NFBLogWidgetHosts(UIView *view, NSUInteger depth, NSUInteger *budget) {
     if (!*budget || depth>14) return;
     NSString *name = NSStringFromClass(view.class);
@@ -152,6 +163,8 @@ static void NFBLogWidgetHosts(UIView *view, NSUInteger depth, NSUInteger *budget
         --*budget;
         NFBDebugLog(@"desktop-widget: host=%@ view=%p hidden=%d alpha=%.2f window=%p frame=%@ children=%lu",
             name, view, view.hidden, view.alpha, view.window, NSStringFromCGRect(view.frame), (unsigned long)view.subviews.count);
+        if ([name containsString:@"WidgetHost"] || [name containsString:@"RemoteView"])
+            NFBLogWidgetContent(view,0,budget);
     }
     for (UIView *child in view.subviews) NFBLogWidgetHosts(child,depth+1,budget);
 }
@@ -858,6 +871,12 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
     NFBRestoreMovieHosts();
     if (self.restoring) return;
     self.restoring=YES;
+    if (NFBDebugLoggingEnabled()) {
+        NFBDebugLog(@"desktop-widget: restore begin startedHome=%d suppliedAppearance=%d parent=%@ original=%@",
+            self.startedHome, self.suppliedAppearance, NSStringFromClass(self.desktop.superview.class),
+            NSStringFromClass(self.originalParent.class));
+        NSUInteger budget=32; NFBLogWidgetHosts(self.desktop,0,&budget);
+    }
     [self.timer invalidate]; self.timer=nil;
     [self finishWidgetRefresh];
     [self restoreDesktopInteraction];
@@ -883,6 +902,19 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
             [self.originalParent insertSubview:view atIndex:MIN(self.originalIndex,self.originalParent.subviews.count)];
             view.transform=self.originalTransform;
         });
+        if (NFBDebugLoggingEnabled()) {
+            NFBDebugLog(@"desktop-widget: restored parent=%@ hidden=%d alpha=%.2f windowHidden=%d",
+                NSStringFromClass(view.superview.class), view.hidden, view.alpha, view.window.hidden);
+            NSUInteger budget=32; NFBLogWidgetHosts(view,0,&budget);
+            __weak UIView *restoredDesktop=view;
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.5*NSEC_PER_SEC)),dispatch_get_main_queue(), ^{
+                UIView *desktop=restoredDesktop;
+                if (!desktop || (session && session.desktop==desktop)) return;
+                NFBDebugLog(@"desktop-widget: post-restore home parent=%@ windowHidden=%d",
+                    NSStringFromClass(desktop.superview.class), desktop.window.hidden);
+                NSUInteger laterBudget=32; NFBLogWidgetHosts(desktop,0,&laterBudget);
+            });
+        }
         NFBAttemptCleanup(@"desktop constraints", ^{ [NSLayoutConstraint activateConstraints:self.constraints]; });
         NFBAttemptCleanup(@"desktop layout", ^{ [self.originalParent setNeedsLayout]; [self.originalParent layoutIfNeeded]; });
         // A failing private parent must not leave the desktop owned by a retiring panel.
