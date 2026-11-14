@@ -556,6 +556,15 @@ BOOL NFBUpdateMovieMode(BOOL enabled) {
                 if (movieDesktopAnchor.superview != parent) [parent addSubview:movieDesktopAnchor];
                 movieDesktopAnchor.frame = lower;
             }
+            // Reject transient closing/rotation geometry instead of shrinking
+            // the movie to a 1pt speck or caching an off-screen desktop anchor.
+            if (!isfinite(lower.origin.y) || !isfinite(lower.size.width) ||
+                !isfinite(lower.size.height) || lower.size.width < 120 || lower.size.height < 180 ||
+                CGRectGetMinY(lower) - CGRectGetMinY(area) < 32 ||
+                CGRectGetMaxY(lower) > CGRectGetMaxY(area) + 2) {
+                NFBDebugLog(@"movie: defer invalid lower=%@ area=%@", NSStringFromCGRect(lower), NSStringFromCGRect(area));
+                continue;
+            }
             movieLowerScreen = [parent convertRect:lower toView:parent.window];
             // Open may rewrite bounds while preserving our transform. Never
             // multiply another fit onto that scale: derive an absolute fit from
@@ -572,19 +581,29 @@ BOOL NFBUpdateMovieMode(BOOL enabled) {
             const CGFloat movieGap = 4.0;
             CGFloat room = MAX(1, CGRectGetMinY(lower)-CGRectGetMinY(area)-movieGap);
             CGFloat ratio = MIN(room/MAX(1,h), area.size.width/MAX(1,w));
-            if (isfinite(ratio) && ratio > 0) {
-                view.transform = CGAffineTransformScale(basis, ratio, ratio);
+            if (!isfinite(ratio) || ratio <= 0 || w < 1 || h < 1) continue;
+            CGAffineTransform destination = CGAffineTransformScale(basis, ratio, ratio);
+            CGPoint target = CGPointMake(CGRectGetMidX(area),
+                CGRectGetMinY(lower) - movieGap - h*ratio/2);
+            CGAffineTransform current = view.transform;
+            BOOL changed = fabs(current.a-destination.a)>0.0001 || fabs(current.b-destination.b)>0.0001 ||
+                fabs(current.c-destination.c)>0.0001 || fabs(current.d-destination.d)>0.0001 ||
+                fabs(current.tx-destination.tx)>0.01 || fabs(current.ty-destination.ty)>0.01 ||
+                fabs(view.center.x-target.x)>0.5 || fabs(view.center.y-target.y)>0.5;
+            if (changed) {
+                // Model values become the destination immediately. An identical
+                // settling recheck does not restart the animation; a changed
+                // destination continues from the current presentation state.
+                void (^apply)(void) = ^{ view.transform = destination; view.center = target; };
+                if (record.moved && !UIAccessibilityIsReduceMotionEnabled()) {
+                    [UIView animateWithDuration:0.28 delay:0
+                        options:UIViewAnimationOptionBeginFromCurrentState |
+                            UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseInOut
+                        animations:apply completion:nil];
+                } else [UIView performWithoutAnimation:apply];
+                NFBDebugLog(@"movie: target app=%@ center=%@ size=%.1fx%.1f animated=%d",
+                    appOfWindow(view), NSStringFromCGPoint(target), w*ratio, h*ratio, record.moved);
                 record.moved = YES;
-            }
-            CGRect frame = view.frame;
-            if (!CGRectIsEmpty(frame) && isfinite(frame.origin.x) && isfinite(frame.origin.y)) {
-                CGPoint target = view.center;
-                target.x += CGRectGetMidX(area) - CGRectGetMidX(frame);
-                target.y += CGRectGetMinY(lower) - movieGap - CGRectGetMaxY(frame);
-                if (fabs(target.x-view.center.x) > 0.5 || fabs(target.y-view.center.y) > 0.5) {
-                    view.center = target; record.moved = YES;
-                    NFBDebugLog(@"movie: top placement %@ frame=%@", appOfWindow(view), NSStringFromCGRect(view.frame));
-                }
             }
         }
         if (record.moved) {
@@ -617,6 +636,22 @@ BOOL NFBUpdateMovieMode(BOOL enabled) {
     if (movieIsActive && movieOwnsDesktop && NFBDesktopSplitActive()) {
         for (UIView *view in windows) if (movieLandscape(view) && view.window &&
             ![touchHosts containsObject:view.window]) [touchHosts addObject:view.window];
+    }
+    // The host is now above the desktop for native touch delivery. Its black
+    // backdrop must NOT rise over the hosted desktop pixels. Cut only that pane
+    // out of the backdrop; keep the rest pure black and all layers noninteractive.
+    for (UIView *parent in movieBackdrops.keyEnumerator.allObjects) {
+        UIView *black = [movieBackdrops objectForKey:parent];
+        if ([touchHosts containsObject:parent.window] && movieDesktopAnchor.window) {
+            CGRect hole = [movieDesktopAnchor convertRect:movieDesktopAnchor.bounds toView:black];
+            UIBezierPath *path = [UIBezierPath bezierPathWithRect:black.bounds];
+            [path appendPath:[UIBezierPath bezierPathWithRect:hole]];
+            CAShapeLayer *mask = [CAShapeLayer layer];
+            mask.frame = black.bounds; mask.fillRule = kCAFillRuleEvenOdd;
+            mask.path = path.CGPath; mask.fillColor = UIColor.blackColor.CGColor;
+            [CATransaction begin]; [CATransaction setDisableActions:YES];
+            black.layer.mask = mask; [CATransaction commit];
+        } else black.layer.mask = nil;
     }
     NFBUpdateMovieDesktopTouchHosts(touchHosts);
     for (UIView *view in movieRecords.keyEnumerator.allObjects)

@@ -3,7 +3,7 @@ r=Path(__file__).resolve().parents[1]
 s=(r/'Sources/NFBWindowControls.m').read_text();m=(r/'Sources/NFBManager.m').read_text()
 assert 'const CGFloat movieGap = 4.0;' in s
 assert 'CGRectGetMinY(lower)-CGRectGetMinY(area)-movieGap' in s
-assert 'CGRectGetMinY(lower) - movieGap - CGRectGetMaxY(frame)' in s
+assert 'CGRectGetMinY(lower) - movieGap - h*ratio/2' in s
 assert 'CGAffineTransformScale(basis, ratio, ratio)' in s
 assert '!movieDesktopAttempted' in s
 assert 'if (!NFBDesktopSplitActive()) movieOwnsDesktop = NFBShowDesktopInSplit' in s
