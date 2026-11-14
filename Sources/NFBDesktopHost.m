@@ -172,6 +172,29 @@ static UIView *NFBDesktopRepairWrapperHit(UIView *hit, UIWindow *window, CGPoint
     }
     return hit;
 }
+// A movie can be a sibling in the SAME native window as the hosted desktop.
+// Returning nil for every point outside the pane skips that sibling entirely.
+// Only offer actual Open floating windows; never expose the original home UI.
+static UIView *NFBDesktopFloatingHit(UIView *view, UIView *panel, Class floatingClass,
+                                    UIWindow *window, CGPoint point, UIEvent *event) {
+    if (view == panel || view.hidden || view.alpha < 0.01 || !view.userInteractionEnabled) return nil;
+    if ([view isKindOfClass:floatingClass]) {
+        CGPoint local = [view convertPoint:point fromView:window];
+        if (![view pointInside:local withEvent:event]) return nil;
+        return [view hitTest:local withEvent:event];
+    }
+    NSArray *children = [[view.subviews reverseObjectEnumerator].allObjects
+        sortedArrayWithOptions:NSSortStable usingComparator:^NSComparisonResult(UIView *a, UIView *b) {
+            if (a.layer.zPosition > b.layer.zPosition) return NSOrderedAscending;
+            if (a.layer.zPosition < b.layer.zPosition) return NSOrderedDescending;
+            return NSOrderedSame;
+        }];
+    for (UIView *child in children) {
+        UIView *hit = NFBDesktopFloatingHit(child, panel, floatingClass, window, point, event);
+        if (hit) return hit;
+    }
+    return nil;
+}
 // Use the native home window: its controller and scene remain the desktop owners.
 // This helper is also exercised by the simulator window fixture.
 UIView *NFBDesktopSplitHitTest(UIWindow *window, CGPoint point, UIEvent *event, BOOL *handled) {
@@ -179,7 +202,11 @@ UIView *NFBDesktopSplitHitTest(UIWindow *window, CGPoint point, UIEvent *event, 
     *handled = active && !active.restoring && active.window == window;
     if (!*handled) return nil;
     CGPoint local = [active.panel convertPoint:point fromView:window];
-    if (![active.panel pointInside:local withEvent:event]) return nil;
+    if (![active.panel pointInside:local withEvent:event]) {
+        Class floatingClass = NFBTrollFloatingWindowClass();
+        if (floatingClass) return NFBDesktopFloatingHit(window, active.panel, floatingClass, window, point, event);
+        return nil; // Other windows keep UIKit's normal pass-through behavior.
+    }
     if (active.refreshScroll) return active.panel;
     // Activating swaps the key window and BFS-scans the desktop subtree. Doing it
     // inside hit-test changes the responder chain mid-dispatch and stalls the

@@ -59,9 +59,11 @@ extern BOOL NFBLaunchAppFromDesktopIcon(id);
 static BOOL openAccepted=YES;
 static NSString *submittedBundle;
 BOOL NFBOpenTrollApp(NSString *bundle) { submittedBundle=bundle; return openAccepted; }
-// The simulator has no TrollOpen; NFBDesktopHost asks for the floating-window
-// class, so answer nil here instead of linking the real adapter.
-Class NFBTrollFloatingWindowClass(void) { return Nil; }
+// A small fixture models a floating app sharing the desktop's native window.
+@interface DesktopMovieFloatingFixture : UIView @end
+@implementation DesktopMovieFloatingFixture @end
+static BOOL movieFixtureEnabled;
+Class NFBTrollFloatingWindowClass(void) { return movieFixtureEnabled ? DesktopMovieFloatingFixture.class : Nil; }
 BOOL NFBSplitTrollFrontmostApp(void) { submittedBundle=@"frontmost"; return openAccepted; }
 // Reproduce the device log: the private wrapper stops hit testing at itself.
 @interface _SBRootFolderLayoutWrapperView : UIView @end
@@ -260,6 +262,16 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
         [emptyWrapper removeFromSuperview];
         [wrapper addSubview:disabledContainer];
         Check([desktop.window hitTest:CGPointMake(1,1) withEvent:nil]==nil,@"outside panel passes through");
+        movieFixtureEnabled=YES;
+        UIView *movie=[[DesktopMovieFloatingFixture alloc] initWithFrame:CGRectMake(0,0,80,20)];
+        UIView *movieControl=[[UIView alloc] initWithFrame:movie.bounds];
+        [movie addSubview:movieControl]; [desktop.window addSubview:movie];
+        Check([desktop.window hitTest:CGPointMake(1,1) withEvent:nil]==movieControl,
+            @"movie controls remain touchable outside desktop pane in same native window");
+        movie.hidden=YES;
+        Check([desktop.window hitTest:CGPointMake(1,1) withEvent:nil]==nil,@"hidden movie is not touchable");
+        [movie removeFromSuperview]; movieFixtureEnabled=NO;
+        Check([desktop.window hitTest:CGPointMake(1,1) withEvent:nil]==nil,@"empty space still passes through");
         Check(desktop.window.isKeyWindow,@"touch activation gives native desktop focus");
         // Reattach only after all touch checks to verify session teardown also
         // stops filtering a folder that remains inside the native desktop.
