@@ -2075,19 +2075,34 @@ static NSString *NFBFrontmostAppID(void) {
         self.lastRefreshIncomplete = YES;
         return;
     }
-    // A keyboard owns the space this column would occupy. Letting it stay on
-    // screen left the material strip painted in the top-right corner while the
-    // icons themselves collapsed, which reads as a stray shadow, so the column
-    // slides out while typing and slides back when the keyboard goes away.
-    // A split opened while the keyboard is up kept the whole column parked off
-    // the edge, so its split icons never appeared. The split owns the column:
-    // typing only pushes it aside when there is no floating window.
+    // Keyboard avoidance must use the REAL current portrait frame, before
+    // transient icon-size fallback substitutes the normal cached rail footprint.
+    // Both the root's rows and the window-level house button must disappear.
     NSString *splitHoldsColumn = NFBTrollVisibleApp() ?: floatingApp;
-    if (keyboardUp && !splitHoldsColumn.length) {
-        [self setColumnOffscreen:YES];
-        self.layoutRecording = NO;
-        self.lastRefreshIncomplete = YES;
-        return;
+    if (keyboardUp) {
+        UIView *keyboardRoot = self.window.rootViewController.view;
+        CGRect keyboardSplit = NFBSplitFrameInView(keyboardRoot);
+        CGFloat available = keyboardRoot ? CGRectGetMaxX(keyboardRoot.bounds)-CGRectGetMaxX(keyboardSplit)-8 : 0;
+        BOOL keyboardRailFits = splitHoldsColumn.length && !CGRectIsNull(keyboardSplit) &&
+            !CGRectIsEmpty(keyboardSplit) && isfinite(available) && available >= 30;
+        // 30pt = smallest valid 16pt icon plus the existing 14pt row padding.
+        // Hide synchronously: an outgoing animation would still cover keys.
+        if (!keyboardRailFits) {
+            // Invalidate any earlier reveal completion before hiding the window.
+            if (!self.columnTargetOffscreen || self.columnSliding) {
+                ++self.columnSlideToken;
+                self.columnTargetOffscreen = YES;
+                self.columnSliding = NO;
+                self.columnParked = YES;
+                [self.window.rootViewController.view.layer removeAllAnimations];
+                self.window.rootViewController.view.transform = CGAffineTransformIdentity;
+            }
+            self.window.hidden = YES;
+            self.window.rootViewController.view.userInteractionEnabled = NO;
+            self.layoutRecording = NO;
+            self.lastRefreshIncomplete = YES;
+            return;
+        }
     }
     [self ensureWindow];
     // A clear is one continuous motion: the reads it triggers (switcher diff,
