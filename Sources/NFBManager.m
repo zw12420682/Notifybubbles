@@ -1374,7 +1374,7 @@ static NSString *NFBFrontmostAppID(void) {
     // Note `dirty` already holds the owed fold from above.
     NSString *watched = self.watchedFloating;
     NSString *floatingNow = self.tickActiveFloating;
-    if (!(watched && floatingNow && [watched isEqualToString:floatingNow])) dirty = YES;
+    if (![(watched ?: @"") isEqualToString:(floatingNow ?: @"")]) dirty = YES;
     // Do not interpret a temporarily inaccessible switcher on the lock screen as empty.
     if (!locked) {
         NSArray *current = NFBReadSwitcherApps();

@@ -411,6 +411,12 @@ BOOL NFBCloseCurrentSplit(void) {
 @property(nonatomic) CGPoint center;
 @property(nonatomic) BOOL moved;
 @property(nonatomic) CGAffineTransform transform;
+@property(nonatomic) CGAffineTransform appliedTransform;
+@property(nonatomic) CGPoint appliedCenter;
+@property(nonatomic) NSInteger sceneOrientation;
+@property(nonatomic) NSInteger containerOrientation;
+@property(nonatomic, weak) UIView *parent;
+
 @end
 @implementation NFBMovieRecord
 @end
@@ -446,7 +452,14 @@ static void movieRestore(UIView *view) {
     if (!record) return;
     // Portrait-only records were never moved: do not overwrite Open's latest
     // portrait geometry with a stale value on movie exit.
-    if (record.moved) {
+    // Restore only a geometry we still own. A rotation/reparent or Open's
+    // own layout supersedes our saved state; never overwrite that newer state.
+    BOOL sameOwner = view.superview == record.parent &&
+        orientationOf(view, @"sceneOrientation") == record.sceneOrientation &&
+        orientationOf(view, @"containerOrientation") == record.containerOrientation &&
+        CGAffineTransformEqualToTransform(view.transform, record.appliedTransform) &&
+        CGPointEqualToPoint(view.center, record.appliedCenter);
+    if (record.moved && sameOwner) {
         view.transform = record.transform;
         if (view.superview) view.center = record.center;
     }
@@ -500,16 +513,23 @@ BOOL NFBUpdateMovieMode(BOOL enabled) {
         if (area.size.width >= area.size.height) continue;
         [active addObject:view]; [parents addObject:parent];
         NFBMovieRecord *record = [movieRecords objectForKey:view];
+        if (record && (record.parent != parent ||
+            record.sceneOrientation != orientationOf(view, @"sceneOrientation") ||
+            record.containerOrientation != orientationOf(view, @"containerOrientation"))) {
+            // The new orientation/host is already Open-owned. Do not replay old
+            // landscape geometry into it. Capture a fresh baseline below.
+            [movieRecords removeObjectForKey:view]; record = nil;
+        }
         if (!record) {
             record = [NFBMovieRecord new]; record.view = view;
+            record.parent = parent;
+            record.sceneOrientation = orientationOf(view, @"sceneOrientation");
+            record.containerOrientation = orientationOf(view, @"containerOrientation");
             record.center = view.center;
             record.transform = view.transform;
             [movieRecords setObject:record forKey:view];
         }
         // Leave all window and content corner styles owned by Open.
-        if (!movieLandscape(view) && record.moved) {
-            view.transform = record.transform; view.center = record.center; record.moved = NO;
-        }
         NSInteger orientation = orientationOf(view, @"sceneOrientation");
         NSInteger container = orientationOf(view, @"containerOrientation");
         if (orientation == 3 || orientation == 4 || container == 3 || container == 4) {
@@ -531,8 +551,9 @@ BOOL NFBUpdateMovieMode(BOOL enabled) {
                 if (!movieDesktopAnchor) {
                     movieDesktopAnchor = [UIView new];
                     movieDesktopAnchor.userInteractionEnabled = NO;
-                    [parent addSubview:movieDesktopAnchor];
                 }
+                // Reparent before assigning parent-local coordinates.
+                if (movieDesktopAnchor.superview != parent) [parent addSubview:movieDesktopAnchor];
                 movieDesktopAnchor.frame = lower;
             }
             movieLowerScreen = [parent convertRect:lower toView:parent.window];
@@ -565,6 +586,10 @@ BOOL NFBUpdateMovieMode(BOOL enabled) {
                     NFBDebugLog(@"movie: top placement %@ frame=%@", appOfWindow(view), NSStringFromCGRect(view.frame));
                 }
             }
+        }
+        if (record.moved) {
+            record.appliedTransform = view.transform;
+            record.appliedCenter = view.center;
         }
         UIView *black = [movieBackdrops objectForKey:parent];
         if (!black) {
