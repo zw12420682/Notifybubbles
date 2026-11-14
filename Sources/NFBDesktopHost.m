@@ -1,4 +1,5 @@
 #import "NFBDesktopHost.h"
+#import "NFBWindowControls.h"
 #import "NFBDesktopGeometry.h"
 #import "NFBInterfaces.h"
 #import "NFBWindowState.h"
@@ -132,6 +133,17 @@ BOOL NFBLaunchAppFromDesktopIcon(id iconView) {
 }
 static BOOL NFBDesktopAnimationsEnabled(void) {
     return UIView.areAnimationsEnabled && !UIAccessibilityIsReduceMotionEnabled();
+}
+static void NFBLogWidgetHosts(UIView *view, NSUInteger depth, NSUInteger *budget) {
+    if (!*budget || depth>14) return;
+    NSString *name = NSStringFromClass(view.class);
+    if ([name containsString:@"Widget"] || [name containsString:@"CHS"] ||
+        [name containsString:@"RemoteView"] || [name containsString:@"Hosting"]) {
+        --*budget;
+        NFBDebugLog(@"desktop-widget: host=%@ view=%p hidden=%d alpha=%.2f window=%p frame=%@ children=%lu",
+            name, view, view.hidden, view.alpha, view.window, NSStringFromCGRect(view.frame), (unsigned long)view.subviews.count);
+    }
+    for (UIView *child in view.subviews) NFBLogWidgetHosts(child,depth+1,budget);
 }
 static void NFBLogDesktopTouchTree(UIView *view, NSUInteger depth, NSUInteger *remaining) {
     if (!NFBDebugLoggingEnabled() || depth > 6 || !*remaining) return;
@@ -596,7 +608,11 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
 }
 - (void)refreshWidgetPage {
     @try {
-    if (session!=self || self.restoring || self.startedHome || self.pendingApp.length) return;
+    if (session!=self || self.restoring || self.startedHome || self.pendingApp.length) {
+        NFBDebugLog(@"desktop-widget: refresh skipped session=%d restoring=%d startedHome=%d pending=%d",
+            session==self, self.restoring, self.startedHome, self.pendingApp.length>0);
+        return;
+    }
     UIScrollView *pager=NFBDesktopPager(self.desktop);
     if (!pager || pager.dragging || pager.decelerating) {
         NFBDebugLog(@"desktop widget page refresh: no idle horizontal pager"); return;
@@ -948,7 +964,10 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
         // No new UIWindow or scene; do not replace the native root controller.
         UIView *panel = [[UIView alloc] initWithFrame:CGRectZero];
         panel.backgroundColor = UIColor.secondarySystemBackgroundColor;
-        panel.layer.cornerRadius = 14; panel.clipsToBounds = YES;
+        CGFloat movieRadius = NFBMovieDesktopCornerRadius(anchor);
+        panel.layer.cornerRadius = isfinite(movieRadius) ? MAX(0, movieRadius) : 14;
+        if (isfinite(movieRadius)) panel.layer.cornerCurve = kCACornerCurveContinuous;
+        panel.clipsToBounds = YES;
         // Start hidden when the open animation is enabled, otherwise the fully
         // assembled pane is visible for a frame before the scale-in begins.
         BOOL animateOpen = NFBDesktopAnimationsEnabled();
@@ -1002,6 +1021,19 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
         window.alpha = 1; window.userInteractionEnabled = YES; window.hidden = NO;
         [window bringSubviewToFront:panel];
         [next activateDesktop];
+        NFBDebugLog(@"desktop-widget: open startedHome=%d controller=%@ corner=%.2f desktop=%@ bounds=%@",
+            next.startedHome, NSStringFromClass(next.desktopController.class), panel.layer.cornerRadius,
+            NSStringFromClass(desktop.class), NSStringFromCGRect(desktop.bounds));
+        // Observational samples only: do not wake, page or rebuild widget hosts.
+        if (NFBDebugLoggingEnabled()) for (NSNumber *delay in @[@0.2, @0.8, @1.5]) {
+            __weak NFBDesktopSession *weakSample = next;
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay.doubleValue*NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                NFBDesktopSession *sample = weakSample;
+                if (!sample || session != sample || sample.restoring) return;
+                NSUInteger budget = 32;
+                NFBLogWidgetHosts(sample.desktop, 0, &budget);
+            });
+        }
         if (!next.startedHome && next.desktopController) {
             // Fullscreen apps leave the home controller disappeared. Moving its
             // view alone does not resume widget child controllers/render hosts.

@@ -3064,6 +3064,14 @@ static NSString *NFBFrontmostAppID(void) {
 }
 - (void)tapped:(NFBBubble *)button {
     if (button.opening || (self.buttons[button.appID] != button && self.favoriteButtons[button.appID] != button)) return;
+    // Must precede desktop teardown, notification consumption and opening flags.
+    // Both favorites and background rows enter through this same handler.
+    if (NFBPreference(@"MovieMode", NO) &&
+        ([button.appID isEqualToString:NFBTrollVisibleApp()] ||
+         [button.appID isEqualToString:NFBSplitAttachmentApp()])) {
+        NFBDebugLog(@"movie: current app tap ignored %@", button.appID);
+        return;
+    }
     // Remember the user just used the column: the app switch starts a fresh
     // countdown instead of folding the list on the very next tick.
     [self touchColumn];
