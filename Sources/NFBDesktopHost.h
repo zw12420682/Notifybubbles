@@ -3,6 +3,8 @@
 // Hosts the existing system desktop view; does not create an application scene.
 BOOL NFBShowDesktopInSplit(UIView *anchor);
 BOOL NFBDesktopSplitActive(void);
+// Read the committed pane radius, not a later portrait measurement.
+CGFloat NFBDesktopSplitCornerRadius(void);
 void NFBCloseDesktopSplit(void);
 void NFBUpdateDesktopSplit(BOOL allowed);
 

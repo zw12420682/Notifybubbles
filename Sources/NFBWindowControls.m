@@ -662,7 +662,13 @@ BOOL NFBUpdateMovieMode(BOOL enabled) {
         if ([touchHosts containsObject:parent.window] && movieDesktopAnchor.window) {
             CGRect hole = [movieDesktopAnchor convertRect:movieDesktopAnchor.bounds toView:black];
             UIBezierPath *path = [UIBezierPath bezierPathWithRect:black.bounds];
-            [path appendPath:[UIBezierPath bezierPathWithRect:hole]];
+            // Close the rectangular corner leaks around the rounded desktop.
+            // Convert the committed pane radius to this backdrop's coordinates.
+            CGFloat radius = NFBDesktopSplitCornerRadius();
+            CGFloat scale = hole.size.width / MAX(1, movieDesktopAnchor.bounds.size.width);
+            if (!isfinite(radius) || radius < 0) radius = 0;
+            radius = MIN(radius * scale, MIN(hole.size.width, hole.size.height) / 2);
+            [path appendPath:[UIBezierPath bezierPathWithRoundedRect:hole cornerRadius:radius]];
             CAShapeLayer *mask = [CAShapeLayer layer];
             mask.frame = black.bounds; mask.fillRule = kCAFillRuleEvenOdd;
             mask.path = path.CGPath; mask.fillColor = UIColor.blackColor.CGColor;

@@ -68,6 +68,9 @@ static NSArray<UIWindow *> *NFBDesktopWindows(void);
 - (void)restoreDesktopAppearance;
 @end
 static NFBDesktopSession *session;
+CGFloat NFBDesktopSplitCornerRadius(void) {
+    return session && !session.restoring ? session.panel.layer.cornerRadius : NAN;
+}
 static UIViewController *NFBDesktopOwner(UIViewController *controller, UIView *view) {
     if (controller.isViewLoaded && controller.view==view) return controller;
     for (UIViewController *child in controller.childViewControllers) {
