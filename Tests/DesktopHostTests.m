@@ -56,7 +56,6 @@ extern BOOL NFBDesktopSuppressFolderTracking(CALayer *, NSString *);
 }
 @end
 extern BOOL NFBLaunchAppFromDesktopIcon(id);
-CGFloat NFBMovieDesktopCornerRadius(__unused UIView *anchor) { return NAN; }
 static BOOL openAccepted=YES;
 static NSString *submittedBundle;
 BOOL NFBOpenTrollApp(NSString *bundle) { submittedBundle=bundle; return openAccepted; }

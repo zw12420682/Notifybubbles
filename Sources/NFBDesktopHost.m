@@ -1,5 +1,4 @@
 #import "NFBDesktopHost.h"
-#import "NFBWindowControls.h"
 #import "NFBDesktopGeometry.h"
 #import "NFBInterfaces.h"
 #import "NFBWindowState.h"
@@ -68,6 +67,14 @@ static NSArray<UIWindow *> *NFBDesktopWindows(void);
 - (void)restoreDesktopAppearance;
 @end
 static NFBDesktopSession *session;
+// One manual radius for every desktop session. No Open geometry/style probes.
+static CGFloat NFBConfiguredDesktopRadius(void) {
+    id value = CFBridgingRelease(CFPreferencesCopyAppValue(CFSTR("DesktopCornerRadius"), CFSTR("local.notifybubbles")));
+    double radius = [value respondsToSelector:@selector(doubleValue)] ? [value doubleValue] : 14;
+    if (!isfinite(radius)) radius = 14;
+    return MAX(0, MIN(100, radius));
+}
+
 CGFloat NFBDesktopSplitCornerRadius(void) {
     return session && !session.restoring ? session.panel.layer.cornerRadius : NAN;
 }
@@ -781,6 +788,14 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
     frame.origin.x = MAX(CGRectGetMinX(screen), MIN(frame.origin.x, CGRectGetMaxX(screen)-frame.size.width));
     frame.origin.y = MAX(CGRectGetMinY(screen), MIN(frame.origin.y, CGRectGetMaxY(screen)-frame.size.height));
     self.panelFrame = frame;
+    // The session's existing safety timer runs place: updates apply in both
+    // modes without reopening, resizing or rebuilding the desktop.
+    CGFloat radius = NFBConfiguredDesktopRadius();
+    if (fabs(self.panel.layer.cornerRadius-radius) > 0.001) {
+        [CATransaction begin]; [CATransaction setDisableActions:YES];
+        self.panel.layer.cornerRadius = radius;
+        [CATransaction commit];
+    }
     CGRect panelBounds = CGRectMake(0,0,frame.size.width,frame.size.height);
     CGPoint panelCenter = CGPointMake(CGRectGetMidX(frame),CGRectGetMidY(frame));
     if (!CGRectEqualToRect(self.panel.bounds,panelBounds)) self.panel.bounds = panelBounds;
@@ -967,9 +982,8 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
         // No new UIWindow or scene; do not replace the native root controller.
         UIView *panel = [[UIView alloc] initWithFrame:CGRectZero];
         panel.backgroundColor = UIColor.secondarySystemBackgroundColor;
-        CGFloat movieRadius = NFBMovieDesktopCornerRadius(anchor);
-        panel.layer.cornerRadius = isfinite(movieRadius) ? MAX(0, movieRadius) : 14;
-        if (isfinite(movieRadius)) panel.layer.cornerCurve = kCACornerCurveContinuous;
+        panel.layer.cornerRadius = NFBConfiguredDesktopRadius();
+        panel.layer.cornerCurve = kCACornerCurveContinuous;
         panel.clipsToBounds = YES;
         // Start hidden when the open animation is enabled, otherwise the fully
         // assembled pane is visible for a frame before the scale-in begins.

@@ -8,10 +8,10 @@ assert 'NFBTrollVisibleApp()' in entry and 'NFBSplitAttachmentApp()' in entry
 assert 'current app tap ignored' in entry and 'return;' in entry
 assert entry.index('current app tap ignored') < entry.index('[self touchColumn]')
 w=(r/'Sources/NFBWindowControls.m').read_text()
-assert 'anchor == movieDesktopAnchor ? portraitCornerRadius : NAN' in w
+assert 'portraitCornerRadius' not in w
 h=(r/'Sources/NFBDesktopHost.m').read_text()
 assert 'panel.clipsToBounds = YES' in h
-assert 'isfinite(movieRadius) ? MAX(0, movieRadius) : 14' in h
+assert 'panel.layer.cornerRadius = NFBConfiguredDesktopRadius();' in h
 assert 'session!=self || self.restoring || self.startedHome || self.pendingApp.length' in h
 assert 'NFBLogWidgetHosts(sample.desktop, 0, &budget)' in h
 print('PASS: movie current tap blocked before side effects; movie desktop corners; widget strategy unchanged')

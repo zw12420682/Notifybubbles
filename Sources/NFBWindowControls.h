@@ -29,6 +29,3 @@ CGRect NFBMovieLowerFrameInView(UIView *root);
 
 // Movie-only keyboard settling check, bypassing the 0.2s layout throttle.
 void NFBRecheckMovieLayout(void);
-
-// NAN for ordinary desktop sessions; movie pane follows measured Open corners.
-CGFloat NFBMovieDesktopCornerRadius(UIView *anchor);

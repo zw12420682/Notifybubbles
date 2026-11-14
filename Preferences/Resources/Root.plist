@@ -20,6 +20,16 @@
 			<key>footerText</key><string>双击分屏房子键切换电影模式，开启时房子为红色。横屏窗口等比例适配上方空间，背景纯黑，保留原圆角；常用与后台图标区限制在下方窗口范围内。仅识别窗口方向，不识别视频内容。</string>
 		</dict>
 		<dict>
+			<key>cell</key><string>PSSliderCell</string>
+			<key>label</key><string>桌面分屏圆角</string>
+			<key>key</key><string>DesktopCornerRadius</string>
+			<key>defaults</key><string>local.notifybubbles</string>
+			<key>default</key><integer>14</integer>
+			<key>min</key><integer>0</integer>
+			<key>max</key><integer>100</integer>
+			<key>showValue</key><true/>
+		</dict>
+		<dict>
 			<key>cell</key><string>PSSwitchCell</string>
 			<key>label</key><string>启用电影模式</string>
 			<key>key</key><string>MovieMode</string>

@@ -22,7 +22,6 @@ static BOOL movieIsActive;
 static CGRect portraitRailReference;
 static CGSize portraitRailScreen;
 static __weak UIView *portraitRailRoot;
-static CGFloat portraitCornerRadius = 14;
 static id currentWindow(void) {
     return NFBCurrentWindowState().floatingWindow;
 }
@@ -39,22 +38,7 @@ CGRect NFBSplitFrameInView(UIView *root) {
                 portraitRailReference = frame;
                 portraitRailScreen = root.bounds.size;
                 portraitRailRoot = root;
-                // Sample only host-sized wrappers, never arbitrary app controls.
-                UIView *wrapper = view;
-                CGFloat radius = 0;
-                for (NSUInteger depth=0; wrapper && depth<6; depth++) {
-                    if (wrapper.layer.cornerRadius > 0) {
-                        CGRect rect = [wrapper convertRect:wrapper.bounds toView:root];
-                        CGFloat scale = rect.size.width / MAX(1, wrapper.bounds.size.width);
-                        radius = MAX(radius, wrapper.layer.cornerRadius * scale);
-                    }
-                    UIView *next = nil;
-                    for (UIView *child in wrapper.subviews)
-                        if (child.bounds.size.width >= wrapper.bounds.size.width*0.9 &&
-                            child.bounds.size.height >= wrapper.bounds.size.height*0.9) { next=child; break; }
-                    wrapper = next;
-                }
-                if (isfinite(radius) && radius > 0) portraitCornerRadius = radius;
+
             }
             return frame;
         }
@@ -697,8 +681,4 @@ void NFBRecheckMovieLayout(void) {
             appOfWindow(view), view, view.window, NSStringFromClass(view.window.class),
             view.window.windowLevel, NSStringFromCGRect(view.frame), view.userInteractionEnabled);
     }
-}
-
-CGFloat NFBMovieDesktopCornerRadius(UIView *anchor) {
-    return anchor && anchor == movieDesktopAnchor ? portraitCornerRadius : NAN;
 }
