@@ -8,7 +8,11 @@
 @interface SBFolderContainerView : UIView @end
 @implementation SBFolderContainerView @end
 extern BOOL NFBDesktopSuppressFolderTracking(CALayer *, NSString *);
-@interface SBRootFolderView : UIView @end
+@interface SBFolderView : UIView @end
+@implementation SBFolderView @end
+@interface SBRootFolderView : SBFolderView @end
+@interface SBIconScrollView : UIScrollView @end
+@implementation SBIconScrollView @end
 @implementation SBRootFolderView @end
 @interface SBHomeScreenViewController : UIViewController
 @property(nonatomic) NSUInteger appearances, disappearances;
@@ -35,7 +39,7 @@ extern BOOL NFBDesktopSuppressFolderTracking(CALayer *, NSString *);
 @implementation DesktopFolderViewFixture
 - (BOOL)isFolderIcon { return YES; }
 @end
-@interface DesktopPagerFixture : UIScrollView
+@interface DesktopPagerFixture : SBIconScrollView
 @property(nonatomic) NSUInteger moves;
 @end
 @implementation DesktopPagerFixture
@@ -446,7 +450,17 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
     @try { CheckOpen(NFBShowDesktopInSplit(anchor),@"widget refresh from home before pager attaches",desktop,root); }
     @catch (NSException *e) { [self finishResult:[NSString stringWithFormat:@"FAIL: %@",e]]; return; }
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.25*NSEC_PER_SEC)),dispatch_get_main_queue(), ^{
-        [desktop addSubview:pager];
+        SBFolderContainerView *container=[[SBFolderContainerView alloc] initWithFrame:desktop.bounds];
+        container.tag=48751;
+        // An actual open folder must not steal the home pager selection.
+        SBFolderView *openFolder=[[SBFolderView alloc] initWithFrame:desktop.bounds];
+        DesktopPagerFixture *decoy=[[DesktopPagerFixture alloc] initWithFrame:desktop.bounds];
+        decoy.pagingEnabled=YES;
+        decoy.contentSize=CGSizeMake(desktop.bounds.size.width*2,desktop.bounds.size.height);
+        [openFolder addSubview:decoy]; [container addSubview:openFolder];
+        SBRootFolderView *rootFolder=[[SBRootFolderView alloc] initWithFrame:desktop.bounds];
+        [rootFolder addSubview:pager]; [container addSubview:rootFolder];
+        [desktop addSubview:container];
     });
     [self awaitWidgetRefresh:pager original:original desktop:desktop anchor:anchor root:root deadline:CACurrentMediaTime()+3];
 }
@@ -464,7 +478,11 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
                 NSStringFromCGRect(pager.bounds),NSStringFromCGSize(pager.contentSize),NFBDesktopSplitActive()]);
             NFBCloseDesktopSplit();
             Check(CGPointEqualToPoint(pager.contentOffset,original),@"closing preserves refreshed page position");
-            [pager removeFromSuperview];
+            UIView *container=[desktop viewWithTag:48751];
+            SBFolderView *openFolder=(SBFolderView *)container.subviews.firstObject;
+            DesktopPagerFixture *decoy=(DesktopPagerFixture *)openFolder.subviews.firstObject;
+            Check(decoy.moves==0,@"real open-folder pager excluded while home pager refreshed");
+            [pager removeFromSuperview]; [container removeFromSuperview];
             [self runWidgetCancellationTests:desktop anchor:anchor root:root];
         } @catch (NSException *e) { [self finishResult:[NSString stringWithFormat:@"FAIL: %@",e]]; }
     });

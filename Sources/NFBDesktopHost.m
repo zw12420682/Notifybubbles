@@ -94,9 +94,23 @@ static UIViewController *NFBDesktopOwner(UIViewController *controller, UIView *v
 static UIScrollView *NFBFindIconPager(UIView *view) {
     if (view.hidden || view.alpha<0.01) return nil;
     NSString *name=NSStringFromClass(view.class);
-    if ([name containsString:@"Folder"] && ![name containsString:@"RootFolder"]) return nil;
-    if ([view isKindOfClass:UIScrollView.class] && [name containsString:@"IconScroll"])
+    // SBFolderContainerView is also the HOME root's container. Rejecting every
+    // name containing "Folder" prunes that entire branch before SBIconScrollView.
+    // Exclude only real non-root folder views (including their subclasses).
+    Class folderView=NSClassFromString(@"SBFolderView");
+    Class rootFolderView=NSClassFromString(@"SBRootFolderView");
+    BOOL rootFolder=[name containsString:@"RootFolder"] ||
+        (rootFolderView && [view isKindOfClass:rootFolderView]);
+    if (!rootFolder && folderView && [view isKindOfClass:folderView]) {
+        NFBDebugLog(@"desktop-widget: pager search excludes open folder %@",name);
+        return nil;
+    }
+    if ([view isKindOfClass:UIScrollView.class] && [name containsString:@"IconScroll"]) {
+        NFBDebugLog(@"desktop-widget: pager found class=%@ parent=%@ bounds=%@ content=%@",
+            name,NSStringFromClass(view.superview.class),NSStringFromCGRect(view.bounds),
+            NSStringFromCGSize(((UIScrollView *)view).contentSize));
         return (UIScrollView *)view;
+    }
     for (UIView *child in view.subviews) {
         UIScrollView *pager=NFBFindIconPager(child); if (pager) return pager;
     }

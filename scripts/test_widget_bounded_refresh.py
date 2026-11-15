@@ -18,4 +18,13 @@ for ready_at in (0,2,5,9):
   attempts+=1
   if attempts-1>=ready_at: roundtrips+=1;break
  assert attempts<=6 and roundtrips<=1
-print('PASS: both entry sources, six attempts maximum, once-only roundtrip, user priority and stale-session cancellation')
+search=s[s.index('static UIScrollView *NFBFindIconPager'):s.index('// An open request')]
+assert '[name containsString:@"Folder"]' not in search
+assert 'NSClassFromString(@"SBFolderView")' in search
+assert 'NSClassFromString(@"SBRootFolderView")' in search
+assert '[view isKindOfClass:folderView]' in search
+assert 'pager found class=' in search
+t=(Path(__file__).resolve().parents[1]/'Tests/DesktopHostTests.m').read_text()
+assert '[container addSubview:openFolder]' in t and '[container addSubview:rootFolder]' in t
+assert 'Check(decoy.moves==0' in t
+print('PASS: bounded refresh, root folder container traversal, real folder exclusion, user priority and stale-session cancellation')
