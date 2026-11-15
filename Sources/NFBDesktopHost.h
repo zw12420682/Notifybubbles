@@ -17,3 +17,6 @@ void NFBUpdateMovieDesktopTouchHosts(NSArray<UIWindow *> *hosts);
 // Explicit house action: close only the supplied portrait window, never its process.
 BOOL NFBReplaceSplitWithDesktop(UIView *window);
 UIView *NFBDesktopIndependentAnchor(void);
+
+// Only recovers widgets on ordinary home after unlocking; no movie reopening.
+void NFBObserveHomeWidgetLock(BOOL locked, BOOL enabled);
