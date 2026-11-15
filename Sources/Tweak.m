@@ -2,6 +2,7 @@
 #import "NFBDebugLog.h"
 #import "NFBVersion.h"
 #import "NFBPrivate.h"
+#import "NFBArcDiagnostics.h"
 #import <objc/runtime.h>
 #import <substrate.h>
 #include <string.h>
@@ -106,7 +107,9 @@ static void NFBPreferencesChanged(CFNotificationCenterRef center, void *observer
     CFStringRef name, const void *object, CFDictionaryRef info) {
     (void)center; (void)observer; (void)object; (void)info;
     BOOL clear = CFEqual(name, CFSTR("local.notifybubbles/clear"));
+    BOOL arc = CFEqual(name, CFSTR("local.notifybubbles/arc-diagnostics"));
     NFBMain(^{
+        if (arc) { NFBArmArcDiagnostics(); return; }
         if (clear) [[NFBManager shared] clear];
         else [[NFBManager shared] reloadPreferences];
     });
@@ -132,6 +135,8 @@ static void NFBInstall(void) {
         NFBPreferencesChanged, CFSTR("local.notifybubbles/preferences.changed"), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
         NFBPreferencesChanged, CFSTR("local.notifybubbles/clear"), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+    CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
+        NFBPreferencesChanged, CFSTR("local.notifybubbles/arc-diagnostics"), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
     (void)[NFBManager shared]; // init loads preferences exactly once.
 }
 __attribute__((constructor)) static void NFBStart(void) {

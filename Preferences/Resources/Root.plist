@@ -318,6 +318,14 @@
 			<key>defaults</key>
 			<string>local.notifybubbles</string>
 		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>采样 ARC 层级（24 秒）</string>
+			<key>action</key>
+			<string>captureArcHierarchy</string>
+		</dict>
 	</array>
 </dict>
 </plist>

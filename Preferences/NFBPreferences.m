@@ -50,6 +50,15 @@
 - (void)chooseFavorites {
     [self.navigationController pushViewController:[[NFBFavoritesController alloc] initWithStyle:UITableViewStyleInsetGrouped] animated:YES];
 }
+- (void)captureArcHierarchy {
+    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+        CFSTR("local.notifybubbles/arc-diagnostics"), NULL, NULL, YES);
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"ARC 层级采样"
+        message:@"请先开启调试日志。点击采样后在 6 秒内返回需要测试的界面，再从右下角呼出 ARC，保持展开至 24 秒采样结束。然后立即导出日志。只读采样，不会调整窗口层级。"
+        preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
 - (void)clearBubbles {
     CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
         CFSTR("local.notifybubbles/clear"), NULL, NULL, YES);
