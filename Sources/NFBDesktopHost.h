@@ -18,5 +18,5 @@ void NFBUpdateMovieDesktopTouchHosts(NSArray<UIWindow *> *hosts);
 BOOL NFBReplaceSplitWithDesktop(UIView *window);
 UIView *NFBDesktopIndependentAnchor(void);
 
-// Only recovers widgets on ordinary home after unlocking; no movie reopening.
-void NFBObserveHomeWidgetLock(BOOL locked, BOOL enabled);
+// Read-only lock/unlock widget observations; never mutates desktop or pages.
+void NFBObserveHomeWidgetLockDiagnostics(BOOL locked, BOOL enabled);

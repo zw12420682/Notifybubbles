@@ -1622,10 +1622,9 @@ static NSString *NFBFrontmostAppID(void) {
     if (button.imageView.image != resolved) button.imageView.image = resolved;
 }
 - (void)updatePrivacy {
-    BOOL locked=[self isLocked];
+    NFBObserveHomeWidgetLockDiagnostics([self isLocked], self.enabled);
     NFBUpdateArcOverlay(self.enabled && ![self isLocked]);
-    NFBObserveHomeWidgetLock(locked, self.enabled);
-    if (!self.enabled || locked) NFBUpdateDesktopSplit(NO);
+    if (!self.enabled || [self isLocked]) NFBUpdateDesktopSplit(NO);
     NFBSetCaptureHidden(self.window.rootViewController.view, self.enabled && self.hideInScreenshots);
 }
 // Coalesced entry point: at most one full layout per runloop turn. Use this for

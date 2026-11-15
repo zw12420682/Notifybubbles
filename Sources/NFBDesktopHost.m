@@ -72,6 +72,49 @@ static NSArray<UIWindow *> *NFBDesktopWindows(void);
 - (void)restoreDesktopAppearance;
 @end
 static NFBDesktopSession *session;
+// Lock diagnostics are observational only: no refresh, page change, snapshot,
+// overlay or gesture. The native desktop and widget trees are read in place.
+static void NFBLogLockHomeWidgets(const char *phase) {
+    if (!NFBDebugLoggingEnabled()) return;
+    NSArray<UIWindow *> *windows=NFBDesktopWindows();
+    NFBDebugLog(@"home-lock: %s windows=%lu",phase,(unsigned long)windows.count);
+    for (UIWindow *window in windows) {
+        if (window.hidden || window.alpha<0.01) continue;
+        NFBDebugLog(@"home-lock: %s window=%p class=%@ level=%.1f hidden=%d",
+            phase,window,NSStringFromClass(window.class),window.windowLevel,window.hidden);
+    }
+    for (UIWindow *window in windows) {
+        if (![NSStringFromClass(window.class) isEqualToString:@"SBHomeScreenWindow"] || window.hidden) continue;
+        UIView *root=window.rootViewController.view;
+        NSUInteger budget=48;
+        UIScrollView *pager=NFBDesktopPager(root);
+        NFBDebugLog(@"home-lock: %s root=%@ pager=%@ offset=%@ size=%@ content=%@ idle=%d session=%d",
+            phase,NSStringFromClass(root.class),pager?NSStringFromClass(pager.class):@"none",
+            pager?NSStringFromCGPoint(pager.contentOffset):NSStringFromCGPoint(CGPointZero),
+            pager?NSStringFromCGRect(pager.bounds):CGRectZero,
+            pager?NSStringFromCGSize(pager.contentSize):CGSizeZero,
+            pager?(!pager.tracking&&!pager.dragging&&!pager.decelerating):0,session!=nil);
+        NFBLogWidgetHosts(root,0,&budget);
+        UIView *content=window.rootViewController.view;
+        for (NSUInteger depth=0;content&&depth<10;depth++,content=content.superview)
+            if (content.hidden || content.alpha<0.01)
+                NFBDebugLog(@"home-lock: %s hidden ancestor depth=%lu class=%@",phase,(unsigned long)depth,NSStringFromClass(content.class));
+    }
+}
+void NFBObserveHomeWidgetLockDiagnostics(BOOL locked, BOOL enabled) {
+    static BOOL known, previous;
+    if (!known || previous!=locked) {
+        NFBDebugLog(@"home-lock: transition locked=%d enabled=%d",locked,enabled);
+        if (!locked) {
+            NFBLogLockHomeWidgets("unlock");
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.6*NSEC_PER_SEC)),dispatch_get_main_queue(), ^{
+                NFBLogLockHomeWidgets("unlock+0.6");
+            });
+        }
+    }
+    known=YES; previous=locked;
+}
+
 // One manual radius for every desktop session. No Open geometry/style probes.
 static CGFloat NFBConfiguredDesktopRadius(void) {
     id value = CFBridgingRelease(CFPreferencesCopyAppValue(CFSTR("DesktopCornerRadius"), CFSTR("local.notifybubbles")));
@@ -1046,114 +1089,7 @@ static BOOL NFBInstallDesktopLaunchHook(void) {
     return YES;
 }
 #endif
-
-// Ordinary-home widget recovery is separate from movie/window restoration.
-@interface NFBHomeWidgetRecovery : NSObject <UIGestureRecognizerDelegate>
-@property(nonatomic,weak) UIWindow *window;
-@property(nonatomic,weak) UIScrollView *pager;
-@property(nonatomic,strong) UIView *cover;
-@property(nonatomic,strong) UITapGestureRecognizer *observer;
-@property(nonatomic) CGPoint original;
-@property(nonatomic) BOOL visited, finished;
-- (void)attempt:(NSUInteger)index;
-- (void)finish;
-@end
-static NFBHomeWidgetRecovery *homeRecovery;
-@implementation NFBHomeWidgetRecovery
-- (BOOL)valid {
-    if (self.finished || homeRecovery!=self || session || !self.window || NFBDesktopLocked()) return NO;
-    id enabled=CFBridgingRelease(CFPreferencesCopyAppValue(CFSTR("Enabled"), CFSTR("local.notifybubbles")));
-    if (enabled && ![enabled boolValue]) return NO;
-    NFBInvalidateWindowState();
-    return NFBCurrentWindowState().home && !self.window.hidden && self.window.alpha>0.01;
-}
-- (void)finish {
-    if (self.finished) return;
-    self.finished=YES;
-    UIScrollView *pager=self.pager;
-    if (self.visited && pager && !pager.tracking && !pager.dragging && !pager.decelerating)
-        [UIView performWithoutAnimation:^{ [pager setContentOffset:self.original animated:NO]; [pager layoutIfNeeded]; }];
-    [self.cover removeFromSuperview]; self.cover=nil;
-    [self.window removeGestureRecognizer:self.observer]; self.observer=nil;
-    if (homeRecovery==self) homeRecovery=nil;
-}
-- (BOOL)gestureRecognizer:(__unused UIGestureRecognizer *)gesture shouldReceiveTouch:(__unused UITouch *)touch {
-    // Observe only: never recognize, delay, or cancel a native desktop touch.
-    NFBDebugLog(@"home-widget: cancelled by touch");
-    [self finish]; return NO;
-}
-- (void)ignored:(__unused UITapGestureRecognizer *)gesture {}
-- (void)attempt:(NSUInteger)index {
-    @try {
-        if (![self valid]) { [self finish]; return; }
-        UIScrollView *pager=NFBDesktopPager(self.window.rootViewController.view);
-        if (!pager) pager=NFBDesktopPager(self.window);
-        if (pager && (pager.tracking || pager.dragging || pager.decelerating)) { [self finish]; return; }
-        CGFloat width=pager.bounds.size.width;
-        CGFloat minimum=-pager.adjustedContentInset.left;
-        CGFloat maximum=pager.contentSize.width-width+pager.adjustedContentInset.right;
-        CGFloat page=width>0 ? (pager.contentOffset.x-minimum)/width : NAN;
-        BOOL ready=pager && width>0 && pager.contentSize.width>=width*2 &&
-            isfinite(page) && fabs(page-round(page))<0.01;
-        if (!ready) {
-            if (index>=5) { NFBDebugLog(@"home-widget: stopped after six readiness checks"); [self finish]; return; }
-            __weak NFBHomeWidgetRecovery *weakSelf=self;
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.2*NSEC_PER_SEC)),dispatch_get_main_queue(), ^{ [weakSelf attempt:index+1]; });
-            return;
-        }
-        CGPoint original=pager.contentOffset;
-        CGFloat target=original.x+width<=maximum+0.5 ? MIN(maximum,original.x+width) : MAX(minimum,original.x-width);
-        if (fabs(target-original.x)<width*0.5) { [self finish]; return; }
-        UIView *root=self.window.rootViewController.view;
-        UIView *cover=[root snapshotViewAfterScreenUpdates:NO];
-        if (!cover) { [self finish]; return; }
-        cover.frame=[root convertRect:root.bounds toView:self.window];
-        cover.userInteractionEnabled=NO; cover.accessibilityElementsHidden=YES;
-        self.cover=cover; self.pager=pager; self.original=original;
-        [self.window addSubview:cover];
-        self.visited=YES;
-        [UIView performWithoutAnimation:^{ [pager setContentOffset:CGPointMake(target,original.y) animated:NO]; [pager layoutIfNeeded]; }];
-        NFBDebugLog(@"home-widget: roundtrip attempt=%lu original=%@ target=%.2f",(unsigned long)index+1,NSStringFromCGPoint(original),target);
-        __weak NFBHomeWidgetRecovery *weakSelf=self;
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.1*NSEC_PER_SEC)),dispatch_get_main_queue(), ^{
-            NFBHomeWidgetRecovery *job=weakSelf;
-            if (!job) return;
-            [job finish];
-            NFBDebugLog(@"home-widget: roundtrip finished");
-        });
-    } @catch (NSException *error) { NFBErrorLog(@"home-widget: failed %@",error); [self finish]; }
-}
-@end
-void NFBObserveHomeWidgetLock(BOOL locked, BOOL enabled) {
-    static BOOL known, previous;
-    BOOL unlocked=known && previous && !locked;
-    BOOL changed=!known || previous!=locked;
-    known=YES; previous=locked;
-    if (changed) NFBDebugLog(@"home-widget: lock=%d enabled=%d",locked,enabled);
-    if (locked || !enabled || session) { [homeRecovery finish]; return; }
-    if (homeRecovery && ![homeRecovery valid]) [homeRecovery finish];
-    if (!unlocked) return;
-    NFBInvalidateWindowState();
-    if (!NFBCurrentWindowState().home) {
-        NFBDebugLog(@"home-widget: unlock not on home, skipped"); return;
-    }
-    UIWindow *window=nil;
-    for (UIWindow *candidate in NFBDesktopWindows())
-        if ([NSStringFromClass(candidate.class) isEqualToString:@"SBHomeScreenWindow"] && !candidate.hidden && candidate.alpha>0.01) { window=candidate; break; }
-    if (!window) return;
-    [homeRecovery finish];
-    NFBHomeWidgetRecovery *job=[NFBHomeWidgetRecovery new]; job.window=window;
-    homeRecovery=job;
-    job.observer=[[UITapGestureRecognizer alloc] initWithTarget:job action:@selector(ignored:)];
-    job.observer.delegate=job; job.observer.cancelsTouchesInView=NO;
-    job.observer.delaysTouchesBegan=NO; job.observer.delaysTouchesEnded=NO;
-    [window addGestureRecognizer:job.observer];
-    __weak NFBHomeWidgetRecovery *weakJob=job;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.45*NSEC_PER_SEC)),dispatch_get_main_queue(), ^{ [weakJob attempt:0]; });
-}
-
 BOOL NFBShowDesktopInSplit(UIView *anchor) {
-    if (NSThread.isMainThread) [homeRecovery finish];
     if (!NSThread.isMainThread) return NO;
     lastFailure = nil; failurePending = NO;
     if (!anchor.window) return NFBDesktopFail(@"没有可用的分屏窗口");
