@@ -37,6 +37,7 @@
 #import "NFBBurstPolicy.h"
 #import "NFBDesktopActionPolicy.h"
 #import "NFBTickReconcile.h"
+#import "NFBArcOverlay.h"
 
 static const NSTimeInterval NFBMotion = 0.35;
 // No double-tap recognizer: a short tap resolves on release.
@@ -1598,6 +1599,7 @@ static NSString *NFBFrontmostAppID(void) {
     if (button.imageView.image != resolved) button.imageView.image = resolved;
 }
 - (void)updatePrivacy {
+    NFBUpdateArcOverlay(self.enabled && ![self isLocked]);
     if (!self.enabled || [self isLocked]) NFBUpdateDesktopSplit(NO);
     NFBSetCaptureHidden(self.window.rootViewController.view, self.enabled && self.hideInScreenshots);
 }
