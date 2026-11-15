@@ -72,6 +72,8 @@ static NSArray<UIWindow *> *NFBDesktopWindows(void);
 - (void)restoreDesktopAppearance;
 @end
 static NFBDesktopSession *session;
+static UIScrollView *NFBDesktopPager(UIView *desktop);
+static void NFBLogWidgetHosts(UIView *view, NSUInteger depth, NSUInteger *budget);
 // Lock diagnostics are observational only: no refresh, page change, snapshot,
 // overlay or gesture. The native desktop and widget trees are read in place.
 static void NFBLogLockHomeWidgets(const char *phase) {
@@ -90,9 +92,9 @@ static void NFBLogLockHomeWidgets(const char *phase) {
         UIScrollView *pager=NFBDesktopPager(root);
         NFBDebugLog(@"home-lock: %s root=%@ pager=%@ offset=%@ size=%@ content=%@ idle=%d session=%d",
             phase,NSStringFromClass(root.class),pager?NSStringFromClass(pager.class):@"none",
-            pager?NSStringFromCGPoint(pager.contentOffset):NSStringFromCGPoint(CGPointZero),
-            pager?NSStringFromCGRect(pager.bounds):CGRectZero,
-            pager?NSStringFromCGSize(pager.contentSize):CGSizeZero,
+            pager?NSStringFromCGPoint(pager.contentOffset):@"none",
+            pager?NSStringFromCGRect(pager.bounds):@"none",
+            pager?NSStringFromCGSize(pager.contentSize):@"none",
             pager?(!pager.tracking&&!pager.dragging&&!pager.decelerating):0,session!=nil);
         NFBLogWidgetHosts(root,0,&budget);
         UIView *content=window.rootViewController.view;
