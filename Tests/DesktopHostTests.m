@@ -39,10 +39,10 @@ extern BOOL NFBDesktopSuppressFolderTracking(CALayer *, NSString *);
 @implementation DesktopFolderViewFixture
 - (BOOL)isFolderIcon { return YES; }
 @end
-@interface DesktopPagerFixture : SBIconScrollView
+@interface DesktopIconScrollPagerFixture : SBIconScrollView
 @property(nonatomic) NSUInteger moves;
 @end
-@implementation DesktopPagerFixture
+@implementation DesktopIconScrollPagerFixture
 - (void)setContentOffset:(CGPoint)offset animated:(BOOL)animated {
     if (!CGPointEqualToPoint(offset,self.contentOffset)) self.moves++;
     [super setContentOffset:offset animated:animated];
@@ -442,7 +442,7 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
 - (void)runWidgetRefreshTests:(UIView *)desktop anchor:(UIView *)anchor root:(UIView *)root {
     [UIView setAnimationsEnabled:NO];
     state.home=YES; state.frontApp=nil;
-    DesktopPagerFixture *pager=[[DesktopPagerFixture alloc] initWithFrame:desktop.bounds];
+    DesktopIconScrollPagerFixture *pager=[[DesktopIconScrollPagerFixture alloc] initWithFrame:desktop.bounds];
     pager.pagingEnabled=YES;
     pager.contentSize=CGSizeMake(pager.bounds.size.width*2,pager.bounds.size.height);
     CGPoint original=CGPointMake(pager.bounds.size.width,0);
@@ -454,7 +454,7 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
         container.tag=48751;
         // An actual open folder must not steal the home pager selection.
         SBFolderView *openFolder=[[SBFolderView alloc] initWithFrame:desktop.bounds];
-        DesktopPagerFixture *decoy=[[DesktopPagerFixture alloc] initWithFrame:desktop.bounds];
+        DesktopIconScrollPagerFixture *decoy=[[DesktopIconScrollPagerFixture alloc] initWithFrame:desktop.bounds];
         decoy.pagingEnabled=YES;
         decoy.contentSize=CGSizeMake(desktop.bounds.size.width*2,desktop.bounds.size.height);
         [openFolder addSubview:decoy]; [container addSubview:openFolder];
@@ -464,7 +464,7 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
     });
     [self awaitWidgetRefresh:pager original:original desktop:desktop anchor:anchor root:root deadline:CACurrentMediaTime()+3];
 }
-- (void)awaitWidgetRefresh:(DesktopPagerFixture *)pager original:(CGPoint)original desktop:(UIView *)desktop
+- (void)awaitWidgetRefresh:(DesktopIconScrollPagerFixture *)pager original:(CGPoint)original desktop:(UIView *)desktop
                     anchor:(UIView *)anchor root:(UIView *)root deadline:(CFTimeInterval)deadline {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.05*NSEC_PER_SEC)),dispatch_get_main_queue(), ^{
         BOOL complete=pager.moves>=2 && CGPointEqualToPoint(pager.contentOffset,original);
@@ -480,7 +480,7 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
             Check(CGPointEqualToPoint(pager.contentOffset,original),@"closing preserves refreshed page position");
             UIView *container=[desktop viewWithTag:48751];
             SBFolderView *openFolder=(SBFolderView *)container.subviews.firstObject;
-            DesktopPagerFixture *decoy=(DesktopPagerFixture *)openFolder.subviews.firstObject;
+            DesktopIconScrollPagerFixture *decoy=(DesktopIconScrollPagerFixture *)openFolder.subviews.firstObject;
             Check(decoy.moves==0,@"real open-folder pager excluded while home pager refreshed");
             [pager removeFromSuperview]; [container removeFromSuperview];
             [self runWidgetCancellationTests:desktop anchor:anchor root:root];
@@ -488,7 +488,7 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
     });
 }
 - (void)runWidgetCancellationTests:(UIView *)desktop anchor:(UIView *)anchor root:(UIView *)root {
-    DesktopPagerFixture *pager=[[DesktopPagerFixture alloc] initWithFrame:desktop.bounds];
+    DesktopIconScrollPagerFixture *pager=[[DesktopIconScrollPagerFixture alloc] initWithFrame:desktop.bounds];
     pager.pagingEnabled=YES;
     pager.contentSize=CGSizeMake(pager.bounds.size.width*2,pager.bounds.size.height);
     CGPoint original=CGPointMake(pager.bounds.size.width,0);
