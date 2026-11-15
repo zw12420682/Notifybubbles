@@ -708,3 +708,35 @@ void NFBRecheckMovieLayout(void) {
             view.window.windowLevel, NSStringFromCGRect(view.frame), view.userInteractionEnabled);
     }
 }
+
+BOOL NFBRecheckMovieDesktopAfterCleanup(NSArray<NSString *> *clearedApps) {
+    if (!NSThread.isMainThread) return YES;
+    if (NFBDesktopSplitActive()) return YES; // Never toggle an existing desktop.
+    Class cls=NFBTrollFloatingWindowClass();
+    if (!cls) return NO;
+    NSMutableArray<UIView *> *visible=[NSMutableArray array];
+    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+        if (![scene isKindOfClass:UIWindowScene.class] ||
+            scene.activationState==UISceneActivationStateBackground ||
+            scene.activationState==UISceneActivationStateUnattached) continue;
+        for (UIWindow *window in ((UIWindowScene *)scene).windows) movieCollect(window,cls,visible);
+    }
+    BOOL landscape=NO, closingPortrait=NO;
+    for (UIView *view in visible) {
+        if (movieLandscape(view)) landscape=YES;
+        else if ([clearedApps containsObject:appOfWindow(view)]) closingPortrait=YES;
+        else {
+            NFBDebugLog(@"movie-cleanup: cancelled for lower app %@",appOfWindow(view));
+            return YES; // New/protected lower app wins. Never close it.
+        }
+    }
+    if (!landscape) return YES;
+    if (closingPortrait) return NO;
+    // A failed earlier one-shot attempt must not permanently suppress this
+    // explicit post-cleanup fallback. Only the bounded caller re-arms it.
+    movieDesktopAttempted=NO; movieReadAt=0;
+    NFBUpdateMovieMode(YES);
+    BOOL done=NFBDesktopSplitActive();
+    NFBDebugLog(@"movie-cleanup: desktop fallback active=%d",done);
+    return done;
+}

@@ -902,6 +902,29 @@ static NSString *NFBFrontmostAppID(void) {
     // The column is free again once the last verification pass is done. A clear
     // that produced no target at all releases it immediately above.
     NSUInteger epoch = self.clearEpoch;
+    if (NFBPreference(@"MovieMode", NO)) {
+        // One bounded series after dispatching cleanup, not an always-on poll.
+        // Guards also invalidate every queued check when the user opens an app.
+        __block BOOL fallbackDone=NO;
+        __weak NFBManager *weakManager=self;
+        for (NSUInteger attempt=0; attempt<6; attempt++) {
+            NSTimeInterval delay=0.05 + targets.count*0.12 + 0.65 + attempt*0.25;
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(delay*NSEC_PER_SEC)),dispatch_get_main_queue(), ^{
+                NFBManager *manager=weakManager;
+                if (!manager || fallbackDone) return;
+                if (!manager.enabled || manager.exitEpoch!=exitEpoch || manager.clearEpoch!=epoch ||
+                    [manager isLocked] || !NFBPreference(@"MovieMode", NO)) { fallbackDone=YES; return; }
+                for (NSString *app in targets) {
+                    if ([exitVersions[app] unsignedIntegerValue] != [manager.generations[app] unsignedIntegerValue]) {
+                        fallbackDone=YES; return; // A reopened app/new notification supersedes cleanup.
+                    }
+                }
+                fallbackDone=NFBRecheckMovieDesktopAfterCleanup(targets);
+                NFBDebugLog(@"movie-cleanup: check=%lu stopped=%d",(unsigned long)attempt+1,fallbackDone);
+                [manager setNeedsRefresh];
+            });
+        }
+    }
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((0.05 + targets.count * 0.12 + 0.6) * NSEC_PER_SEC)),
         dispatch_get_main_queue(), ^{
             if (self.clearEpoch == epoch) self.clearingBackground = NO;

@@ -29,3 +29,6 @@ CGRect NFBMovieLowerFrameInView(UIView *root);
 
 // Movie-only keyboard settling check, bypassing the 0.2s layout throttle.
 void NFBRecheckMovieLayout(void);
+
+// YES stops the bounded post-cleanup checks; NO means old pane is closing or retry is needed.
+BOOL NFBRecheckMovieDesktopAfterCleanup(NSArray<NSString *> *clearedApps);
