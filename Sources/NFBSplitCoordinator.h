@@ -11,6 +11,8 @@
 - (void)closeDesktop;
 - (BOOL)replaceWindowWithDesktop:(UIView *)window;
 - (BOOL)desktopActive;
+- (NSUInteger)desktopSessionIdentifier;
+- (BOOL)recheckDesktopAfterCleanup:(NSArray<NSString *> *)apps;
 @end
 
 typedef NS_ENUM(NSUInteger, NFBSplitPhase) {
@@ -28,6 +30,10 @@ typedef NS_ENUM(NSUInteger, NFBSplitPhase) {
 - (void)reconcile;
 - (void)settleMovieKeyboard;
 - (void)scheduleMovieKeyboardChecks;
+// Guard is read on main queue before every attempt, preserving notification and
+// foreground cleanup cancellation. Scheduling/cancellation lives in the core.
+- (void)scheduleDesktopAfterCleanup:(NSArray<NSString *> *)apps delay:(NSTimeInterval)delay
+    guard:(BOOL (^)(void))guard refresh:(void (^)(void))refresh;
 - (BOOL)replaceWindowWithDesktop:(UIView *)window;
 - (void)closeDesktop;
 // Engine replacement is explicit and rejected while a session is active.

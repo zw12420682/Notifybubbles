@@ -11,6 +11,8 @@
 - (void)closeDesktop { NFBCloseDesktopSplit(); }
 - (BOOL)replaceWindowWithDesktop:(UIView *)window { return NFBReplaceSplitWithDesktop(window); }
 - (BOOL)desktopActive { return NFBDesktopSplitActive(); }
+- (NSUInteger)desktopSessionIdentifier { return NFBDesktopSessionIdentifier(); }
+- (BOOL)recheckDesktopAfterCleanup:(NSArray<NSString *> *)apps { return NFBRecheckMovieDesktopAfterCleanup(apps); }
 @end
 
 id<NFBSplitBackend> NFBCreateOpenSplitBackend(void) { return [NFBOpenSplitBackend new]; }

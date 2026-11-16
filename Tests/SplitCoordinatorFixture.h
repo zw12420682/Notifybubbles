@@ -15,6 +15,8 @@ void NFBRecheckMovieLayout(void) {}
 - (void)closeDesktop { self.closes++; self.desktop=NO; }
 - (BOOL)replaceWindowWithDesktop:(__unused UIView *)window { self.replacements++;self.desktop=YES;return YES; }
 - (BOOL)desktopActive { return self.desktop; }
+- (NSUInteger)desktopSessionIdentifier { return self.desktop ? 1 : 0; }
+- (BOOL)recheckDesktopAfterCleanup:(__unused NSArray<NSString *> *)apps { self.desktop=YES; return YES; }
 @end
 static void RunSplitCoordinatorTests(void) {
     NFBSplitCoordinator *core=[NFBSplitCoordinator new];
@@ -29,6 +31,18 @@ static void RunSplitCoordinatorTests(void) {
     [core settleMovieKeyboard]; Check(engine.keyboardChecks==1,@"movie keyboard uses backend");
     [core replaceWindowWithDesktop:nil]; [core reconcile];
     Check(core.phase==NFBSplitPhaseMovieDesktop && engine.replacements==1,@"desktop phase shares core");
+    [core closeDesktop];
+    [core scheduleDesktopAfterCleanup:@[@"old"] delay:0 guard:^BOOL { return YES; } refresh:^{}];
+    [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.03]];
+    Check(engine.desktop,@"cleanup schedules desktop through shared core");
+    [core closeDesktop];
+    [core scheduleDesktopAfterCleanup:@[@"old"] delay:0 guard:^BOOL { return YES; } refresh:^{}];
+    [core closeDesktop]; // user command must cancel old queued fallback
+    [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.03]];
+    Check(!engine.desktop,@"user close invalidates delayed desktop fallback");
+    [core scheduleDesktopAfterCleanup:@[@"old"] delay:0 guard:^BOOL { return NO; } refresh:^{}];
+    [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.03]];
+    Check(!engine.desktop,@"reopened app guard cancels cleanup fallback");
     NSUInteger generation=core.generation;
     engine.scene=@"new-window";
     [core updateEnabled:YES locked:NO movie:YES keyboard:YES];

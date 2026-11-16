@@ -9,6 +9,7 @@ extern id<NFBSplitBackend> NFBCreateOpenSplitBackend(void);
 @property(nonatomic,readwrite) BOOL movieActive;
 @property(nonatomic) BOOL enabled, locked, movie, keyboard, updating;
 @property(nonatomic,copy) NSString *identity;
+@property(nonatomic) NSUInteger operationEpoch, cleanupEpoch;
 @end
 @implementation NFBSplitCoordinator
 + (instancetype)shared {
@@ -24,6 +25,7 @@ extern id<NFBSplitBackend> NFBCreateOpenSplitBackend(void);
     self.enabled=enabled; self.locked=locked; self.movie=movie; self.keyboard=keyboard;
     self.identity=identity;
     if (changed) self.generation++;
+    if (!enabled || locked || !movie) self.cleanupEpoch++;
     // Lock/disable takes precedence, without scheduling any unlock recovery.
     if (!enabled || locked) {
         [self.backend closeDesktop];
@@ -65,12 +67,40 @@ extern id<NFBSplitBackend> NFBCreateOpenSplitBackend(void);
     if (!self.enabled || self.locked || !self.movie || !self.keyboard) return;
     [self.backend settleMovieKeyboard];
 }
+- (void)scheduleDesktopAfterCleanup:(NSArray<NSString *> *)apps delay:(NSTimeInterval)delay
+    guard:(BOOL (^)(void))guard refresh:(void (^)(void))refresh {
+    NSAssert(NSThread.isMainThread,@"split coordinator is main-queue only");
+    if (!self.enabled || self.locked || !self.movie || !guard) return;
+    NSUInteger epoch=++self.cleanupEpoch;
+    NSUInteger operation=self.operationEpoch;
+    NSUInteger session=[self.backend desktopSessionIdentifier];
+    id<NFBSplitBackend> backend=self.backend;
+    NSArray *targets=[apps copy];
+    __block BOOL done=NO;
+    __weak NFBSplitCoordinator *weakSelf=self;
+    for (NSUInteger attempt=0; attempt<6; attempt++) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)((MAX(0,delay)+attempt*0.25)*NSEC_PER_SEC)),
+            dispatch_get_main_queue(), ^{
+                NFBSplitCoordinator *core=weakSelf;
+                if (!core || done) return;
+                if (core.cleanupEpoch!=epoch || core.operationEpoch!=operation || core.backend!=backend ||
+                    !core.enabled || core.locked || !core.movie || !guard()) { done=YES; return; }
+                // Closing old panes changes scene identity legitimately during
+                // cleanup. Bind desktop identity instead; backend checks new
+                // portrait windows and never supplants a newly opened app.
+                if ([backend desktopSessionIdentifier]!=session || [backend desktopActive]) { done=YES; return; }
+                done=[backend recheckDesktopAfterCleanup:targets];
+                NFBDebugLog(@"split-core: cleanup check=%lu done=%d session=%lu",(unsigned long)attempt+1,done,(unsigned long)session);
+                if (refresh) refresh();
+            });
+    }
+}
 - (BOOL)replaceWindowWithDesktop:(UIView *)window {
     if (!self.enabled || self.locked || self.updating) return NO;
-    self.generation++;
+    self.generation++; self.operationEpoch++; self.cleanupEpoch++;
     return [self.backend replaceWindowWithDesktop:window];
 }
-- (void)closeDesktop { self.generation++; [self.backend closeDesktop]; }
+- (void)closeDesktop { self.generation++; self.operationEpoch++; self.cleanupEpoch++; [self.backend closeDesktop]; }
 - (BOOL)installBackend:(id<NFBSplitBackend>)backend {
     NSAssert(NSThread.isMainThread,@"split coordinator is main-queue only");
     if (!backend || self.updating || self.movieActive || [self.backend desktopActive] || self.enabled) return NO;

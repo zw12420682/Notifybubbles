@@ -6,8 +6,12 @@ assert f.index('if (NFBDesktopSplitActive()) return YES') < f.index('movieDeskto
 assert 'else if ([clearedApps containsObject:appOfWindow(view)])' in f
 assert 'if (!landscape) return YES' in f and 'if (closingPortrait) return NO' in f
 assert 'NFBOpenTrollApp' not in f and 'NFBClose' not in f
-assert 'attempt<6' in m
-for token in ['manager.exitEpoch!=exitEpoch','manager.clearEpoch!=epoch','[manager isLocked]','!NFBPreference(@"MovieMode", NO)','fallbackDone=NFBRecheckMovieDesktopAfterCleanup(targets)']:
+c=(r/'Sources/NFBSplitCoordinator.m').read_text()
+assert 'attempt<6' in c
+assert 'core.operationEpoch!=operation' in c
+assert '[backend desktopSessionIdentifier]!=session' in c
+assert '[backend recheckDesktopAfterCleanup:targets]' in c
+for token in ['manager.exitEpoch!=exitEpoch','manager.clearEpoch!=epoch','[manager isLocked]','!NFBPreference(@"MovieMode", NO)','scheduleDesktopAfterCleanup:targets']:
  assert token in m,token
 # stopped vs retry policy: existing desktop or new lower must not be toggled.
 def check(desktop,landscape,lower,targets):
