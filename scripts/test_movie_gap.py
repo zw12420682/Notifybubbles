@@ -2,7 +2,8 @@
 from pathlib import Path
 s=(Path(__file__).resolve().parents[1]/'Sources/NFBWindowControls.m').read_text()
 assert 'const CGFloat movieGap = 4.0;' in s
-assert 'CGRectGetMinY(lower) - movieGap - h*ratio/2' in s
+assert 'CGPointMake(layoutTarget.x, layoutTarget.y)' in s
+assert 'NFBSplitPlanMovie(' in s
 for width, top, w, h in [(390,248.02,390,219.375),(390,118.16,844,390),(430,300,1920,1080)]:
     gap=4
     scale=min((top-gap)/h,width/w)

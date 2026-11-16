@@ -1,4 +1,5 @@
 #import "NFBWindowControls.h"
+#import "NFBSplitLayout.h"
 #import "NFBDesktopHost.h"
 #import "NFBKeyboard.h"
 #import "NFBSystemDesktop.h"
@@ -604,11 +605,15 @@ BOOL NFBUpdateMovieMode(BOOL enabled) {
             // Bottom-align above the unchanged lower pane with a fixed 4pt gap.
             const CGFloat movieGap = 4.0;
             CGFloat room = MAX(1, CGRectGetMinY(lower)-CGRectGetMinY(area)-movieGap);
-            CGFloat ratio = MIN(room/MAX(1,h), area.size.width/MAX(1,w));
-            if (!isfinite(ratio) || ratio <= 0 || w < 1 || h < 1) continue;
+            (void)room;
+            NFBSplitBasis layoutBasis={basis.a,basis.b,basis.c,basis.d};
+            NFBSplitMovieTarget layoutTarget=NFBSplitPlanMovie(area.origin.x,area.origin.y,area.size.width,area.size.height,
+                lower.origin.y,lower.size.width,lower.size.height,CGRectGetMaxY(lower),
+                view.bounds.size.width,view.bounds.size.height,layoutBasis,movieGap);
+            if (!layoutTarget.valid) continue;
+            CGFloat ratio=layoutTarget.scale;
             CGAffineTransform destination = CGAffineTransformScale(basis, ratio, ratio);
-            CGPoint target = CGPointMake(CGRectGetMidX(area),
-                CGRectGetMinY(lower) - movieGap - h*ratio/2);
+            CGPoint target = CGPointMake(layoutTarget.x, layoutTarget.y);
             CGAffineTransform current = view.transform;
             BOOL changed = fabs(current.a-destination.a)>0.0001 || fabs(current.b-destination.b)>0.0001 ||
                 fabs(current.c-destination.c)>0.0001 || fabs(current.d-destination.d)>0.0001 ||
