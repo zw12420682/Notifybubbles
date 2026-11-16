@@ -2,15 +2,20 @@
 #import <UIKit/UIKit.h>
 @class NFBWindowLease;
 
-// Engine-specific scene APIs stay behind this contract. Future native engines
-// must provide live interactive scenes, not snapshots masquerading as windows.
+// Open-specific scene APIs stay behind this contract; the coordinator owns
+// state and task cancellation. Only Open integration is in scope.
 typedef NS_ENUM(NSUInteger, NFBSplitSnapshotStatus) {
     NFBSplitSnapshotUnknown, NFBSplitSnapshotPresent, NFBSplitSnapshotAbsent
 };
 @interface NFBSplitSnapshot : NSObject
-@property(nonatomic,copy) NSString *sceneIdentity, *lowerApp;
-@property(nonatomic,weak) UIView *lowerWindow;
-@property(nonatomic) CGRect lowerFrame;
+@property(nonatomic,copy) NSString *sceneIdentity, *lowerApp, *upperApp;
+@property(nonatomic,weak) UIView *lowerWindow, *upperWindow;
+@property(nonatomic) CGRect lowerFrame, upperFrame;
+@property(nonatomic) BOOL upperLandscape;
+@property(nonatomic) NFBSplitSnapshotStatus upperStatus;
+@property(nonatomic,copy) NSString *upperIdentity;
+@property(nonatomic,copy) NSArray<UIView *> *upperWindows;
+@property(nonatomic,copy) NSArray<UIWindow *> *upperHostWindows;
 @property(nonatomic) CGSize rootSize;
 @property(nonatomic) NSUInteger desktopSessionIdentifier;
 @property(nonatomic) NFBSplitSnapshotStatus status;
@@ -41,6 +46,7 @@ typedef NS_ENUM(NSUInteger, NFBSplitPhase) {
 @property(nonatomic, strong, readonly) NFBWindowLease *windowLease;
 @property(nonatomic, readonly) NFBSplitPhase phase;
 @property(nonatomic, readonly) BOOL movieActive;
+@property(nonatomic,strong,readonly) NFBSplitSnapshot *snapshot;
 // Called on main queue, before reading layout. No timers are created here.
 - (void)updateEnabled:(BOOL)enabled locked:(BOOL)locked movie:(BOOL)movie keyboard:(BOOL)keyboard;
 - (void)reconcile;

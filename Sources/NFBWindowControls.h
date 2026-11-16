@@ -32,3 +32,12 @@ void NFBRecheckMovieLayout(void);
 
 // YES stops the bounded post-cleanup checks; NO means old pane is closing or retry is needed.
 BOOL NFBRecheckMovieDesktopAfterCleanup(NSArray<NSString *> *clearedApps);
+
+// One main-queue observation used synchronously by Open layout and snapshots.
+@interface NFBOpenWindowObservation : NSObject
+@property(nonatomic,copy) NSArray<UIView *> *windows, *landscapeWindows;
+@property(nonatomic,weak) UIView *portrait;
+@property(nonatomic) BOOL classAvailable, sceneAvailable;
+@end
+NFBOpenWindowObservation *NFBCaptureOpenWindows(void);
+BOOL NFBApplyMovieObservation(BOOL enabled, NFBOpenWindowObservation *observation);

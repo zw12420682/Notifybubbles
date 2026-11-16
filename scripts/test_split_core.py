@@ -3,7 +3,7 @@ r=Path(__file__).resolve().parents[1]
 c=(r/'Sources/NFBSplitCoordinator.m').read_text();b=(r/'Sources/NFBOpenSplitBackend.m').read_text();h=(r/'Sources/NFBDesktopHost.m').read_text();w=(r/'Sources/NFBWindowControls.m').read_text()
 assert 'NSClassFromString' not in c and 'objc_msgSend' not in c
 assert 'NFBUpdateMovieMode(' not in c
-assert 'NFBUpdateMovieMode(enabled)' in b
+assert 'NFBApplyMovieObservation(enabled,captured)' in b
 assert 'floatingWindow]' in b
 assert 'movieDesktopSession==NFBDesktopSessionIdentifier()' in w
 assert 'record.appliedTransform = destination' in w

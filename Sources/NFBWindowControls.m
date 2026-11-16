@@ -468,6 +468,28 @@ static void movieCollect(UIView *view, Class cls, NSMutableArray<UIView *> *out)
     }
     for (UIView *child in view.subviews) movieCollect(child, cls, out);
 }
+@implementation NFBOpenWindowObservation @end
+NFBOpenWindowObservation *NFBCaptureOpenWindows(void) {
+    NSAssert(NSThread.isMainThread,@"Open observations require main queue");
+    NFBOpenWindowObservation *observation=[NFBOpenWindowObservation new];
+    NSMutableArray<UIView *> *windows=[NSMutableArray array];
+    Class cls=NFBTrollFloatingWindowClass();
+    observation.classAvailable=cls!=Nil;
+    if (cls) for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+        if (![scene isKindOfClass:UIWindowScene.class] ||
+            scene.activationState==UISceneActivationStateBackground ||
+            scene.activationState==UISceneActivationStateUnattached) continue;
+        observation.sceneAvailable=YES;
+        for (UIWindow *window in ((UIWindowScene *)scene).windows) movieCollect(window,cls,windows);
+    }
+    observation.windows=windows;
+    NSMutableArray<UIView *> *landscapes=[NSMutableArray array];
+    for (UIView *view in windows) if (movieLandscape(view)) [landscapes addObject:view];
+    observation.landscapeWindows=landscapes;
+    UIView *portrait=attachmentWindow();
+    if ([windows containsObject:portrait] && !movieLandscape(portrait)) observation.portrait=portrait;
+    return observation;
+}
 static void movieRestore(UIView *view) {
     NFBMovieRecord *record = [movieRecords objectForKey:view];
     if (!record) return;
@@ -488,46 +510,35 @@ static void movieRestore(UIView *view) {
 }
 BOOL NFBUpdateMovieMode(BOOL enabled) {
     if (!NSThread.isMainThread) return NO;
+    if (enabled==movieWasEnabled && CACurrentMediaTime()-movieReadAt<0.2) return movieIsActive;
+    return NFBApplyMovieObservation(enabled,enabled ? NFBCaptureOpenWindows() : nil);
+}
+BOOL NFBApplyMovieObservation(BOOL enabled, NFBOpenWindowObservation *observation) {
+    if (!NSThread.isMainThread) return NO;
     CFTimeInterval now = CACurrentMediaTime();
     if (enabled == movieWasEnabled && now - movieReadAt < 0.2) return movieIsActive;
     movieReadAt = now; movieWasEnabled = enabled;
     if (!movieRecords) movieRecords = [NSMapTable weakToStrongObjectsMapTable];
     if (!movieBackdrops) movieBackdrops = [NSMapTable weakToStrongObjectsMapTable];
-    NSMutableArray<UIView *> *windows = [NSMutableArray array];
-    Class cls = NFBTrollFloatingWindowClass();
-    BOOL sceneAvailable=NO;
-    if (enabled && cls) {
-        for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
-            if (![scene isKindOfClass:UIWindowScene.class] ||
-                scene.activationState == UISceneActivationStateBackground ||
-                scene.activationState == UISceneActivationStateUnattached) continue;
-            sceneAvailable=YES;
-            for (UIWindow *window in ((UIWindowScene *)scene).windows) movieCollect(window, cls, windows);
-        }
-    }
-    BOOL landscape = NO;
-    for (UIView *view in windows) {
-        NSInteger orientation = orientationOf(view, @"sceneOrientation");
-        NSInteger container = orientationOf(view, @"containerOrientation");
-        if (orientation == 3 || orientation == 4 || container == 3 || container == 4) landscape = YES;
-    }
+    NSArray<UIView *> *windows=enabled ? (observation.windows ?: @[]) : @[];
+    BOOL sceneAvailable=observation.sceneAvailable;
+    BOOL classAvailable=observation.classAvailable;
+    BOOL landscape = enabled && observation.landscapeWindows.count>0;
     // While Open rebuilds scenes, no class/window is UNKNOWN rather than closed.
     // Keep existing leases for at most two 0.2s samples; lock/disable releases
     // immediately. Do not run fit or open desktop using an unknown snapshot.
-    NFBSplitObservation observation=landscape ? NFBSplitObservationPresent :
-        ((!cls || !sceneAvailable) ? NFBSplitObservationUnknown : NFBSplitObservationAbsent);
-    BOOL retained=NFBSplitRetainMovie(&movieObservation,movieIsActive,enabled,observation);
+    NFBSplitObservation presence=landscape ? NFBSplitObservationPresent :
+        ((!classAvailable || !sceneAvailable) ? NFBSplitObservationUnknown : NFBSplitObservationAbsent);
+    BOOL retained=NFBSplitRetainMovie(&movieObservation,movieIsActive,enabled,presence);
     if (enabled && !landscape && retained) {
-        NFBDebugLog(@"split-core: movie snapshot temporarily %s; preserving current leases",observation==NFBSplitObservationUnknown?"unknown":"absent");
+        NFBDebugLog(@"split-core: movie snapshot temporarily %s; preserving current leases",presence==NFBSplitObservationUnknown?"unknown":"absent");
         return movieIsActive;
     }
     movieIsActive = enabled && landscape;
     moviePortrait = nil;
     // Reuse the same frontmost portrait selection as the rail. Never choose
     // an arbitrary first window from UIWindowScene enumeration order.
-    UIView *portraitCandidate=attachmentWindow();
-    if ([windows containsObject:portraitCandidate] && !movieLandscape(portraitCandidate))
-        moviePortrait=portraitCandidate;
+    moviePortrait=observation.portrait;
     if (moviePortrait) {
         if (movieOwnsDesktop && movieDesktopSession==NFBDesktopSessionIdentifier()) NFBCloseDesktopSplit();
         movieOwnsDesktop = NO; movieDesktopAttempted = NO;
@@ -566,9 +577,7 @@ BOOL NFBUpdateMovieMode(BOOL enabled) {
             [movieRecords setObject:record forKey:view];
         }
         // Leave all window and content corner styles owned by Open.
-        NSInteger orientation = orientationOf(view, @"sceneOrientation");
-        NSInteger container = orientationOf(view, @"containerOrientation");
-        if (orientation == 3 || orientation == 4 || container == 3 || container == 4) {
+        if ([observation.landscapeWindows containsObject:view]) {
             // The lower app remains fixed. Top alignment may use the status-bar
             // band; shrink uniformly only if the existing video cannot fit.
             CGRect lower = moviePortrait ? [moviePortrait convertRect:moviePortrait.bounds toView:parent] : CGRectZero;
@@ -675,7 +684,7 @@ BOOL NFBUpdateMovieMode(BOOL enabled) {
     }
     NSMutableArray<UIWindow *> *touchHosts = [NSMutableArray array];
     if (movieIsActive && ((movieOwnsDesktop && movieDesktopSession==NFBDesktopSessionIdentifier()) || NFBDesktopIndependentAnchor()) && NFBDesktopSplitActive()) {
-        for (UIView *view in windows) if (movieLandscape(view) && view.window &&
+        for (UIView *view in observation.landscapeWindows) if (view.window &&
             ![touchHosts containsObject:view.window]) [touchHosts addObject:view.window];
     }
     // The host is now above the desktop for native touch delivery. Its black
@@ -734,18 +743,12 @@ void NFBRecheckMovieLayout(void) {
 BOOL NFBRecheckMovieDesktopAfterCleanup(NSArray<NSString *> *clearedApps) {
     if (!NSThread.isMainThread) return YES;
     if (NFBDesktopSplitActive()) return YES; // Never toggle an existing desktop.
-    Class cls=NFBTrollFloatingWindowClass();
-    if (!cls) return NO;
-    NSMutableArray<UIView *> *visible=[NSMutableArray array];
-    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
-        if (![scene isKindOfClass:UIWindowScene.class] ||
-            scene.activationState==UISceneActivationStateBackground ||
-            scene.activationState==UISceneActivationStateUnattached) continue;
-        for (UIWindow *window in ((UIWindowScene *)scene).windows) movieCollect(window,cls,visible);
-    }
+    NFBOpenWindowObservation *observation=NFBCaptureOpenWindows();
+    if (!observation.classAvailable || !observation.sceneAvailable) return NO;
+    NSArray<UIView *> *visible=observation.windows;
     BOOL landscape=NO, closingPortrait=NO;
     for (UIView *view in visible) {
-        if (movieLandscape(view)) landscape=YES;
+        if ([observation.landscapeWindows containsObject:view]) landscape=YES;
         else if ([clearedApps containsObject:appOfWindow(view)]) closingPortrait=YES;
         else {
             NFBDebugLog(@"movie-cleanup: cancelled for lower app %@",appOfWindow(view));
@@ -757,7 +760,7 @@ BOOL NFBRecheckMovieDesktopAfterCleanup(NSArray<NSString *> *clearedApps) {
     // A failed earlier one-shot attempt must not permanently suppress this
     // explicit post-cleanup fallback. Only the bounded caller re-arms it.
     movieDesktopAttempted=NO; movieReadAt=0;
-    NFBUpdateMovieMode(YES);
+    NFBApplyMovieObservation(YES,observation);
     BOOL done=NFBDesktopSplitActive();
     NFBDebugLog(@"movie-cleanup: desktop fallback active=%d",done);
     return done;

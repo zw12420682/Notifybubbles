@@ -11,6 +11,7 @@ extern id<NFBSplitBackend> NFBCreateOpenSplitBackend(void);
 @property(nonatomic,readwrite) NSUInteger generation;
 @property(nonatomic,readwrite) NFBSplitPhase phase;
 @property(nonatomic,readwrite) BOOL movieActive;
+@property(nonatomic,strong,readwrite) NFBSplitSnapshot *snapshot;
 @property(nonatomic) BOOL enabled, locked, movie, keyboard, updating;
 @property(nonatomic,copy) NSString *identity;
 @property(nonatomic) NSUInteger operationEpoch, cleanupEpoch;
@@ -38,6 +39,7 @@ extern id<NFBSplitBackend> NFBCreateOpenSplitBackend(void);
     if (!enabled || locked || !movie) self.cleanupEpoch++;
     // Lock/disable takes precedence, without scheduling any unlock recovery.
     if (!enabled || locked) {
+        self.snapshot=nil;
         [self.windowLease releaseSession:self.windowLease.sessionIdentifier];
         [self.backend closeDesktop];
         [self.backend applyMovieEnabled:NO];
@@ -62,7 +64,8 @@ extern id<NFBSplitBackend> NFBCreateOpenSplitBackend(void);
 }
 - (NFBSplitSnapshot *)captureLayoutInView:(UIView *)root {
     NSAssert(NSThread.isMainThread,@"split coordinator is main-queue only");
-    return [self.backend captureLayoutInView:root];
+    self.snapshot=[self.backend captureLayoutInView:root];
+    return self.snapshot;
 }
 - (BOOL)keyboardRailFitsSnapshot:(NFBSplitSnapshot *)snapshot {
     // Never use retained/stale geometry to expose controls above a live keyboard.
@@ -151,7 +154,7 @@ extern id<NFBSplitBackend> NFBCreateOpenSplitBackend(void);
 - (BOOL)installBackend:(id<NFBSplitBackend>)backend {
     NSAssert(NSThread.isMainThread,@"split coordinator is main-queue only");
     if (!backend || self.updating || self.movieActive || [self.backend desktopActive] || self.enabled) return NO;
-    self.backend=backend; self.identity=nil; self.generation++;
+    self.backend=backend; self.identity=nil; self.snapshot=nil; self.generation++;
     return YES;
 }
 @end
