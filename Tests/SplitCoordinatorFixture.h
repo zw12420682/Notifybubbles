@@ -40,3 +40,5 @@ static void RunSplitCoordinatorTests(void) {
     [core updateEnabled:NO locked:NO movie:NO keyboard:NO];
     Check([core installBackend:[SplitBackendFixture new]],@"stopped core permits engine replacement");
 }
+
+id<NFBSplitBackend> NFBCreateOpenSplitBackend(void) { return [SplitBackendFixture new]; }

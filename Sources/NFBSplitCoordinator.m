@@ -1,19 +1,6 @@
 #import "NFBSplitCoordinator.h"
-#import "NFBWindowControls.h"
-#import "NFBDesktopHost.h"
-#import "NFBWindowState.h"
+extern id<NFBSplitBackend> NFBCreateOpenSplitBackend(void);
 #import "NFBDebugLog.h"
-
-@interface NFBOpenSplitBackend : NSObject <NFBSplitBackend> @end
-@implementation NFBOpenSplitBackend
-- (NSString *)identifier { return @"open-compat"; }
-- (NSString *)sceneIdentity { return NFBCurrentWindowState().sceneKey ?: @"unknown"; }
-- (BOOL)applyMovieEnabled:(BOOL)enabled { return NFBUpdateMovieMode(enabled); }
-- (void)settleMovieKeyboard { NFBRecheckMovieLayout(); }
-- (void)closeDesktop { NFBCloseDesktopSplit(); }
-- (BOOL)replaceWindowWithDesktop:(UIView *)window { return NFBReplaceSplitWithDesktop(window); }
-- (BOOL)desktopActive { return NFBDesktopSplitActive(); }
-@end
 
 @interface NFBSplitCoordinator ()
 @property(nonatomic,strong) id<NFBSplitBackend> backend;
@@ -26,7 +13,7 @@
 @implementation NFBSplitCoordinator
 + (instancetype)shared {
     static NFBSplitCoordinator *instance; static dispatch_once_t once;
-    dispatch_once(&once, ^{ instance=[self new]; instance.backend=[NFBOpenSplitBackend new]; });
+    dispatch_once(&once, ^{ instance=[self new]; instance.backend=NFBCreateOpenSplitBackend(); });
     return instance;
 }
 - (void)updateEnabled:(BOOL)enabled locked:(BOOL)locked movie:(BOOL)movie keyboard:(BOOL)keyboard {
@@ -59,6 +46,20 @@
             self.phase=next;
         }
     } @finally { self.updating=NO; }
+}
+- (void)scheduleMovieKeyboardChecks {
+    NSAssert(NSThread.isMainThread,@"split coordinator is main-queue only");
+    if (!self.enabled || self.locked || !self.movie || !self.keyboard) return;
+    NSUInteger generation=self.generation;
+    NSString *scene=[self.backend sceneIdentity];
+    __weak NFBSplitCoordinator *weakSelf=self;
+    for (NSNumber *seconds in @[@0.12,@0.32,@0.65]) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(seconds.doubleValue*NSEC_PER_SEC)),dispatch_get_main_queue(), ^{
+            NFBSplitCoordinator *core=weakSelf;
+            if (!core || core.generation!=generation || ![[core.backend sceneIdentity] isEqualToString:scene]) return;
+            [core settleMovieKeyboard];
+        });
+    }
 }
 - (void)settleMovieKeyboard {
     if (!self.enabled || self.locked || !self.movie || !self.keyboard) return;

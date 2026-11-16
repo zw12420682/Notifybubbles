@@ -27,6 +27,7 @@ typedef NS_ENUM(NSUInteger, NFBSplitPhase) {
 - (void)updateEnabled:(BOOL)enabled locked:(BOOL)locked movie:(BOOL)movie keyboard:(BOOL)keyboard;
 - (void)reconcile;
 - (void)settleMovieKeyboard;
+- (void)scheduleMovieKeyboardChecks;
 - (BOOL)replaceWindowWithDesktop:(UIView *)window;
 - (void)closeDesktop;
 // Engine replacement is explicit and rejected while a session is active.
