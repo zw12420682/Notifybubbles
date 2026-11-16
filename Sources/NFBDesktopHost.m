@@ -79,6 +79,19 @@ typedef NS_ENUM(NSUInteger, NFBDesktopMutationPhase) {
 @end
 static NFBDesktopSession *session;
 static NSUInteger desktopSequence;
+#ifdef NFB_DESKTOP_SIM_TEST
+// Simulator-only one-shot fault injection; never compiled into the tweak.
+static NSUInteger desktopFailurePoint;
+void NFBDesktopTestFailAt(NSUInteger point) { desktopFailurePoint=point; }
+static void NFBDesktopTestCheckpoint(NSUInteger point) {
+    if (desktopFailurePoint!=point) return;
+    desktopFailurePoint=0;
+    [NSException raise:@"DesktopTransactionFixture" format:@"checkpoint %lu",(unsigned long)point];
+}
+#else
+#define NFBDesktopTestCheckpoint(point) ((void)0)
+#endif
+
 NSUInteger NFBDesktopSessionIdentifier(void) { return session && !session.restoring ? session.identifier : 0; }
 static UIScrollView *NFBDesktopPager(UIView *desktop);
 static void NFBLogWidgetHosts(UIView *view, NSUInteger depth, NSUInteger *budget);
@@ -1178,6 +1191,7 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
         next.desktopHost = desktopHost; [canvas addSubview:desktopHost];
         // Verify geometry before touching the desktop hierarchy.
         if (![next place]) { [next restore]; return NO; }
+        NFBDesktopTestCheckpoint(1); // Prepared: desktop has not moved.
         if (next.startedHome) {
             UIVisualEffectView *frost = [[UIVisualEffectView alloc] initWithEffect:nil];
             frost.frame = [desktop convertRect:desktop.bounds toView:next.originalParent];
@@ -1197,6 +1211,7 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
         desktop.bounds = next.originalBounds;
         desktop.center = CGPointMake(CGRectGetMidX(next.originalBounds),CGRectGetMidY(next.originalBounds));
         desktop.hidden = NO; desktop.alpha = 1; desktop.userInteractionEnabled = YES;
+        NFBDesktopTestCheckpoint(2); // Transferred: rollback must return native tree.
         if (![next place]) { [next restore]; return NO; }
         // The pane keeps the desktop's icons, folders and widgets; only the
         // wallpaper is forced on screen, and supplied when the subtree has none.
@@ -1204,7 +1219,6 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
         [next adoptDesktopInteraction];
         if (next.wallpaperCount == 0) [next installPaneBackdrop];
         session = next;
-        next.mutationPhase=NFBDesktopMutationActive;
         next.windowMutated = YES;
         // Raising the native window must not raise its fullscreen siblings over
         // the app behind the pane. Save them so close restores the native tree.
@@ -1220,6 +1234,7 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
         window.alpha = 1; window.userInteractionEnabled = YES; window.hidden = NO;
         [window bringSubviewToFront:panel];
         [next activateDesktop];
+        NFBDesktopTestCheckpoint(3); // Window/focus leased: restore every captured property.
         NFBDebugLog(@"desktop-widget: open startedHome=%d controller=%@ corner=%.2f desktop=%@ bounds=%@",
             next.startedHome, NSStringFromClass(next.desktopController.class), panel.layer.cornerRadius,
             NSStringFromClass(desktop.class), NSStringFromCGRect(desktop.bounds));
@@ -1271,6 +1286,9 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
                 panel.alpha = 1; panel.transform = CGAffineTransformIdentity;
             } completion:nil];
         }
+        // Commit only once transfer, interaction, window and timer setup all
+        // succeeded. Checks cannot act on a half-constructed desktop session.
+        next.mutationPhase=NFBDesktopMutationActive;
         NFBDebugLog(@"desktop native host: view=%@ window=%@ root=%@ sameScene=%d pane=%@",
             NSStringFromClass(desktop.class), NSStringFromClass(window.class),
             NSStringFromClass(window.rootViewController.class), desktop.window==window,

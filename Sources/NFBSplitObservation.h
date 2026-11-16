@@ -4,7 +4,7 @@
 typedef enum { NFBSplitObservationUnknown, NFBSplitObservationPresent, NFBSplitObservationAbsent } NFBSplitObservation;
 typedef struct { unsigned missing; } NFBSplitObservationTracker;
 // Unknown is bounded, not an indefinite lease. Explicit disabled/locked always
-// releases immediately. A reliable absence needs two successive observations.
+// releases immediately. Two missing samples are tolerated; the third releases the old leases.
 static inline bool NFBSplitRetainMovie(NFBSplitObservationTracker *t, bool wasActive,
         bool enabled, NFBSplitObservation obs) {
     if (!enabled) { t->missing=0; return false; }

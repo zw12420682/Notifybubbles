@@ -7,6 +7,7 @@
 // Simulator fixtures supply the private classes; the host itself is production code.
 @interface SBFolderContainerView : UIView @end
 @implementation SBFolderContainerView @end
+extern void NFBDesktopTestFailAt(NSUInteger point);
 extern BOOL NFBDesktopSuppressFolderTracking(CALayer *, NSString *);
 @interface SBFolderView : UIView @end
 @implementation SBFolderView @end
@@ -334,6 +335,17 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
         NFBCloseDesktopSplit();
         Check(!independent.superview,@"independent anchor removed on desktop close");
         Check(replace.closeCalls==1,@"desktop close never closes app twice");
+        for (NSUInteger fault=1; fault<=3; fault++) {
+            NFBDesktopTestFailAt(fault);
+            Check(!NFBShowDesktopInSplit(anchor),@"injected desktop transaction failure rejects open");
+            Check(!NFBDesktopSplitActive(),@"failed transaction never leaves active session");
+            Check(desktop.superview==root.view,@"failure rollback returns desktop to original parent");
+            Check(CGRectEqualToRect(desktop.bounds,bounds) && CGPointEqualToPoint(desktop.center,center),
+                @"failure rollback restores desktop geometry");
+            Check(nativeWindow.windowLevel==nativeLevel && nativeWindow.rootViewController==nativeRoot,
+                @"failure rollback preserves native window ownership and layer");
+            Check(NFBDesktopIndependentAnchor()==nil,@"failed session has no independent anchor");
+        }
         CheckOpen(NFBShowDesktopInSplit(anchor),@"reopen",desktop,root.view);
         [SBLockScreenManager sharedInstance].locked=YES; NFBUpdateDesktopSplit(YES);
         Check(!NFBDesktopSplitActive() && desktop.superview==root.view,@"lock restores desktop");

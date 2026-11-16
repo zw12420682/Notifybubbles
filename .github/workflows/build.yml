@@ -95,7 +95,9 @@ jobs:
           "$RUNNER_TEMP/test-policies"
           python3 scripts/test_policies.py
       - name: Test engine-independent split layout
-        run: python3 scripts/test_split_layout.py
+        run: |
+          python3 scripts/test_split_layout.py
+          python3 scripts/test_split_observation.py
       - name: Test column geometry (split, fullscreen, collapsed, empty)
         run: |
           xcrun --sdk macosx clang -fobjc-arc -fmodules -Wall -Wextra -Werror \
