@@ -1,4 +1,5 @@
 #import "NFBSplitCoordinator.h"
+#import "NFBWindowLease.h"
 extern id<NFBSplitBackend> NFBCreateOpenSplitBackend(void);
 #import "NFBDebugLog.h"
 
@@ -11,11 +12,17 @@ extern id<NFBSplitBackend> NFBCreateOpenSplitBackend(void);
 @property(nonatomic,copy) NSString *identity;
 @property(nonatomic) NSUInteger operationEpoch, cleanupEpoch;
 @end
-@implementation NFBSplitCoordinator
+@implementation NFBSplitCoordinator {
+    NFBWindowLease *_windowLease;
+}
 + (instancetype)shared {
     static NFBSplitCoordinator *instance; static dispatch_once_t once;
     dispatch_once(&once, ^{ instance=[self new]; instance.backend=NFBCreateOpenSplitBackend(); });
     return instance;
+}
+- (NFBWindowLease *)windowLease {
+    if (!_windowLease) _windowLease=[NFBWindowLease new];
+    return _windowLease;
 }
 - (void)updateEnabled:(BOOL)enabled locked:(BOOL)locked movie:(BOOL)movie keyboard:(BOOL)keyboard {
     NSAssert(NSThread.isMainThread,@"split coordinator is main-queue only");
@@ -28,6 +35,7 @@ extern id<NFBSplitBackend> NFBCreateOpenSplitBackend(void);
     if (!enabled || locked || !movie) self.cleanupEpoch++;
     // Lock/disable takes precedence, without scheduling any unlock recovery.
     if (!enabled || locked) {
+        [self.windowLease releaseSession:self.windowLease.sessionIdentifier];
         [self.backend closeDesktop];
         [self.backend applyMovieEnabled:NO];
         self.movieActive=NO;

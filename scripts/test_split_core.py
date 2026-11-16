@@ -8,7 +8,7 @@ assert 'floatingWindow]' in b
 assert 'movieDesktopSession==NFBDesktopSessionIdentifier()' in w
 assert 'record.appliedTransform = destination' in w
 assert 'record.appliedTransform = view.transform' not in w
-assert 'movieHostRelinquished' in h
+assert 'NFBSplitCoordinator.shared.windowLease' in h
 assert 'core.generation!=generation' in c
 assert 'core.backend sceneIdentity' in c
 assert 'self.enabled) return NO' in c

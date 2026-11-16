@@ -1,5 +1,6 @@
 #pragma once
 #import <UIKit/UIKit.h>
+@class NFBWindowLease;
 
 // Engine-specific scene APIs stay behind this contract. Future native engines
 // must provide live interactive scenes, not snapshots masquerading as windows.
@@ -23,6 +24,7 @@ typedef NS_ENUM(NSUInteger, NFBSplitPhase) {
 @interface NFBSplitCoordinator : NSObject
 + (instancetype)shared;
 @property(nonatomic, readonly) NSUInteger generation;
+@property(nonatomic, strong, readonly) NFBWindowLease *windowLease;
 @property(nonatomic, readonly) NFBSplitPhase phase;
 @property(nonatomic, readonly) BOOL movieActive;
 // Called on main queue, before reading layout. No timers are created here.
