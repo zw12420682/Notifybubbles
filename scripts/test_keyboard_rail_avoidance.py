@@ -3,8 +3,10 @@ r=Path(__file__).resolve().parents[1]
 s=(r/'Sources/NFBManager.m').read_text()
 a=s.index('// Keyboard avoidance must use');b=s.index('    [self ensureWindow];',a)
 f=s[a:b]
-assert 'NFBSplitFrameInView(keyboardRoot)' in f
-assert 'available >= 30' in f
+assert 'keyboardRailFitsSnapshot:layoutSnapshot' in f
+c=(r/'Sources/NFBSplitCoordinator.m').read_text()
+assert 'available>=30' in c
+assert 'snapshot.status!=NFBSplitSnapshotPresent' in c
 assert 'if (keyboardUp)' in f
 assert 'self.window.hidden = YES' in f
 assert 'userInteractionEnabled = NO' in f

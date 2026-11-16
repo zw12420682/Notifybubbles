@@ -1,7 +1,10 @@
 #import "NFBSplitCoordinator.h"
 #import "NFBWindowLease.h"
+#include <math.h>
 extern id<NFBSplitBackend> NFBCreateOpenSplitBackend(void);
 #import "NFBDebugLog.h"
+
+@implementation NFBSplitSnapshot @end
 
 @interface NFBSplitCoordinator ()
 @property(nonatomic,strong) id<NFBSplitBackend> backend;
@@ -56,6 +59,38 @@ extern id<NFBSplitBackend> NFBCreateOpenSplitBackend(void);
             self.phase=next;
         }
     } @finally { self.updating=NO; }
+}
+- (NFBSplitSnapshot *)captureLayoutInView:(UIView *)root {
+    NSAssert(NSThread.isMainThread,@"split coordinator is main-queue only");
+    return [self.backend captureLayoutInView:root];
+}
+- (BOOL)keyboardRailFitsSnapshot:(NFBSplitSnapshot *)snapshot {
+    // Never use retained/stale geometry to expose controls above a live keyboard.
+    if (!snapshot || snapshot.status!=NFBSplitSnapshotPresent || !snapshot.lowerApp.length ||
+        CGRectIsNull(snapshot.lowerFrame) || CGRectIsEmpty(snapshot.lowerFrame) ||
+        !isfinite(snapshot.lowerFrame.origin.x) || !isfinite(snapshot.lowerFrame.origin.y) ||
+        !isfinite(snapshot.lowerFrame.size.width) || !isfinite(snapshot.lowerFrame.size.height) ||
+        !isfinite(snapshot.rootSize.width) || snapshot.rootSize.width<=0) return NO;
+    CGFloat available=snapshot.rootSize.width-CGRectGetMaxX(snapshot.lowerFrame)-8;
+    return isfinite(available) && available>=30;
+}
+- (void)enqueueKeyboardCheck:(dispatch_block_t)block after:(NSTimeInterval)delay {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(delay*NSEC_PER_SEC)),dispatch_get_main_queue(),block);
+}
+- (void)schedulePortraitRestoreAfter:(NSTimeInterval)delay {
+    if (!self.enabled || self.locked || self.keyboard) return;
+    NSUInteger generation=self.generation, operation=self.operationEpoch;
+    id<NFBSplitBackend> backend=self.backend;
+    NSString *scene=[backend sceneIdentity];
+    NSUInteger desktop=[backend desktopSessionIdentifier];
+    __weak NFBSplitCoordinator *weakSelf=self;
+    [self enqueueKeyboardCheck:^{
+        NFBSplitCoordinator *core=weakSelf;
+        if (!core || core.generation!=generation || core.operationEpoch!=operation || core.backend!=backend ||
+            !core.enabled || core.locked || core.keyboard ||
+            ![[backend sceneIdentity] isEqualToString:scene] || [backend desktopSessionIdentifier]!=desktop) return;
+        [backend restorePortraitPlacement];
+    } after:MAX(0,MIN(0.5,delay))];
 }
 - (void)scheduleMovieKeyboardChecks {
     NSAssert(NSThread.isMainThread,@"split coordinator is main-queue only");

@@ -499,12 +499,7 @@ static const CFTimeInterval kTickReconcileInterval = 2.0;
                 double delay = NFBNumber(@"KeyboardRecheckDelay", 0.1);
                 if (!isfinite(delay) || delay < 0) delay = 0;
                 if (delay > 0.5) delay = 0.5;
-                if (delay <= 0) {
-                    NFBRecheckSplitPlacement();
-                } else {
-                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)),
-                        dispatch_get_main_queue(), ^{ NFBRecheckSplitPlacement(); });
-                }
+                [NFBSplitCoordinator.shared schedulePortraitRestoreAfter:delay];
             }
             [weakSelf setNeedsRefresh];
         });
@@ -1856,7 +1851,8 @@ static NSString *NFBFrontmostAppID(void) {
     NFBObserveSplitSwitch(floatingApp, self.closePreviousSplit);
     NFBObserveSplitPlacement(floatingApp);
     // An attachment fallback is layout-only: do not treat it as an app switch.
-    floatingApp = NFBSplitAttachmentApp();
+    NFBSplitSnapshot *layoutSnapshot=[splitCore captureLayoutInView:self.window.rootViewController.view];
+    floatingApp = layoutSnapshot.lowerApp;
     if ([self.retracting containsObject:floatingApp ?: @""]) floatingApp = nil;
     // Keep the fast watcher in step with reality every time we recompute layout.
     // Continue observing orientation even when a lone landscape window has no
@@ -2060,13 +2056,8 @@ static NSString *NFBFrontmostAppID(void) {
     // Keyboard avoidance must use the REAL current portrait frame, before
     // transient icon-size fallback substitutes the normal cached rail footprint.
     // Both the root's rows and the window-level house button must disappear.
-    NSString *splitHoldsColumn = NFBTrollVisibleApp() ?: floatingApp;
     if (keyboardUp) {
-        UIView *keyboardRoot = self.window.rootViewController.view;
-        CGRect keyboardSplit = NFBSplitFrameInView(keyboardRoot);
-        CGFloat available = keyboardRoot ? CGRectGetMaxX(keyboardRoot.bounds)-CGRectGetMaxX(keyboardSplit)-8 : 0;
-        BOOL keyboardRailFits = splitHoldsColumn.length && !CGRectIsNull(keyboardSplit) &&
-            !CGRectIsEmpty(keyboardSplit) && isfinite(available) && available >= 30;
+        BOOL keyboardRailFits=[splitCore keyboardRailFitsSnapshot:layoutSnapshot];
         // 30pt = smallest valid 16pt icon plus the existing 14pt row padding.
         // Hide synchronously: an outgoing animation would still cover keys.
         if (!keyboardRailFits) {
@@ -2103,7 +2094,7 @@ static NSString *NFBFrontmostAppID(void) {
     CGRect bounds = root.bounds;
     UIEdgeInsets safe = root.safeAreaInsets;
     CGFloat top = MAX(safe.top, 48) + 30;
-    CGRect splitFrame = floatingApp.length ? NFBSplitFrameInView(root) : CGRectNull;
+    CGRect splitFrame = floatingApp.length ? layoutSnapshot.lowerFrame : CGRectNull;
     // During Open's window rebuild the frame is momentarily unavailable while the
     // attachment is still reported. Reuse the last good frame for geometry and for
     // the icon-suppression decision so a rebuild cannot flash the edge icon or

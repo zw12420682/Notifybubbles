@@ -4,12 +4,18 @@ BOOL NFBUpdateMovieMode(__unused BOOL enabled) { return NO; }
 void NFBRecheckMovieLayout(void) {}
 @interface SplitBackendFixture : NSObject <NFBSplitBackend>
 @property(nonatomic) BOOL active, desktop;
-@property(nonatomic) NSUInteger refits, closes, replacements, keyboardChecks;
+@property(nonatomic) NSUInteger refits, closes, replacements, keyboardChecks, portraitChecks;
 @property(nonatomic,copy) NSString *scene;
 @end
 @implementation SplitBackendFixture
 - (NSString *)identifier { return @"test-engine"; }
 - (NSString *)sceneIdentity { return self.scene ?: @"home"; }
+- (NFBSplitSnapshot *)captureLayoutInView:(UIView *)root {
+    NFBSplitSnapshot *s=[NFBSplitSnapshot new]; s.rootSize=root.bounds.size;
+    s.status=NFBSplitSnapshotPresent; s.lowerApp=@"lower";
+    s.lowerFrame=CGRectMake(0,151,390,693); return s;
+}
+- (void)restorePortraitPlacement { self.portraitChecks++; }
 - (BOOL)applyMovieEnabled:(BOOL)enabled { self.refits++; return enabled && self.active; }
 - (void)settleMovieKeyboard { self.keyboardChecks++; }
 - (void)closeDesktop { self.closes++; self.desktop=NO; }
@@ -26,6 +32,9 @@ void NFBRecheckMovieLayout(void) {}
 - (void)enqueueCleanupCheck:(dispatch_block_t)block after:(__unused NSTimeInterval)delay {
     if (!self.checks) self.checks=[NSMutableArray array];
     [self.checks addObject:[block copy]];
+}
+- (void)enqueueKeyboardCheck:(dispatch_block_t)block after:(NSTimeInterval)delay {
+    [self enqueueCleanupCheck:block after:delay];
 }
 - (void)drainChecks {
     NSArray<dispatch_block_t> *pending=[self.checks copy]; [self.checks removeAllObjects];
@@ -65,6 +74,20 @@ static void RunSplitCoordinatorTests(void) {
     NSUInteger checks=engine.keyboardChecks;
     [core settleMovieKeyboard]; [core reconcile];
     Check(!core.movieActive && core.phase==NFBSplitPhaseLocked && !engine.desktop && engine.keyboardChecks==checks,@"lock blocks refit and dismisses desktop");
+    [core updateEnabled:YES locked:NO movie:YES keyboard:NO];
+    [core schedulePortraitRestoreAfter:0.1]; [core drainChecks];
+    Check(engine.portraitChecks==1,@"keyboard dismissal restores through backend");
+    [core schedulePortraitRestoreAfter:0.1];
+    engine.scene=@"replacement"; [core drainChecks];
+    Check(engine.portraitChecks==1,@"stale keyboard callback cannot move new Open window");
+    NFBSplitSnapshot *snapshot=[NFBSplitSnapshot new];
+    snapshot.status=NFBSplitSnapshotPresent; snapshot.lowerApp=@"lower"; snapshot.rootSize=CGSizeMake(390,844);
+    snapshot.lowerFrame=CGRectMake(0,151,390,693);
+    Check(![core keyboardRailFitsSnapshot:snapshot],@"full width keyboard hides rail");
+    snapshot.lowerFrame=CGRectMake(0,248,335.4,596);
+    Check([core keyboardRailFitsSnapshot:snapshot],@"side space permits rail");
+    snapshot.status=NFBSplitSnapshotUnknown;
+    Check(![core keyboardRailFitsSnapshot:snapshot],@"unknown snapshot cannot reveal rail over keyboard");
     [core updateEnabled:NO locked:NO movie:NO keyboard:NO];
     Check([core installBackend:[SplitBackendFixture new]],@"stopped core permits engine replacement");
 }
