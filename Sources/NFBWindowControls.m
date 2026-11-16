@@ -470,7 +470,7 @@ static void movieCollect(UIView *view, Class cls, NSMutableArray<UIView *> *out)
 }
 @implementation NFBOpenWindowObservation @end
 NFBOpenWindowObservation *NFBCaptureOpenWindows(void) {
-    NSAssert(NSThread.isMainThread,@"Open observations require main queue");
+    NSCAssert(NSThread.isMainThread,@"Open observations require main queue");
     NFBOpenWindowObservation *observation=[NFBOpenWindowObservation new];
     NSMutableArray<UIView *> *windows=[NSMutableArray array];
     Class cls=NFBTrollFloatingWindowClass();
