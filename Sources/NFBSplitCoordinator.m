@@ -100,13 +100,16 @@ extern id<NFBSplitBackend> NFBCreateOpenSplitBackend(void);
     if (!self.enabled || self.locked || !self.movie || !self.keyboard) return;
     NSUInteger generation=self.generation;
     NSString *scene=[self.backend sceneIdentity];
+    id<NFBSplitBackend> backend=self.backend;
+    NSUInteger desktop=[backend desktopSessionIdentifier], operation=self.operationEpoch;
     __weak NFBSplitCoordinator *weakSelf=self;
     for (NSNumber *seconds in @[@0.12,@0.32,@0.65]) {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(seconds.doubleValue*NSEC_PER_SEC)),dispatch_get_main_queue(), ^{
+        [self enqueueKeyboardCheck:^{
             NFBSplitCoordinator *core=weakSelf;
-            if (!core || core.generation!=generation || ![[core.backend sceneIdentity] isEqualToString:scene]) return;
+            if (!core || core.generation!=generation || core.backend!=backend || core.operationEpoch!=operation ||
+                [backend desktopSessionIdentifier]!=desktop || ![[core.backend sceneIdentity] isEqualToString:scene]) return;
             [core settleMovieKeyboard];
-        });
+        } after:seconds.doubleValue];
     }
 }
 - (void)settleMovieKeyboard {

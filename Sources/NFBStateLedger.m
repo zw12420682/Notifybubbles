@@ -37,6 +37,11 @@
 }
 @end
 void NFBAttemptCleanup(NSString *stage, void (^cleanup)(void)) {
+    BOOL timing=NFBDebugLoggingEnabled();
+    CFAbsoluteTime start=timing ? CFAbsoluteTimeGetCurrent() : 0;
     @try { if (cleanup) cleanup(); }
     @catch (NSException *error) { NFBErrorLog(@"cleanup %@ failed: %@",stage,error); }
+    @finally {
+        if (timing) NFBDebugLog(@"desktop-cleanup-time: stage=%@ ms=%.3f",stage,(CFAbsoluteTimeGetCurrent()-start)*1000);
+    }
 }

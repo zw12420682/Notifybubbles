@@ -991,8 +991,10 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
     [self adoptDesktopInteraction];
 }
 - (void)restore {
-    [NFBMovieHostLease() releaseSession:self.identifier];
     if (self.restoring) return;
+    BOOL timing=NFBDebugLoggingEnabled();
+    CFAbsoluteTime restoreStart=timing ? CFAbsoluteTimeGetCurrent() : 0;
+    [NFBMovieHostLease() releaseSession:self.identifier];
     self.restoring=YES;
     self.mutationPhase=NFBDesktopMutationRestoring;
     self.widgetRefreshCancelled=YES;
@@ -1065,6 +1067,7 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
     self.constraints=nil; self.desktopController=nil;
     self.mutationPhase=NFBDesktopMutationFinished;
     NFBInvalidateWindowState();
+    if (timing) NFBDebugLog(@"desktop-cleanup-time: session=%lu totalMs=%.3f",(unsigned long)self.identifier,(CFAbsoluteTimeGetCurrent()-restoreStart)*1000);
 }
 
 @end

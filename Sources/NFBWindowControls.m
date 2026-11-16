@@ -448,6 +448,8 @@ static BOOL movieOwnsDesktop;
 static NSUInteger movieDesktopSession;
 static BOOL movieDesktopAttempted;
 static NFBSplitObservationTracker movieObservation;
+static NSHashTable<UIView *> *movieLastLandscape;
+static BOOL movieHadLandscape;
 static CGRect movieLowerScreen;
 static BOOL movieLandscape(UIView *view) {
     NSInteger a = orientationOf(view, @"sceneOrientation"), b = orientationOf(view, @"containerOrientation");
@@ -510,13 +512,19 @@ static void movieRestore(UIView *view) {
 }
 BOOL NFBUpdateMovieMode(BOOL enabled) {
     if (!NSThread.isMainThread) return NO;
-    if (enabled==movieWasEnabled && CACurrentMediaTime()-movieReadAt<0.2) return movieIsActive;
     return NFBApplyMovieObservation(enabled,enabled ? NFBCaptureOpenWindows() : nil);
 }
 BOOL NFBApplyMovieObservation(BOOL enabled, NFBOpenWindowObservation *observation) {
     if (!NSThread.isMainThread) return NO;
     CFTimeInterval now = CACurrentMediaTime();
-    if (enabled == movieWasEnabled && now - movieReadAt < 0.2) return movieIsActive;
+    BOOL explicitlyClosed=movieHadLandscape && observation.classAvailable && observation.sceneAvailable &&
+        observation.landscapeWindows.count==0;
+    if (explicitlyClosed) for (UIView *old in movieLastLandscape.allObjects) {
+        if (old.window && boolStateOf(old,@"isClosingWithKeepAliveAnimation")!=1) {
+            explicitlyClosed=NO; break; // hiding/rotation/mini must use normal confirmation
+        }
+    }
+    if (!explicitlyClosed && enabled == movieWasEnabled && now - movieReadAt < 0.2) return movieIsActive;
     movieReadAt = now; movieWasEnabled = enabled;
     if (!movieRecords) movieRecords = [NSMapTable weakToStrongObjectsMapTable];
     if (!movieBackdrops) movieBackdrops = [NSMapTable weakToStrongObjectsMapTable];
@@ -529,7 +537,15 @@ BOOL NFBApplyMovieObservation(BOOL enabled, NFBOpenWindowObservation *observatio
     // immediately. Do not run fit or open desktop using an unknown snapshot.
     NFBSplitObservation presence=landscape ? NFBSplitObservationPresent :
         ((!classAvailable || !sceneAvailable) ? NFBSplitObservationUnknown : NFBSplitObservationAbsent);
-    BOOL retained=NFBSplitRetainMovie(&movieObservation,movieIsActive,enabled,presence);
+    BOOL retained=NFBSplitRetainMovieWithClosure(&movieObservation,movieIsActive,enabled,presence,explicitlyClosed);
+    if (landscape) {
+        movieLastLandscape=[NSHashTable weakObjectsHashTable];
+        for (UIView *view in observation.landscapeWindows) [movieLastLandscape addObject:view];
+        movieHadLandscape=YES;
+    } else if (!retained) {
+        movieHadLandscape=NO; [movieLastLandscape removeAllObjects];
+    }
+    if (explicitlyClosed) NFBDebugLog(@"split-core: confirmed movie close; skip missing-window grace");
     if (enabled && !landscape && retained) {
         NFBDebugLog(@"split-core: movie snapshot temporarily %s; preserving current leases",presence==NFBSplitObservationUnknown?"unknown":"absent");
         return movieIsActive;

@@ -80,6 +80,15 @@ static void RunSplitCoordinatorTests(void) {
     [core schedulePortraitRestoreAfter:0.1];
     engine.scene=@"replacement"; [core drainChecks];
     Check(engine.portraitChecks==1,@"stale keyboard callback cannot move new Open window");
+    [core updateEnabled:YES locked:NO movie:YES keyboard:YES];
+    NSUInteger beforeQueued=engine.keyboardChecks;
+    [core scheduleMovieKeyboardChecks];
+    engine.desktop=YES; // session changes without changing app/scene identity
+    [core drainChecks];
+    Check(engine.keyboardChecks==beforeQueued,@"new desktop session rejects old movie keyboard jobs");
+    [core closeDesktop];
+    [core scheduleMovieKeyboardChecks]; [core drainChecks];
+    Check(engine.keyboardChecks==beforeQueued+3,@"same-session movie keyboard jobs run through shared scheduler");
     NFBSplitSnapshot *snapshot=[NFBSplitSnapshot new];
     snapshot.status=NFBSplitSnapshotPresent; snapshot.lowerApp=@"lower"; snapshot.rootSize=CGSizeMake(390,844);
     snapshot.lowerFrame=CGRectMake(0,151,390,693);

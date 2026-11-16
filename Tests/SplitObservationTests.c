@@ -10,5 +10,10 @@ int main(void) {
  assert(NFBSplitRetainMovie(&t,false,true,NFBSplitObservationPresent));
  assert(!NFBSplitRetainMovie(&t,true,false,NFBSplitObservationUnknown));
  assert(!NFBSplitRetainMovie(&t,false,true,NFBSplitObservationUnknown));
- puts("PASS: bounded unknown/absence and immediate disabled cleanup");
+ assert(!NFBSplitRetainMovieWithClosure(&t,true,true,NFBSplitObservationAbsent,true));
+ assert(t.missing==0);
+ assert(NFBSplitRetainMovieWithClosure(&t,true,true,NFBSplitObservationUnknown,false));
+ assert(NFBSplitRetainMovieWithClosure(&t,true,true,NFBSplitObservationPresent,true));
+ assert(!NFBSplitRetainMovieWithClosure(&t,true,false,NFBSplitObservationUnknown,false));
+ puts("PASS: bounded unknown/absence, explicit close fast path, replacement survives, disabled cleanup");
 }
