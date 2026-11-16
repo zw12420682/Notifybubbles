@@ -1,5 +1,6 @@
 #import "NFBWindowControls.h"
 #import "NFBSplitLayout.h"
+#import "NFBSplitObservation.h"
 #import "NFBDesktopHost.h"
 #import "NFBKeyboard.h"
 #import "NFBSystemDesktop.h"
@@ -446,6 +447,7 @@ static __weak UIView *moviePortrait;
 static BOOL movieOwnsDesktop;
 static NSUInteger movieDesktopSession;
 static BOOL movieDesktopAttempted;
+static NFBSplitObservationTracker movieObservation;
 static CGRect movieLowerScreen;
 static BOOL movieLandscape(UIView *view) {
     NSInteger a = orientationOf(view, @"sceneOrientation"), b = orientationOf(view, @"containerOrientation");
@@ -493,11 +495,13 @@ BOOL NFBUpdateMovieMode(BOOL enabled) {
     if (!movieBackdrops) movieBackdrops = [NSMapTable weakToStrongObjectsMapTable];
     NSMutableArray<UIView *> *windows = [NSMutableArray array];
     Class cls = NFBTrollFloatingWindowClass();
+    BOOL sceneAvailable=NO;
     if (enabled && cls) {
         for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
             if (![scene isKindOfClass:UIWindowScene.class] ||
                 scene.activationState == UISceneActivationStateBackground ||
                 scene.activationState == UISceneActivationStateUnattached) continue;
+            sceneAvailable=YES;
             for (UIWindow *window in ((UIWindowScene *)scene).windows) movieCollect(window, cls, windows);
         }
     }
@@ -507,7 +511,16 @@ BOOL NFBUpdateMovieMode(BOOL enabled) {
         NSInteger container = orientationOf(view, @"containerOrientation");
         if (orientation == 3 || orientation == 4 || container == 3 || container == 4) landscape = YES;
     }
-    // A normal portrait-only split remains untouched, even with the option on.
+    // While Open rebuilds scenes, no class/window is UNKNOWN rather than closed.
+    // Keep existing leases for at most two 0.2s samples; lock/disable releases
+    // immediately. Do not run fit or open desktop using an unknown snapshot.
+    NFBSplitObservation observation=landscape ? NFBSplitObservationPresent :
+        ((!cls || !sceneAvailable) ? NFBSplitObservationUnknown : NFBSplitObservationAbsent);
+    BOOL retained=NFBSplitRetainMovie(&movieObservation,movieIsActive,enabled,observation);
+    if (enabled && !landscape && retained) {
+        NFBDebugLog(@"split-core: movie snapshot temporarily %s; preserving current leases",observation==NFBSplitObservationUnknown?"unknown":"absent");
+        return movieIsActive;
+    }
     movieIsActive = enabled && landscape;
     moviePortrait = nil;
     // Reuse the same frontmost portrait selection as the rail. Never choose

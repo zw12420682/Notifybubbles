@@ -14,8 +14,13 @@
 #include <math.h>
 static NSArray<UIWindow *> *NFBDesktopWindows(void);
 
+typedef NS_ENUM(NSUInteger, NFBDesktopMutationPhase) {
+    NFBDesktopMutationPreparing, NFBDesktopMutationTransferred,
+    NFBDesktopMutationActive, NFBDesktopMutationRestoring, NFBDesktopMutationFinished
+};
 @interface NFBDesktopSession : NSObject
 @property(nonatomic) NSUInteger identifier;
+@property(nonatomic) NFBDesktopMutationPhase mutationPhase;
 @property(nonatomic, strong) UIWindow *window;
 @property(nonatomic, strong) UIView *panel;
 @property(nonatomic, strong) UIView *canvas;
@@ -961,7 +966,7 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
     return YES;
 }
 - (void)check {
-    if (session != self || self.restoring) return;
+    if (session != self || self.restoring || self.mutationPhase != NFBDesktopMutationActive) return;
     // 10 Hz timer. Every other private-API path in this file is wrapped; this one
     // was not, so a single throw here terminated SpringBoard.
     @try { [self checkBody]; }
@@ -1003,6 +1008,7 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
     NFBRestoreMovieHosts();
     if (self.restoring) return;
     self.restoring=YES;
+    self.mutationPhase=NFBDesktopMutationRestoring;
     self.widgetRefreshCancelled=YES;
     if (NFBDebugLoggingEnabled()) {
         NFBDebugLog(@"desktop-widget: restore begin startedHome=%d suppliedAppearance=%d parent=%@ original=%@",
@@ -1071,6 +1077,7 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
     }
     self.backgroundFrost=nil; self.window=nil; self.desktop=nil; self.originalParent=nil;
     self.constraints=nil; self.desktopController=nil;
+    self.mutationPhase=NFBDesktopMutationFinished;
     NFBInvalidateWindowState();
 }
 
@@ -1117,6 +1124,7 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
     if (session) { NFBCloseDesktopSplit(); return YES; }
     NFBDesktopSession *next = [NFBDesktopSession new];
     next.identifier=++desktopSequence;
+    next.mutationPhase=NFBDesktopMutationPreparing;
     @try {
         UIView *desktop = NFBDesktopSource(anchor);
         if (!desktop) return NFBDesktopFail(@"没有找到已加载的系统桌面视图");
@@ -1182,6 +1190,7 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
         [NSLayoutConstraint deactivateConstraints:next.constraints];
         desktop.translatesAutoresizingMaskIntoConstraints = YES; desktop.autoresizingMask = UIViewAutoresizingNone;
         [desktopHost addSubview:desktop];
+        next.mutationPhase=NFBDesktopMutationTransferred;
         // Establish native geometry once. The periodic check must not overwrite
         // positions or transforms that SpringBoard owns during folder animation.
         desktop.transform = CGAffineTransformIdentity;
@@ -1195,6 +1204,7 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
         [next adoptDesktopInteraction];
         if (next.wallpaperCount == 0) [next installPaneBackdrop];
         session = next;
+        next.mutationPhase=NFBDesktopMutationActive;
         next.windowMutated = YES;
         // Raising the native window must not raise its fullscreen siblings over
         // the app behind the pane. Save them so close restores the native tree.
