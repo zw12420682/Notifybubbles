@@ -15,6 +15,7 @@
 static NSArray<UIWindow *> *NFBDesktopWindows(void);
 
 @interface NFBDesktopSession : NSObject
+@property(nonatomic) NSUInteger identifier;
 @property(nonatomic, strong) UIWindow *window;
 @property(nonatomic, strong) UIView *panel;
 @property(nonatomic, strong) UIView *canvas;
@@ -72,6 +73,8 @@ static NSArray<UIWindow *> *NFBDesktopWindows(void);
 - (void)restoreDesktopAppearance;
 @end
 static NFBDesktopSession *session;
+static NSUInteger desktopSequence;
+NSUInteger NFBDesktopSessionIdentifier(void) { return session && !session.restoring ? session.identifier : 0; }
 static UIScrollView *NFBDesktopPager(UIView *desktop);
 static void NFBLogWidgetHosts(UIView *view, NSUInteger depth, NSUInteger *budget);
 // Lock diagnostics are observational only: no refresh, page change, snapshot,
@@ -312,6 +315,7 @@ static UIView *NFBDesktopFloatingHit(UIView *view, UIView *panel, Class floating
 // another UIWindow and never synthesize/redispatch UIEvents.
 static NSMapTable<UIWindow *, NSNumber *> *movieHostLevels;
 static NSMapTable<UIWindow *, NSNumber *> *movieHostApplied;
+static NSHashTable<UIWindow *> *movieHostRelinquished;
 #ifndef NFB_DESKTOP_SIM_TEST
 static Class movieHostHitClass;
 static UIView *(*originalMovieHostHit)(id, SEL, CGPoint, UIEvent *);
@@ -335,12 +339,16 @@ static void NFBRestoreMovieHosts(void) {
             host.windowLevel = [[movieHostLevels objectForKey:host] doubleValue];
     }
     [movieHostLevels removeAllObjects]; [movieHostApplied removeAllObjects];
+    [movieHostRelinquished removeAllObjects];
 }
 void NFBUpdateMovieDesktopTouchHosts(NSArray<UIWindow *> *hosts) {
     if (!NSThread.isMainThread) return;
     if (!session || session.restoring || !hosts.count) { NFBRestoreMovieHosts(); return; }
     if (!movieHostLevels) movieHostLevels = [NSMapTable weakToStrongObjectsMapTable];
     if (!movieHostApplied) movieHostApplied = [NSMapTable weakToStrongObjectsMapTable];
+    if (!movieHostRelinquished) movieHostRelinquished=[NSHashTable weakObjectsHashTable];
+    for (UIWindow *old in movieHostRelinquished.allObjects)
+        if (![hosts containsObject:old]) [movieHostRelinquished removeObject:old];
     for (UIWindow *old in movieHostLevels.keyEnumerator.allObjects) if (![hosts containsObject:old]) {
         if (fabs(old.windowLevel-[[movieHostApplied objectForKey:old] doubleValue]) < 0.01)
             old.windowLevel = [[movieHostLevels objectForKey:old] doubleValue];
@@ -359,6 +367,16 @@ void NFBUpdateMovieDesktopTouchHosts(NSArray<UIWindow *> *hosts) {
         }
         if (cls != movieHostHitClass || !originalMovieHostHit) continue;
 #endif
+        if ([movieHostRelinquished containsObject:host]) continue;
+        NSNumber *previousApplied=[movieHostApplied objectForKey:host];
+        if (previousApplied && fabs(host.windowLevel-previousApplied.doubleValue)>0.01) {
+            // Someone else owns the new level. Drop our lease and hit-test
+            // override for the rest of this host presentation; do not fight it.
+            [movieHostLevels removeObjectForKey:host]; [movieHostApplied removeObjectForKey:host];
+            [movieHostRelinquished addObject:host];
+            NFBDebugLog(@"split-core: host lease relinquished after external level change host=%p",host);
+            continue;
+        }
         if (![movieHostLevels objectForKey:host]) [movieHostLevels setObject:@(host.windowLevel) forKey:host];
         CGFloat level = session.window.windowLevel + 1;
         [movieHostApplied setObject:@(level) forKey:host];
@@ -1098,6 +1116,7 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
     if (NFBDesktopLocked()) return NFBDesktopFail(@"锁屏时不能打开桌面分屏");
     if (session) { NFBCloseDesktopSplit(); return YES; }
     NFBDesktopSession *next = [NFBDesktopSession new];
+    next.identifier=++desktopSequence;
     @try {
         UIView *desktop = NFBDesktopSource(anchor);
         if (!desktop) return NFBDesktopFail(@"没有找到已加载的系统桌面视图");

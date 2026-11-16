@@ -19,6 +19,7 @@
 #import "NFBSwitcher.h"
 #import "NFBTrollOpen.h"
 #import "NFBWindowControls.h"
+#import "NFBSplitCoordinator.h"
 #import "NFBOpenEdge.h"
 #import "NFBNotificationPolicy.h"
 #import "NFBAppExit.h"
@@ -498,7 +499,7 @@ static const CFTimeInterval kTickReconcileInterval = 2.0;
                                 NFBManager *manager = weakSelf;
                                 if (!manager || manager.movieKeyboardEpoch != epoch || !manager.enabled ||
                                     [manager isLocked] || !NFBKeyboardVisible() || !NFBPreference(@"MovieMode", NO)) return;
-                                NFBRecheckMovieLayout();
+                                [NFBSplitCoordinator.shared settleMovieKeyboard];
                             });
                     }
                 }
@@ -593,7 +594,7 @@ static const CFTimeInterval kTickReconcileInterval = 2.0;
     [favoriteOrder addObjectsFromArray:selected.array];
     self.favoriteApps = favoriteOrder.array;
     if (!self.enabled) {
-        NFBCloseDesktopSplit();
+        [NFBSplitCoordinator.shared closeDesktop];
         NFBSetCaptureHidden(self.window.rootViewController.view, NO);
         [self.timer invalidate]; self.timer = nil; [self clear];
     } else { [self startTimer]; [self tick]; }
@@ -943,7 +944,7 @@ static NSString *NFBFrontmostAppID(void) {
         return;
     }
     [self resetAutoCollapseTimer];
-    NFBCloseDesktopSplit();
+    [NFBSplitCoordinator.shared closeDesktop];
     // Fold to the collapsed state first so the column slides to the edge with the
     // split's own dismissal animation instead of snapping after it.
     if (self.edgeExpanded) {
@@ -964,7 +965,7 @@ static NSString *NFBFrontmostAppID(void) {
             self.desktopActionTouchTarget = nil;
             if (!target || target != self.desktopActionTarget || target != NFBDesktopActionWindow()) { [self refresh]; return; }
             if (![self acceptGestureForKey:@"desktopAction"]) return;
-            if (!NFBReplaceSplitWithDesktop(target)) [self showOpenNotice:NFBDesktopSplitError()];
+            if (![NFBSplitCoordinator.shared replaceWindowWithDesktop:target]) [self showOpenNotice:NFBDesktopSplitError()];
             [self refresh];
             return;
         }
@@ -973,7 +974,7 @@ static NSString *NFBFrontmostAppID(void) {
             self.desktopActionTouchTarget = nil;
             if (!target || target != self.desktopActionTarget || target != NFBDesktopActionWindow()) { [self refresh]; return; }
             if (![self acceptGestureForKey:@"desktopConsole"]) return;
-            NFBCloseDesktopSplit();
+            [NFBSplitCoordinator.shared closeDesktop];
             if (!NFBOpenNativeConsole()) [self showOpenNotice:@"Open 控制台入口不可用，请确认使用适配的定制版 1.3.7"];
             [self refresh];
             return;
@@ -1624,7 +1625,8 @@ static NSString *NFBFrontmostAppID(void) {
 - (void)updatePrivacy {
     NFBObserveHomeWidgetLockDiagnostics([self isLocked], self.enabled);
     NFBUpdateArcOverlay(self.enabled && ![self isLocked]);
-    if (!self.enabled || [self isLocked]) NFBUpdateDesktopSplit(NO);
+    [NFBSplitCoordinator.shared updateEnabled:self.enabled locked:[self isLocked]
+        movie:NFBPreference(@"MovieMode", NO) keyboard:NFBKeyboardVisible()];
     NFBSetCaptureHidden(self.window.rootViewController.view, self.enabled && self.hideInScreenshots);
 }
 // Coalesced entry point: at most one full layout per runloop turn. Use this for
@@ -1838,7 +1840,9 @@ static NSString *NFBFrontmostAppID(void) {
     self.layoutRecording = YES;
     [self updatePrivacy];
     NFBUpdateOpenEdge(self.enabled);
-    BOOL movieActive = NFBUpdateMovieMode(self.enabled && ![self isLocked] && NFBPreference(@"MovieMode", NO));
+    NFBSplitCoordinator *splitCore=NFBSplitCoordinator.shared;
+    [splitCore reconcile];
+    BOOL movieActive=splitCore.movieActive;
     // A dismissed app (long-press exit or one-click clear) is only marked
     // "dismissed" so its bubble doesn't instantly reappear while the process is
     // still being torn down — iOS keeps a stale switcher card for a killed app,
@@ -3116,7 +3120,7 @@ static NSString *NFBFrontmostAppID(void) {
     [self touchColumn];
     if (self.pendingRecord && [self.pendingRecord.appID isEqual:button.appID]) return;
     if (![self acceptGestureForKey:button.appID ?: @"tap"]) return;
-    NFBCloseDesktopSplit();
+    [NFBSplitCoordinator.shared closeDesktop];
     self.generations[button.appID] = @([self.generations[button.appID] unsignedIntegerValue] + 1);
     [self.closingApps removeObject:button.appID];
     button.opening = YES;

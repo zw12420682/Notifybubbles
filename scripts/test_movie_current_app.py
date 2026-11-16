@@ -1,7 +1,7 @@
 from pathlib import Path
 r=Path(__file__).resolve().parents[1]
 s=(r/'Sources/NFBManager.m').read_text()
-a=s.index('- (void)tapped:(NFBBubble *)button {'); b=s.index('NFBCloseDesktopSplit();',a)
+a=s.index('- (void)tapped:(NFBBubble *)button {'); b=s.index('[NFBSplitCoordinator.shared closeDesktop];',a)
 entry=s[a:b]
 assert 'NFBPreference(@"MovieMode", NO)' in entry
 assert 'NFBTrollVisibleApp()' in entry and 'NFBSplitAttachmentApp()' in entry

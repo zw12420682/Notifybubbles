@@ -15,7 +15,7 @@ name: Build DEB (rootless + roothide)
 on:
   workflow_dispatch:
   push:
-    branches: [main, master]
+    branches: [main, master, refactor/unified-split-core]
     paths-ignore: ['**.md']
 
 permissions:

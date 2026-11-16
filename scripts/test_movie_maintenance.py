@@ -13,5 +13,5 @@ assert 'view.transform, record.appliedTransform' in s
 assert 'view.center, record.appliedCenter' in s
 assert 'if (movieDesktopAnchor.superview != parent) [parent addSubview:movieDesktopAnchor];' in w
 assert 'record.parent != parent' in w
-assert 'record.appliedTransform = view.transform' in w
+assert 'record.appliedTransform = destination' in w
 print('PASS: nil/nil is unchanged; stale rotation/host geometry never restored; desktop proxy reparented before layout')

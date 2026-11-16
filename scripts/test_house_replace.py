@@ -6,6 +6,6 @@ assert 'closeWindowWithoutTerminatingProcessWithoutAnimation' in f
 assert 'NFBTerminate' not in f and 'kill(' not in f
 assert f.index('NFBShowDesktopInSplit(window)') < f.index('active.independentAnchor=proxy') < f.index('invokeWithTarget:window')
 assert 'active.anchor=proxy' in f
-assert 'NFBReplaceSplitWithDesktop(target)' in m
+assert '[NFBSplitCoordinator.shared replaceWindowWithDesktop:target]' in m
 assert '[self.independentAnchor removeFromSuperview]' in h
 print('PASS: exact instance close without process termination; independent desktop anchor and cleanup')

@@ -443,6 +443,7 @@ static CFTimeInterval movieReadAt;
 static BOOL movieWasEnabled;
 static __weak UIView *moviePortrait;
 static BOOL movieOwnsDesktop;
+static NSUInteger movieDesktopSession;
 static BOOL movieDesktopAttempted;
 static CGRect movieLowerScreen;
 static BOOL movieLandscape(UIView *view) {
@@ -508,14 +509,18 @@ BOOL NFBUpdateMovieMode(BOOL enabled) {
     // A normal portrait-only split remains untouched, even with the option on.
     movieIsActive = enabled && landscape;
     moviePortrait = nil;
-    for (UIView *view in windows) if (!movieLandscape(view)) { moviePortrait = view; break; }
+    // Reuse the same frontmost portrait selection as the rail. Never choose
+    // an arbitrary first window from UIWindowScene enumeration order.
+    UIView *portraitCandidate=attachmentWindow();
+    if ([windows containsObject:portraitCandidate] && !movieLandscape(portraitCandidate))
+        moviePortrait=portraitCandidate;
     if (moviePortrait) {
-        if (movieOwnsDesktop && NFBDesktopSplitActive()) NFBCloseDesktopSplit();
+        if (movieOwnsDesktop && movieDesktopSession==NFBDesktopSessionIdentifier()) NFBCloseDesktopSplit();
         movieOwnsDesktop = NO; movieDesktopAttempted = NO;
         [movieDesktopAnchor removeFromSuperview]; movieDesktopAnchor = nil;
     }
     if (!movieIsActive) {
-        if (movieOwnsDesktop && NFBDesktopSplitActive()) NFBCloseDesktopSplit();
+        if (movieOwnsDesktop && movieDesktopSession==NFBDesktopSessionIdentifier()) NFBCloseDesktopSplit();
         movieOwnsDesktop = NO; movieDesktopAttempted = NO;
         [movieDesktopAnchor removeFromSuperview]; movieDesktopAnchor = nil;
         movieLowerScreen = CGRectZero;
@@ -623,11 +628,9 @@ BOOL NFBUpdateMovieMode(BOOL enabled) {
                 NFBDebugLog(@"movie: target app=%@ center=%@ size=%.1fx%.1f animated=%d",
                     appOfWindow(view), NSStringFromCGPoint(target), w*ratio, h*ratio, record.moved);
                 record.moved = YES;
+                record.appliedTransform = destination;
+                record.appliedCenter = target;
             }
-        }
-        if (record.moved) {
-            record.appliedTransform = view.transform;
-            record.appliedCenter = view.center;
         }
         UIView *black = [movieBackdrops objectForKey:parent];
         if (!black) {
@@ -644,6 +647,7 @@ BOOL NFBUpdateMovieMode(BOOL enabled) {
     if (movieIsActive && !moviePortrait && movieDesktopAnchor.window && !movieDesktopAttempted) {
         movieDesktopAttempted = YES;
         if (!NFBDesktopSplitActive()) movieOwnsDesktop = NFBShowDesktopInSplit(movieDesktopAnchor);
+        movieDesktopSession=movieOwnsDesktop ? NFBDesktopSessionIdentifier() : 0;
         NFBDebugLog(@"movie: desktop fallback active=%d", NFBDesktopSplitActive());
         if (NFBDebugLoggingEnabled()) for (UIView *view in windows) {
             NFBDebugLog(@"movie-touch: floating app=%@ view=%p window=%p class=%@ level=%.1f hidden=%d interaction=%d frame=%@",
@@ -652,7 +656,7 @@ BOOL NFBUpdateMovieMode(BOOL enabled) {
         }
     }
     NSMutableArray<UIWindow *> *touchHosts = [NSMutableArray array];
-    if (movieIsActive && (movieOwnsDesktop || NFBDesktopIndependentAnchor()) && NFBDesktopSplitActive()) {
+    if (movieIsActive && ((movieOwnsDesktop && movieDesktopSession==NFBDesktopSessionIdentifier()) || NFBDesktopIndependentAnchor()) && NFBDesktopSplitActive()) {
         for (UIView *view in windows) if (movieLandscape(view) && view.window &&
             ![touchHosts containsObject:view.window]) [touchHosts addObject:view.window];
     }

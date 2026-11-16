@@ -8,7 +8,7 @@ assert 'manager.movieKeyboardEpoch != epoch' in block
 assert '!NFBKeyboardVisible()' in block
 assert '!NFBPreference(@"MovieMode", NO)' in block
 assert '[manager isLocked]' in block
-assert 'NFBRecheckMovieLayout();' in block
+assert '[NFBSplitCoordinator.shared settleMovieKeyboard];' in block
 assert 'NFBRecheckSplitPlacement' not in block
 f=w[w.index('void NFBRecheckMovieLayout(void)'):]
 assert 'movieReadAt = 0' in f

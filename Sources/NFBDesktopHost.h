@@ -20,3 +20,5 @@ UIView *NFBDesktopIndependentAnchor(void);
 
 // Read-only lock/unlock widget observations; never mutates desktop or pages.
 void NFBObserveHomeWidgetLockDiagnostics(BOOL locked, BOOL enabled);
+
+NSUInteger NFBDesktopSessionIdentifier(void);

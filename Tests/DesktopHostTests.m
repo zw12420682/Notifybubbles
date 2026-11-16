@@ -144,6 +144,7 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
     self.closeCalls++; [self removeFromSuperview];
 }
 @end
+#import "SplitCoordinatorFixture.h"
 @interface TestDelegate : UIResponder <UIApplicationDelegate>
 @property(nonatomic,strong) UIWindow *window;
 @property(nonatomic,strong) UIWindow *appWindow;
@@ -162,6 +163,7 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
     [UIView setAnimationsEnabled:NO];
     NSString *result=@"PASS";
     @try {
+        RunSplitCoordinatorTests();
         UIScrollView *railFixture=[[UIScrollView alloc] initWithFrame:CGRectMake(0,0,62,120)];
         railFixture.contentSize=CGSizeMake(62,300);
         CABasicAnimation *oldScroll=[CABasicAnimation animationWithKeyPath:@"bounds"];
