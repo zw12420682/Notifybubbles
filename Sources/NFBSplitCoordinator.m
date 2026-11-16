@@ -67,6 +67,11 @@ extern id<NFBSplitBackend> NFBCreateOpenSplitBackend(void);
     if (!self.enabled || self.locked || !self.movie || !self.keyboard) return;
     [self.backend settleMovieKeyboard];
 }
+// Overridable scheduler seam for deterministic cancellation tests. Production
+// always dispatches on the main queue; no nested run-loop waits are required.
+- (void)enqueueCleanupCheck:(dispatch_block_t)block after:(NSTimeInterval)delay {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(delay*NSEC_PER_SEC)),dispatch_get_main_queue(),block);
+}
 - (void)scheduleDesktopAfterCleanup:(NSArray<NSString *> *)apps delay:(NSTimeInterval)delay
     guard:(BOOL (^)(void))guard refresh:(void (^)(void))refresh {
     NSAssert(NSThread.isMainThread,@"split coordinator is main-queue only");
@@ -79,8 +84,7 @@ extern id<NFBSplitBackend> NFBCreateOpenSplitBackend(void);
     __block BOOL done=NO;
     __weak NFBSplitCoordinator *weakSelf=self;
     for (NSUInteger attempt=0; attempt<6; attempt++) {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)((MAX(0,delay)+attempt*0.25)*NSEC_PER_SEC)),
-            dispatch_get_main_queue(), ^{
+        [self enqueueCleanupCheck:^{
                 NFBSplitCoordinator *core=weakSelf;
                 if (!core || done) return;
                 if (core.cleanupEpoch!=epoch || core.operationEpoch!=operation || core.backend!=backend ||
@@ -92,7 +96,7 @@ extern id<NFBSplitBackend> NFBCreateOpenSplitBackend(void);
                 done=[backend recheckDesktopAfterCleanup:targets];
                 NFBDebugLog(@"split-core: cleanup check=%lu done=%d session=%lu",(unsigned long)attempt+1,done,(unsigned long)session);
                 if (refresh) refresh();
-            });
+            } after:MAX(0,delay)+attempt*0.25];
     }
 }
 - (BOOL)replaceWindowWithDesktop:(UIView *)window {

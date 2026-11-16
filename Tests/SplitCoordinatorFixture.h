@@ -18,8 +18,22 @@ void NFBRecheckMovieLayout(void) {}
 - (NSUInteger)desktopSessionIdentifier { return self.desktop ? 1 : 0; }
 - (BOOL)recheckDesktopAfterCleanup:(__unused NSArray<NSString *> *)apps { self.desktop=YES; return YES; }
 @end
+@interface SplitCoordinatorQueueFixture : NFBSplitCoordinator
+@property(nonatomic,strong) NSMutableArray<dispatch_block_t> *checks;
+- (void)drainChecks;
+@end
+@implementation SplitCoordinatorQueueFixture
+- (void)enqueueCleanupCheck:(dispatch_block_t)block after:(__unused NSTimeInterval)delay {
+    if (!self.checks) self.checks=[NSMutableArray array];
+    [self.checks addObject:[block copy]];
+}
+- (void)drainChecks {
+    NSArray<dispatch_block_t> *pending=[self.checks copy]; [self.checks removeAllObjects];
+    for (dispatch_block_t block in pending) block();
+}
+@end
 static void RunSplitCoordinatorTests(void) {
-    NFBSplitCoordinator *core=[NFBSplitCoordinator new];
+    SplitCoordinatorQueueFixture *core=[SplitCoordinatorQueueFixture new];
     SplitBackendFixture *engine=[SplitBackendFixture new];
     Check([core installBackend:engine],@"core accepts inactive engine without Open calls");
     [core updateEnabled:YES locked:NO movie:NO keyboard:NO]; [core reconcile];
@@ -33,15 +47,15 @@ static void RunSplitCoordinatorTests(void) {
     Check(core.phase==NFBSplitPhaseMovieDesktop && engine.replacements==1,@"desktop phase shares core");
     [core closeDesktop];
     [core scheduleDesktopAfterCleanup:@[@"old"] delay:0 guard:^BOOL { return YES; } refresh:^{}];
-    [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.03]];
+    [core drainChecks];
     Check(engine.desktop,@"cleanup schedules desktop through shared core");
     [core closeDesktop];
     [core scheduleDesktopAfterCleanup:@[@"old"] delay:0 guard:^BOOL { return YES; } refresh:^{}];
     [core closeDesktop]; // user command must cancel old queued fallback
-    [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.03]];
+    [core drainChecks];
     Check(!engine.desktop,@"user close invalidates delayed desktop fallback");
     [core scheduleDesktopAfterCleanup:@[@"old"] delay:0 guard:^BOOL { return NO; } refresh:^{}];
-    [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.03]];
+    [core drainChecks];
     Check(!engine.desktop,@"reopened app guard cancels cleanup fallback");
     NSUInteger generation=core.generation;
     engine.scene=@"new-window";
