@@ -1,0 +1,45 @@
+name: MilkyWay arm64e test
+on:
+  push:
+    branches: [milkyway-test1]
+    paths: ['MilkyWay/**', '.github/workflows/milkyway.yml']
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: macos-15-intel
+    timeout-minutes: 30
+    env:
+      THEOS: ${{ github.workspace }}/.theos-toolchain
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/cache@v5
+        with:
+          path: ${{ env.THEOS }}
+          key: theos-88506b2c22e9e07dd4ed055f23c9e398a117a2c7-v1
+      - run: brew install ldid xz dpkg
+      - name: Toolchain
+        run: |
+          set -euo pipefail
+          if [ ! -d "$THEOS/.git" ]; then
+            git init "$THEOS"
+            git -C "$THEOS" remote add origin https://github.com/roothide/theos.git
+            git -C "$THEOS" fetch --depth 1 origin 88506b2c22e9e07dd4ed055f23c9e398a117a2c7
+            git -C "$THEOS" checkout --detach FETCH_HEAD
+            git -C "$THEOS" submodule update --init --recursive --depth 1
+          fi
+          git clone --depth 1 https://github.com/theos/sdks.git "$RUNNER_TEMP/sdks"
+          mkdir -p "$THEOS/sdks"
+          cp -R "$RUNNER_TEMP/sdks/iPhoneOS16.5.sdk" "$THEOS/sdks/"
+      - name: Build
+        run: |
+          set -eo pipefail
+          cd MilkyWay
+          make package FINALPACKAGE=1 -j2 2>&1 | tee build.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: MilkyWay-arm64e-test1
+          path: |
+            MilkyWay/packages/*.deb
+            MilkyWay/build.log
