@@ -26,6 +26,21 @@ static void RunWindowLeaseTests(void) {
     [lease updateHosts:@[a,b] desktop:desktop session:3];
     [lease updateHosts:@[a] desktop:desktop session:3];
     Check(b.windowLevel==40 && a.windowLevel==1002,@"host-set replacement restores removed host");
+    UIView *root=[[UIView alloc] initWithFrame:CGRectMake(20,20,120,80)];
+    UIView *control=[[UIView alloc] initWithFrame:root.bounds]; [root addSubview:control]; [a addSubview:root];
+    UIView *unrelated=[[UIView alloc] initWithFrame:a.bounds]; [a addSubview:unrelated];
+    [lease publishTouchWindows:@[root] session:3];
+    Check([lease nativeHitInHost:a point:CGPointMake(30,30) event:nil session:3]==control,
+        @"captured floating root reaches its native controls, unrelated overlay excluded");
+    Check([lease nativeHitInHost:a point:CGPointMake(200,200) event:nil session:3]==nil,
+        @"movie host empty space passes through to desktop");
+    [lease publishTouchWindows:@[] session:2];
+    Check([lease nativeHitInHost:a point:CGPointMake(30,30) event:nil session:3]==control,
+        @"stale publication cannot replace new session roots");
+    root.hidden=YES;
+    Check([lease nativeHitInHost:a point:CGPointMake(30,30) event:nil session:3]==nil,@"hidden root no longer accepts touches");
+    root.hidden=NO; [root removeFromSuperview];
+    Check([lease nativeHitInHost:a point:CGPointMake(30,30) event:nil session:3]==nil,@"detached root cannot route stale touches");
     [lease releaseSession:3];
     Check(a.windowLevel==30,@"final teardown restores original host");
     a.hidden=YES;b.hidden=YES;

@@ -718,6 +718,9 @@ BOOL NFBApplyMovieObservation(BOOL enabled, NFBOpenWindowObservation *observatio
         } else black.layer.mask = nil;
     }
     NFBUpdateMovieDesktopTouchHosts(touchHosts);
+    // Publish roots from exactly the observation that produced the geometry and
+    // host lease. No hit-time full-window rescan may introduce unrelated views.
+    NFBPublishMovieTouchWindows(observation.landscapeWindows, NFBDesktopSessionIdentifier());
     for (UIView *view in movieRecords.keyEnumerator.allObjects)
         if (![active containsObject:view]) movieRestore(view);
     for (UIView *parent in movieBackdrops.keyEnumerator.allObjects) if (![parents containsObject:parent]) {

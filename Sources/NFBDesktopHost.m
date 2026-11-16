@@ -340,8 +340,7 @@ static UIView *(*originalMovieHostHit)(id, SEL, CGPoint, UIEvent *);
 static UIView *NFBMovieHostHit(id object, SEL selector, CGPoint point, UIEvent *event) {
     if (session && !session.restoring && [NFBMovieHostLease() ownsHost:object session:session.identifier]) {
         @try {
-            Class cls = NFBTrollFloatingWindowClass();
-            return cls ? NFBDesktopFloatingHit(object, nil, cls, object, point, event) : nil;
+            return [NFBMovieHostLease() nativeHitInHost:object point:point event:event session:session.identifier];
         } @catch (NSException *error) {
             NFBErrorLog(@"movie-touch: host hit exception %@", error);
             return nil;
@@ -372,6 +371,10 @@ void NFBUpdateMovieDesktopTouchHosts(NSArray<UIWindow *> *hosts) {
         [eligible addObject:host];
     }
     [NFBMovieHostLease() updateHosts:eligible desktop:session.window session:session.identifier];
+}
+void NFBPublishMovieTouchWindows(NSArray<UIView *> *windows, NSUInteger desktopSession) {
+    if (!NSThread.isMainThread || !session || session.restoring || session.identifier!=desktopSession) return;
+    [NFBMovieHostLease() publishTouchWindows:windows session:desktopSession];
 }
 // Use the native home window: its controller and scene remain the desktop owners.
 // This helper is also exercised by the simulator window fixture.
@@ -411,10 +414,11 @@ UIView *NFBDesktopSplitHitTest(UIWindow *window, CGPoint point, UIEvent *event, 
         static NSUInteger scheduledActivation;
         if (!scheduledActivation) {
             scheduledActivation++;
+            NSUInteger activationSession=active.identifier;
             dispatch_async(dispatch_get_main_queue(), ^{
                 scheduledActivation = 0;
                 NFBDesktopSession *current = session;
-                if (current && !current.restoring && current.window == window) [current activateDesktop];
+                if (current && current.identifier==activationSession && !current.restoring && current.window == window) [current activateDesktop];
             });
         }
     }

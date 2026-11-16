@@ -4,7 +4,8 @@ s=(r/'Sources/NFBDesktopHost.m').read_text();l=(r/'Sources/NFBWindowLease.m').re
 a=s.index('static UIView *NFBMovieHostHit(');b=s.index('void NFBUpdateMovieDesktopTouchHosts',a)
 f=s[a:b]
 assert 'ownsHost:object session:session.identifier' in f
-assert 'NFBDesktopFloatingHit(object, nil, cls, object, point, event)' in f
+assert 'nativeHitInHost:object point:point event:event session:session.identifier' in f
+assert 'publishTouchWindows:windows session:desktopSession' in s
 assert 'originalMovieHostHit(object, selector, point, event)' in f
 assert 'desktop.windowLevel+1' in l
 assert 'identifier!=self.sessionIdentifier' in l

@@ -22,3 +22,5 @@ UIView *NFBDesktopIndependentAnchor(void);
 void NFBObserveHomeWidgetLockDiagnostics(BOOL locked, BOOL enabled);
 
 NSUInteger NFBDesktopSessionIdentifier(void);
+
+void NFBPublishMovieTouchWindows(NSArray<UIView *> *windows, NSUInteger desktopSession);
