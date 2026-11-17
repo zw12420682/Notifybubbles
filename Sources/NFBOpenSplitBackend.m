@@ -51,6 +51,9 @@
     return snapshot;
 }
 - (void)restorePortraitPlacement { NFBRecheckSplitPlacement(); }
+- (void)cancelReturnTransition { NFBUpdateDesktopReturnTransition(NO); }
+- (BOOL)closeCurrentWindow { return NFBCloseCurrentSplit(); }
+- (BOOL)fullscreenCurrentWindow { return NFBFullscreenCurrentFloatingWindow(); }
 - (BOOL)applyMovieEnabled:(BOOL)enabled {
     self.layoutObservation=enabled ? NFBCaptureOpenWindows() : nil;
     NFBOpenWindowObservation *captured=self.layoutObservation;

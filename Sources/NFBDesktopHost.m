@@ -215,6 +215,7 @@ BOOL NFBLaunchAppFromDesktopIcon(id iconView) {
         UIAccessibilityPostNotification(UIAccessibilityAnnouncementNotification,@"无法读取应用标识，桌面分屏已保留");
         return YES; // Never fall through to a fullscreen launch in the desktop pane.
     }
+    [NFBSplitCoordinator.shared beginUserWindowOperation];
     active.pendingApp=bundle;
     active.pendingDeadline=CACurrentMediaTime()+8;
     NFBInvalidateWindowState();

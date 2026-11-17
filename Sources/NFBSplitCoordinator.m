@@ -148,12 +148,28 @@ extern id<NFBSplitBackend> NFBCreateOpenSplitBackend(void);
             } after:MAX(0,delay)+attempt*0.25];
     }
 }
+- (void)beginUserWindowOperation {
+    NSAssert(NSThread.isMainThread,@"user window operations require main queue");
+    self.generation++; self.operationEpoch++; self.cleanupEpoch++;
+    self.snapshot=nil;
+    [self.backend cancelReturnTransition];
+}
+- (BOOL)closeCurrentWindow {
+    if (!self.enabled || self.locked || self.updating) return NO;
+    [self beginUserWindowOperation];
+    return [self.backend closeCurrentWindow];
+}
+- (BOOL)fullscreenCurrentWindow {
+    if (!self.enabled || self.locked || self.updating) return NO;
+    [self beginUserWindowOperation];
+    return [self.backend fullscreenCurrentWindow];
+}
 - (BOOL)replaceWindowWithDesktop:(UIView *)window {
     if (!self.enabled || self.locked || self.updating) return NO;
-    self.generation++; self.operationEpoch++; self.cleanupEpoch++;
+    [self beginUserWindowOperation];
     return [self.backend replaceWindowWithDesktop:window];
 }
-- (void)closeDesktop { self.generation++; self.operationEpoch++; self.cleanupEpoch++; [self.backend closeDesktop]; }
+- (void)closeDesktop { [self beginUserWindowOperation]; [self.backend closeDesktop]; }
 - (BOOL)installBackend:(id<NFBSplitBackend>)backend {
     NSAssert(NSThread.isMainThread,@"split coordinator is main-queue only");
     if (!backend || self.updating || self.movieActive || [self.backend desktopActive] || self.enabled) return NO;

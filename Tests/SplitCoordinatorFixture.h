@@ -4,7 +4,7 @@ BOOL NFBUpdateMovieMode(__unused BOOL enabled) { return NO; }
 void NFBRecheckMovieLayout(void) {}
 @interface SplitBackendFixture : NSObject <NFBSplitBackend>
 @property(nonatomic) BOOL active, desktop;
-@property(nonatomic) NSUInteger refits, closes, replacements, keyboardChecks, portraitChecks;
+@property(nonatomic) NSUInteger refits, closes, replacements, keyboardChecks, portraitChecks, transitionCancels, windowCloses, fullscreens;
 @property(nonatomic,copy) NSString *scene;
 @end
 @implementation SplitBackendFixture
@@ -16,6 +16,9 @@ void NFBRecheckMovieLayout(void) {}
     s.lowerFrame=CGRectMake(0,151,390,693); return s;
 }
 - (void)restorePortraitPlacement { self.portraitChecks++; }
+- (void)cancelReturnTransition { self.transitionCancels++; }
+- (BOOL)closeCurrentWindow { self.windowCloses++; return YES; }
+- (BOOL)fullscreenCurrentWindow { self.fullscreens++; return YES; }
 - (BOOL)applyMovieEnabled:(BOOL)enabled { self.refits++; return enabled && self.active; }
 - (void)settleMovieKeyboard { self.keyboardChecks++; }
 - (void)closeDesktop { self.closes++; self.desktop=NO; }
@@ -89,6 +92,17 @@ static void RunSplitCoordinatorTests(void) {
     [core closeDesktop];
     [core scheduleMovieKeyboardChecks]; [core drainChecks];
     Check(engine.keyboardChecks==beforeQueued+3,@"same-session movie keyboard jobs run through shared scheduler");
+    [core updateEnabled:YES locked:NO movie:YES keyboard:NO];
+    NSUInteger beforeRestore=engine.portraitChecks;
+    [core schedulePortraitRestoreAfter:0.1];
+    [core beginUserWindowOperation]; [core drainChecks];
+    Check(engine.portraitChecks==beforeRestore,@"explicit new operation cancels old keyboard restore");
+    Check(engine.transitionCancels>0,@"user operation cancels old visual cover");
+    Check([core closeCurrentWindow] && engine.windowCloses==1,@"close uses Open backend exactly once");
+    Check([core fullscreenCurrentWindow] && engine.fullscreens==1,@"fullscreen uses Open backend exactly once");
+    [core scheduleDesktopAfterCleanup:@[@"old"] delay:0 guard:^BOOL { return YES; } refresh:^{}];
+    [core beginUserWindowOperation]; [core drainChecks];
+    Check(!engine.desktop,@"new explicit operation cancels pending desktop fallback");
     NFBSplitSnapshot *snapshot=[NFBSplitSnapshot new];
     snapshot.status=NFBSplitSnapshotPresent; snapshot.lowerApp=@"lower"; snapshot.rootSize=CGSizeMake(390,844);
     snapshot.lowerFrame=CGRectMake(0,151,390,693);

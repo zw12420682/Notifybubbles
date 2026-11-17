@@ -924,7 +924,7 @@ static NSString *NFBFrontmostAppID(void) {
         self.edgeExpanded = NO;
         [self refresh];
     }
-    if (!NFBCloseCurrentSplit()) [self showOpenNotice:@"未能读取 TrollOpen 右侧区域的单击接口"];
+    if (![NFBSplitCoordinator.shared closeCurrentWindow]) [self showOpenNotice:@"未能读取 TrollOpen 右侧区域的单击接口"];
     else NFBOpenEdgeAfterClose();
     [self refresh];
 }
@@ -2866,7 +2866,7 @@ static NSString *NFBFrontmostAppID(void) {
     // Retract first, then hand off: both animations now start on the same frame
     // instead of the bubble waiting for TrollOpen to finish the transition.
     [self beginRetracting:app];
-    if (!NFBFullscreenCurrentFloatingWindow())
+    if (![NFBSplitCoordinator.shared fullscreenCurrentWindow])
         [self showOpenNotice:@"TrollOpen 全屏接口不可用，请确认已安装适配的 1.3.7 隐根版并重启桌面"];
 }
 - (void)closeBubble:(NFBBubble *)button {

@@ -26,6 +26,9 @@ typedef NS_ENUM(NSUInteger, NFBSplitSnapshotStatus) {
 - (NSString *)sceneIdentity;
 - (NFBSplitSnapshot *)captureLayoutInView:(UIView *)root;
 - (void)restorePortraitPlacement;
+- (void)cancelReturnTransition;
+- (BOOL)closeCurrentWindow;
+- (BOOL)fullscreenCurrentWindow;
 - (BOOL)applyMovieEnabled:(BOOL)enabled;
 - (void)settleMovieKeyboard;
 - (void)closeDesktop;
@@ -61,6 +64,9 @@ typedef NS_ENUM(NSUInteger, NFBSplitPhase) {
     guard:(BOOL (^)(void))guard refresh:(void (^)(void))refresh;
 - (BOOL)replaceWindowWithDesktop:(UIView *)window;
 - (void)closeDesktop;
+- (void)beginUserWindowOperation;
+- (BOOL)closeCurrentWindow;
+- (BOOL)fullscreenCurrentWindow;
 // Engine replacement is explicit and rejected while a session is active.
 - (BOOL)installBackend:(id<NFBSplitBackend>)backend;
 @end
