@@ -57,6 +57,13 @@ static void RunSplitCoordinatorTests(void) {
     [core settleMovieKeyboard]; Check(engine.keyboardChecks==1,@"movie keyboard uses backend");
     [core replaceWindowWithDesktop:nil]; [core reconcile];
     Check(core.phase==NFBSplitPhaseMovieDesktop && engine.replacements==1,@"desktop phase shares core");
+    NSUInteger houseGeneration=core.generation, houseCancels=engine.transitionCancels;
+    Check([core replaceWindowWithDesktop:nil],@"movie desktop house tap accepted as no-op");
+    Check(engine.desktop && engine.replacements==1 && core.generation==houseGeneration &&
+        engine.transitionCancels==houseCancels,@"movie desktop single tap preserves session and pending state");
+    [core updateEnabled:YES locked:NO movie:NO keyboard:YES];
+    Check([core replaceWindowWithDesktop:nil] && engine.replacements==2,@"ordinary mode house retains backend toggle behavior");
+    [core updateEnabled:YES locked:NO movie:YES keyboard:YES];
     [core closeDesktop];
     [core scheduleDesktopAfterCleanup:@[@"old"] delay:0 guard:^BOOL { return YES; } refresh:^{}];
     [core drainChecks];
