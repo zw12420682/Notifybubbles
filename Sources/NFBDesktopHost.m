@@ -1,4 +1,7 @@
 #import "NFBDesktopHost.h"
+#ifndef NFB_DESKTOP_SIM_TEST
+#import "NFBWidgetDetachTrace.h"
+#endif
 #import "NFBWindowLease.h"
 #import "NFBSplitCoordinator.h"
 #import "NFBDesktopGeometry.h"
@@ -206,6 +209,9 @@ void NFBObserveHomeWidgetLockDiagnostics(BOOL locked, BOOL enabled) {
     BOOL changed=!known || previous!=locked;
     known=YES; previous=locked;
     if (!NFBDebugLoggingEnabled()) { epoch++; [widgetWatches removeAllObjects]; return; }
+#ifndef NFB_DESKTOP_SIM_TEST
+    NFBArmWidgetDetachTrace(changed && locked);
+#endif
     if (!changed) return;
     NSUInteger current=++epoch;
     NFBDebugLog(@"home-lock: transition locked=%d enabled=%d epoch=%lu",locked,enabled,(unsigned long)current);
