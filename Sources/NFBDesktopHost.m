@@ -97,6 +97,80 @@ static void NFBDesktopTestCheckpoint(NSUInteger point) {
 NSUInteger NFBDesktopSessionIdentifier(void) { return session && !session.restoring ? session.identifier : 0; }
 static UIScrollView *NFBDesktopPager(UIView *desktop);
 static void NFBLogWidgetHosts(UIView *view, NSUInteger depth, NSUInteger *budget);
+// Object tracking distinguishes deallocation/detachment from tree scan limits.
+@interface NFBWidgetWatch : NSObject
+@property(nonatomic,weak) UIView *view;
+@property(nonatomic,copy) NSString *kind, *address, *parentAddress;
+@property(nonatomic) NSUInteger token;
+@end
+@implementation NFBWidgetWatch @end
+static NSMutableArray<NFBWidgetWatch *> *widgetWatches;
+static NSUInteger widgetWatchSequence;
+static BOOL NFBWidgetWatchCandidate(UIView *view) {
+    NSString *name=NSStringFromClass(view.class);
+    return [name containsString:@"WidgetHost"] || [name containsString:@"WidgetContainer"] ||
+        [name containsString:@"ScenePresentation"] || [name containsString:@"SceneLayerHost"];
+}
+static void NFBTrackWidget(UIView *view) {
+    if (!NFBDebugLoggingEnabled() || !NFBWidgetWatchCandidate(view)) return;
+    if (!widgetWatches) widgetWatches=[NSMutableArray array];
+    for (NFBWidgetWatch *watch in widgetWatches) if (watch.view==view) return;
+    // Bounded history includes dead weak references; no view or controller retained.
+    if (widgetWatches.count>=96) [widgetWatches removeObjectAtIndex:0];
+    NFBWidgetWatch *watch=[NFBWidgetWatch new]; watch.view=view;
+    watch.kind=NSStringFromClass(view.class); watch.address=[NSString stringWithFormat:@"%p",view];
+    watch.parentAddress=[NSString stringWithFormat:@"%p",view.superview]; watch.token=++widgetWatchSequence;
+    [widgetWatches addObject:watch];
+    NFBDebugLog(@"widget-watch: discovered id=%lu kind=%@ view=%@ parent=%@",(unsigned long)watch.token,watch.kind,watch.address,watch.parentAddress);
+}
+static void NFBWidgetWatchSample(const char *phase) {
+    if (!NFBDebugLoggingEnabled()) return;
+    NSUInteger visited=0, depthHits=0, newBefore=widgetWatchSequence;
+    NSMutableArray<UIView *> *pending=[NSMutableArray array];
+    NSMutableArray<NSNumber *> *depths=[NSMutableArray array];
+    for (UIWindow *window in NFBDesktopWindows())
+        if ([NSStringFromClass(window.class) isEqualToString:@"SBHomeScreenWindow"]) {
+            [pending addObject:window]; [depths addObject:@0];
+        }
+    // Traverse hidden branches too, but never call layout or instantiate views.
+    while (pending.count && visited<4096) {
+        UIView *view=pending.lastObject; [pending removeLastObject];
+        NSUInteger depth=depths.lastObject.unsignedIntegerValue; [depths removeLastObject]; visited++;
+        NFBTrackWidget(view);
+        if (depth>=40) { if (view.subviews.count) depthHits++; continue; }
+        for (UIView *child in view.subviews) { [pending addObject:child]; [depths addObject:@(depth+1)]; }
+    }
+    NFBDebugLog(@"widget-watch: scan phase=%s nodes=%lu pending=%lu depthLimitHits=%lu new=%lu tracked=%lu session=%lu",
+        phase,(unsigned long)visited,(unsigned long)pending.count,(unsigned long)depthHits,
+        (unsigned long)(widgetWatchSequence-newBefore),(unsigned long)widgetWatches.count,(unsigned long)NFBDesktopSessionIdentifier());
+    for (NFBWidgetWatch *watch in widgetWatches) {
+        UIView *view=watch.view;
+        NFBDebugLog(@"widget-watch: phase=%s id=%lu kind=%@ original=%@ alive=%d parent=%p originalParent=%@ window=%p hidden=%d alpha=%.2f children=%lu",
+            phase,(unsigned long)watch.token,watch.kind,watch.address,view!=nil,view.superview,watch.parentAddress,
+            view.window,view.hidden,view.alpha,(unsigned long)view.subviews.count);
+        if (!view) continue;
+        NSUInteger depth=0;
+        NSMutableArray<NSString *> *chain=[NSMutableArray array];
+        for (UIView *ancestor=view; ancestor && depth<24; ancestor=ancestor.superview,depth++) {
+            [chain addObject:[NSString stringWithFormat:@"%@(%p hidden=%d alpha=%.2f layerHidden=%d opacity=%.2f clips=%d mask=%@)",
+                NSStringFromClass(ancestor.class),ancestor,ancestor.hidden,ancestor.alpha,ancestor.layer.hidden,
+                ancestor.layer.opacity,ancestor.clipsToBounds,NSStringFromClass(ancestor.layer.mask.class)]];
+        }
+        NFBDebugLog(@"widget-watch: ancestors phase=%s id=%lu count=%lu chain=%@",phase,
+            (unsigned long)watch.token,(unsigned long)depth,[chain componentsJoinedByString:@" -> "]);
+        // Only inspect an existing responder/controller; never request its view.
+        UIResponder *responder=view.nextResponder;
+        NSUInteger steps=0;
+        while (responder && ![responder isKindOfClass:UIViewController.class] && steps++<16) responder=responder.nextResponder;
+        if ([responder isKindOfClass:UIViewController.class]) {
+            UIViewController *controller=(UIViewController *)responder;
+            NFBDebugLog(@"widget-watch: controller phase=%s id=%lu class=%@ loaded=%d parent=%@ presenting=%@",
+                phase,(unsigned long)watch.token,NSStringFromClass(controller.class),controller.isViewLoaded,
+                NSStringFromClass(controller.parentViewController.class),NSStringFromClass(controller.presentingViewController.class));
+        }
+    }
+}
+
 // Lock diagnostics are observational only: no refresh, page change, snapshot,
 // overlay or gesture. The native desktop and widget trees are read in place.
 static void NFBLogLockHomeWidgets(const char *phase) {
@@ -128,16 +202,24 @@ static void NFBLogLockHomeWidgets(const char *phase) {
 }
 void NFBObserveHomeWidgetLockDiagnostics(BOOL locked, BOOL enabled) {
     static BOOL known, previous;
-    if (!known || previous!=locked) {
-        NFBDebugLog(@"home-lock: transition locked=%d enabled=%d",locked,enabled);
-        if (!locked) {
-            NFBLogLockHomeWidgets("unlock");
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.6*NSEC_PER_SEC)),dispatch_get_main_queue(), ^{
-                NFBLogLockHomeWidgets("unlock+0.6");
-            });
-        }
-    }
+    static NSUInteger epoch;
+    BOOL changed=!known || previous!=locked;
     known=YES; previous=locked;
+    if (!NFBDebugLoggingEnabled()) { epoch++; [widgetWatches removeAllObjects]; return; }
+    if (!changed) return;
+    NSUInteger current=++epoch;
+    NFBDebugLog(@"home-lock: transition locked=%d enabled=%d epoch=%lu",locked,enabled,(unsigned long)current);
+    if (locked) {
+        NFBWidgetWatchSample("lock-edge");
+    } else {
+        NFBLogLockHomeWidgets("unlock");
+        NFBWidgetWatchSample("unlock");
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.6*NSEC_PER_SEC)),dispatch_get_main_queue(), ^{
+            if (epoch!=current || previous || !NFBDebugLoggingEnabled()) return;
+            NFBLogLockHomeWidgets("unlock+0.6");
+            NFBWidgetWatchSample("unlock+0.6");
+        });
+    }
 }
 
 // One manual radius for every desktop session. No Open geometry/style probes.
@@ -254,6 +336,7 @@ static void NFBLogWidgetAncestors(UIView *view) {
             NSStringFromClass(parent.layer.mask.class));
 }
 static void NFBLogWidgetHosts(UIView *view, NSUInteger depth, NSUInteger *budget) {
+    if (NFBDebugLoggingEnabled()) NFBTrackWidget(view);
     if (!*budget || depth>14) return;
     NSString *name = NSStringFromClass(view.class);
     if ([name containsString:@"Widget"] || [name containsString:@"CHS"] ||
@@ -1170,6 +1253,7 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
     @try {
         UIView *desktop = NFBDesktopSource(anchor);
         if (!desktop) return NFBDesktopFail(@"没有找到已加载的系统桌面视图");
+        if (NFBDebugLoggingEnabled()) NFBWidgetWatchSample("before-transfer");
         if (NFBDebugLoggingEnabled()) {
             NFBDebugLog(@"desktop-widget: before-transfer desktop=%p parent=%@ window=%p",
                 desktop,NSStringFromClass(desktop.superview.class),desktop.window);
