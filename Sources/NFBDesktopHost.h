@@ -24,3 +24,7 @@ void NFBObserveHomeWidgetLockDiagnostics(BOOL locked, BOOL enabled);
 NSUInteger NFBDesktopSessionIdentifier(void);
 
 void NFBPublishMovieTouchWindows(NSArray<UIView *> *windows, NSUInteger desktopSession);
+
+// Visual-only auto-movie exit. Real desktop is restored synchronously.
+void NFBCloseMovieDesktopWithTransition(NSUInteger identifier);
+void NFBUpdateDesktopReturnTransition(BOOL allowed);

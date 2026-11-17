@@ -1596,6 +1596,8 @@ static NSString *NFBFrontmostAppID(void) {
     if (button.imageView.image != resolved) button.imageView.image = resolved;
 }
 - (void)updatePrivacy {
+    NFBUpdateDesktopReturnTransition(self.enabled && ![self isLocked] &&
+        NFBCurrentWindowState().home && !NFBDesktopSplitActive());
     NFBObserveHomeWidgetLockDiagnostics([self isLocked], self.enabled);
     NFBUpdateArcOverlay(self.enabled && ![self isLocked]);
     [NFBSplitCoordinator.shared updateEnabled:self.enabled locked:[self isLocked]

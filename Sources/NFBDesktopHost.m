@@ -1071,6 +1071,57 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
 }
 
 @end
+// Disposable visual layer: no session or window restoration in completion.
+static UIView *desktopReturnCover;
+static NSUInteger desktopReturnToken;
+void NFBUpdateDesktopReturnTransition(BOOL allowed) {
+    if (!NSThread.isMainThread || allowed) return;
+    desktopReturnToken++;
+    [desktopReturnCover.layer removeAllAnimations];
+    [desktopReturnCover removeFromSuperview]; desktopReturnCover=nil;
+}
+void NFBCloseMovieDesktopWithTransition(NSUInteger identifier) {
+    if (!NSThread.isMainThread || !session || session.identifier!=identifier || session.restoring) return;
+    NFBUpdateDesktopReturnTransition(NO);
+    NFBDesktopSession *closing=session;
+    UIWindow *window=closing.window;
+    UIView *picture=nil;
+    CGRect start=CGRectZero;
+    CGFloat radius=closing.panel.layer.cornerRadius;
+    BOOL animate=NFBDesktopAnimationsEnabled() && !NFBDesktopLocked() &&
+        NFBCurrentWindowState().home && !closing.pendingApp.length;
+    if (animate) @try {
+        start=[closing.panel convertRect:closing.panel.bounds toView:window];
+        picture=[closing.panel snapshotViewAfterScreenUpdates:NO];
+    } @catch (NSException *error) { NFBErrorLog(@"desktop-return: snapshot failed %@",error); }
+    // State restoration never waits for the animation (including capture failure).
+    NFBCloseDesktopSplit();
+    if (!picture || window.hidden || !NFBCurrentWindowState().home) return;
+    UIView *cover=[[UIView alloc] initWithFrame:window.bounds];
+    cover.backgroundColor=UIColor.blackColor;
+    cover.userInteractionEnabled=NO; cover.accessibilityElementsHidden=YES;
+    UIView *clip=[[UIView alloc] initWithFrame:start];
+    clip.clipsToBounds=YES; clip.layer.cornerRadius=radius;
+    clip.layer.cornerCurve=kCACornerCurveContinuous;
+    picture.frame=clip.bounds;
+    picture.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
+    picture.userInteractionEnabled=NO;
+    [clip addSubview:picture]; [cover addSubview:clip]; [window addSubview:cover];
+    desktopReturnCover=cover;
+    NSUInteger token=++desktopReturnToken;
+    [UIView animateWithDuration:0.28 delay:0
+        options:UIViewAnimationOptionBeginFromCurrentState|UIViewAnimationOptionAllowUserInteraction|UIViewAnimationOptionCurveEaseInOut
+        animations:^{
+            clip.frame=cover.bounds;
+            clip.layer.cornerRadius=0;
+        } completion:^(__unused BOOL finished) {
+            // Only our disposable cover is retired. Never touch newer sessions.
+            [cover removeFromSuperview];
+            if (desktopReturnToken==token) desktopReturnCover=nil;
+        }];
+    NFBDebugLog(@"desktop-return: transition session=%lu duration=0.28",(unsigned long)identifier);
+}
+
 BOOL NFBDesktopSplitActive(void) { return session != nil && !session.restoring; }
 void NFBCloseDesktopSplit(void) {
     if (!NSThread.isMainThread) { dispatch_async(dispatch_get_main_queue(), ^{ NFBCloseDesktopSplit(); }); return; }
@@ -1107,6 +1158,7 @@ static BOOL NFBInstallDesktopLaunchHook(void) {
 #endif
 BOOL NFBShowDesktopInSplit(UIView *anchor) {
     if (!NSThread.isMainThread) return NO;
+    NFBUpdateDesktopReturnTransition(NO);
     lastFailure = nil; failurePending = NO;
     if (!anchor.window) return NFBDesktopFail(@"没有可用的分屏窗口");
     if (NFBDesktopLocked()) return NFBDesktopFail(@"锁屏时不能打开桌面分屏");

@@ -7,7 +7,7 @@ assert 'old.window && boolStateOf(old,@"isClosingWithKeepAliveAnimation")!=1' in
 assert w.index('BOOL explicitlyClosed=') < w.index('if (!explicitlyClosed && enabled == movieWasEnabled')
 assert 'movieLastLandscape=[NSHashTable weakObjectsHashTable]' in w
 assert 'desktop-cleanup-time:' in h and 'desktop-cleanup-time:' in l
-restore=h[h.index('- (void)restore {'):h.index('@end\nBOOL NFBDesktopSplitActive')]
+restore=h[h.index('- (void)restore {'):h.index('// Disposable visual layer:')]
 assert restore.index('if (self.restoring) return;') < restore.index('releaseSession:self.identifier')
 assert 'core.backend!=backend || core.operationEpoch!=operation' in c
 assert '[backend desktopSessionIdentifier]!=desktop' in c

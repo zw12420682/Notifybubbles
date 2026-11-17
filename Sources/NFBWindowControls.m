@@ -532,6 +532,7 @@ BOOL NFBApplyMovieObservation(BOOL enabled, NFBOpenWindowObservation *observatio
     BOOL sceneAvailable=observation.sceneAvailable;
     BOOL classAvailable=observation.classAvailable;
     BOOL landscape = enabled && observation.landscapeWindows.count>0;
+    if (landscape || observation.portrait) NFBUpdateDesktopReturnTransition(NO);
     // While Open rebuilds scenes, no class/window is UNKNOWN rather than closed.
     // Keep existing leases for at most two 0.2s samples; lock/disable releases
     // immediately. Do not run fit or open desktop using an unknown snapshot.
@@ -561,7 +562,10 @@ BOOL NFBApplyMovieObservation(BOOL enabled, NFBOpenWindowObservation *observatio
         [movieDesktopAnchor removeFromSuperview]; movieDesktopAnchor = nil;
     }
     if (!movieIsActive) {
-        if (movieOwnsDesktop && movieDesktopSession==NFBDesktopSessionIdentifier()) NFBCloseDesktopSplit();
+        if (movieOwnsDesktop && movieDesktopSession==NFBDesktopSessionIdentifier()) {
+            if (enabled && explicitlyClosed) NFBCloseMovieDesktopWithTransition(movieDesktopSession);
+            else NFBCloseDesktopSplit();
+        }
         movieOwnsDesktop = NO; movieDesktopAttempted = NO;
         [movieDesktopAnchor removeFromSuperview]; movieDesktopAnchor = nil;
         movieLowerScreen = CGRectZero;
