@@ -912,6 +912,21 @@ static NSString *NFBFrontmostAppID(void) {
 
 - (void)clearAllTapped:(UITapGestureRecognizer *)gesture {
     if (gesture.state != UIGestureRecognizerStateEnded || [self isLocked] || ![self acceptGestureForKey:@"clearAll"]) return;
+    if (NFBDesktopSplitActive()) {
+        // A hosted system desktop is a split even when Open has no visible app.
+        // End movie ownership first so reconcile cannot immediately refill it.
+        CFPreferencesSetAppValue(CFSTR("MovieMode"), kCFBooleanFalse, NFBDomain);
+        CFPreferencesAppSynchronize(NFBDomain);
+        NFBSplitCoordinator *core=NFBSplitCoordinator.shared;
+        [core beginUserWindowOperation];
+        [core updateEnabled:self.enabled locked:NO movie:NO keyboard:NFBKeyboardVisible()];
+        [core closeDesktop];
+        self.edgeExpanded=NO;
+        [self resetAutoCollapseTimer];
+        NFBDebugLog(@"desktop: X dismissed hosted desktop and movie ownership without closing Open app");
+        [self refresh];
+        return;
+    }
     if (!NFBTrollVisibleApp().length) {
         // Outside a split this button clears the notification queue and folds the
         // list away; it is not a split-close action.
