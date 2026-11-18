@@ -200,6 +200,8 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, strong) UITapGestureRecognizer *movieDoubleTap;
 @property(nonatomic, strong) UILongPressGestureRecognizer *desktopActionHold;
 @property(nonatomic, strong) UISwipeGestureRecognizer *desktopActionSwipe;
+@property(nonatomic, strong) UISwipeGestureRecognizer *desktopActionUpSwipe;
+@property(nonatomic, weak) UIView *desktopRotateTouchTarget;
 @property(nonatomic, strong) UISwipeGestureRecognizer *backgroundUnfoldSwipe;
 @property(nonatomic, weak) UIView *desktopActionTarget;
 @property(nonatomic, weak) UIView *desktopActionTouchTarget;
@@ -1006,6 +1008,17 @@ static NSString *NFBFrontmostAppID(void) {
     NFBDebugLog(@"gesture: collapsed background left swipe -> unfold");
     [self performDesktopAction:NFBActionUnfoldColumn];
 }
+- (void)desktopActionUpSwiped:(UISwipeGestureRecognizer *)gesture {
+    UIView *target=self.desktopRotateTouchTarget;
+    self.desktopRotateTouchTarget=nil;
+    if (gesture.state!=UIGestureRecognizerStateEnded || gesture.direction!=UISwipeGestureRecognizerDirectionUp ||
+        !self.enabled || [self isLocked] || self.desktopActionToggle || NFBDesktopSplitActive() ||
+        !target || target!=self.desktopActionTarget || target!=NFBDesktopActionWindow()) return;
+    if (![self acceptGestureForKey:@"desktopRotateUp"]) return;
+    if (![NFBSplitCoordinator.shared rotateWindow:target])
+        [self showOpenNotice:@"Open 旋转接口不可用，未执行旋转"];
+    [self refresh];
+}
 - (void)desktopActionSwiped:(UISwipeGestureRecognizer *)gesture {
     if (gesture.state != UIGestureRecognizerStateEnded || !self.enabled || [self isLocked]) return;
     if (gesture.direction != UISwipeGestureRecognizerDirectionLeft) return;
@@ -1032,12 +1045,19 @@ static NSString *NFBFrontmostAppID(void) {
         button.imageView.tintColor = UIColor.systemGreenColor;
         button.imageView.backgroundColor = UIColor.secondarySystemBackgroundColor;
         button.accessibilityLabel = @"显示桌面 / Open 控制台";
-        button.accessibilityHint = @"单击显示或关闭桌面分屏，长按打开 Open 控制台";
+        button.accessibilityHint = @"单击显示桌面，双击切换电影模式，上划旋转 App，长按打开 Open 控制台";
         self.desktopActionTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(desktopActionTapped:)];
         self.desktopActionTap.delegate = self;
+        self.desktopActionUpSwipe=[[UISwipeGestureRecognizer alloc] initWithTarget:self action:@selector(desktopActionUpSwiped:)];
+        self.desktopActionUpSwipe.direction=UISwipeGestureRecognizerDirectionUp;
+        self.desktopActionUpSwipe.numberOfTouchesRequired=1;
+        self.desktopActionUpSwipe.delegate=self;
+        [button addGestureRecognizer:self.desktopActionUpSwipe];
+        [self.desktopActionTap requireGestureRecognizerToFail:self.desktopActionUpSwipe];
         self.movieDoubleTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(movieDoubleTapped:)];
         self.movieDoubleTap.numberOfTapsRequired = 2;
         self.movieDoubleTap.delegate = self;
+        [self.movieDoubleTap requireGestureRecognizerToFail:self.desktopActionUpSwipe];
         [self.desktopActionTap requireGestureRecognizerToFail:self.movieDoubleTap];
         [button addGestureRecognizer:self.movieDoubleTap];
         self.desktopActionHold = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(desktopActionHeld:)];
@@ -1082,7 +1102,7 @@ static NSString *NFBFrontmostAppID(void) {
                                                      : @"单击或向左滑动展开通知图标列";
     } else {
         button.accessibilityLabel = @"显示桌面 / Open 控制台";
-        button.accessibilityHint = @"单击显示或关闭桌面分屏，长按打开 Open 控制台";
+        button.accessibilityHint = @"单击显示桌面，双击切换电影模式，上划旋转 App，长按打开 Open 控制台";
     }
     if (button.imageView.image != glyph) button.imageView.image = glyph;
     if (!CGColorEqualToColor(button.imageView.tintColor.CGColor, tint.CGColor)) button.imageView.tintColor = tint;
@@ -3004,6 +3024,12 @@ static NSString *NFBFrontmostAppID(void) {
         [gesture.view isDescendantOfView:self.fixedBackgroundHost];
 }
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldReceiveTouch:(UITouch *)touch {
+    if (gesture==self.desktopActionUpSwipe) {
+        self.desktopRotateTouchTarget=self.desktopActionTarget;
+        return self.enabled && ![self isLocked] && !self.desktopActionToggle &&
+            [self desktopActionMode]==NFBActionModeSplit && !NFBDesktopSplitActive() &&
+            self.desktopRotateTouchTarget!=nil;
+    }
     if (gesture == self.movieDoubleTap)
         return self.enabled && ![self isLocked] && !self.desktopActionToggle &&
             [self desktopActionMode] == NFBActionModeSplit;

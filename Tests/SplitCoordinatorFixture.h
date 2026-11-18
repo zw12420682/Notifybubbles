@@ -4,7 +4,7 @@ BOOL NFBUpdateMovieMode(__unused BOOL enabled) { return NO; }
 void NFBRecheckMovieLayout(void) {}
 @interface SplitBackendFixture : NSObject <NFBSplitBackend>
 @property(nonatomic) BOOL active, desktop;
-@property(nonatomic) NSUInteger refits, closes, replacements, keyboardChecks, portraitChecks, transitionCancels, windowCloses, fullscreens;
+@property(nonatomic) NSUInteger refits, closes, replacements, keyboardChecks, portraitChecks, transitionCancels, windowCloses, fullscreens, rotations;
 @property(nonatomic,copy) NSString *scene;
 @end
 @implementation SplitBackendFixture
@@ -19,6 +19,7 @@ void NFBRecheckMovieLayout(void) {}
 - (void)cancelReturnTransition { self.transitionCancels++; }
 - (BOOL)closeCurrentWindow { self.windowCloses++; return YES; }
 - (BOOL)fullscreenCurrentWindow { self.fullscreens++; return YES; }
+- (BOOL)rotateWindow:(__unused UIView *)window { self.rotations++;return YES; }
 - (BOOL)applyMovieEnabled:(BOOL)enabled { self.refits++; return enabled && self.active; }
 - (void)settleMovieKeyboard { self.keyboardChecks++; }
 - (void)closeDesktop { self.closes++; self.desktop=NO; }
@@ -107,6 +108,11 @@ static void RunSplitCoordinatorTests(void) {
     Check(engine.transitionCancels>0,@"user operation cancels old visual cover");
     Check([core closeCurrentWindow] && engine.windowCloses==1,@"close uses Open backend exactly once");
     Check([core fullscreenCurrentWindow] && engine.fullscreens==1,@"fullscreen uses Open backend exactly once");
+    UIView *rotationTarget=[UIView new];
+    Check([core rotateWindow:rotationTarget] && engine.rotations==1,@"house up swipe calls exact window rotation once");
+    engine.desktop=YES;
+    Check(![core rotateWindow:rotationTarget] && engine.rotations==1,@"desktop cannot rotate upper movie accidentally");
+    engine.desktop=NO;
     [core scheduleDesktopAfterCleanup:@[@"old"] delay:0 guard:^BOOL { return YES; } refresh:^{}];
     [core beginUserWindowOperation]; [core drainChecks];
     Check(!engine.desktop,@"new explicit operation cancels pending desktop fallback");

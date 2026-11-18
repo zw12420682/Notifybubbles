@@ -54,6 +54,20 @@
 - (void)cancelReturnTransition { NFBUpdateDesktopReturnTransition(NO); }
 - (BOOL)closeCurrentWindow { return NFBCloseCurrentSplit(); }
 - (BOOL)fullscreenCurrentWindow { return NFBFullscreenCurrentFloatingWindow(); }
+- (BOOL)rotateWindow:(UIView *)window {
+    Class cls=NFBTrollFloatingWindowClass();
+    if (!NSThread.isMainThread || !cls || ![window isKindOfClass:cls] ||
+        !window.window || window.hidden || window.alpha<0.01) return NO;
+    if (NFBCheckedBool(window,@"miniWindowModeEnabled",YES) ||
+        NFBCheckedBool(window,@"isClosingWithKeepAliveAnimation",YES)) return NO;
+    SEL rotate=NSSelectorFromString(@"rotateButtonTapped");
+    NSMethodSignature *sig=NFBSignature(window,rotate);
+    if (!sig || sig.numberOfArguments!=2 || strcmp(sig.methodReturnType,@encode(void))) return NO;
+    @try {
+        ((void (*)(id,SEL))objc_msgSend)(window,rotate);
+        self.layoutObservation=nil; NFBInvalidateWindowState(); return YES;
+    } @catch (__unused NSException *error) { return NO; }
+}
 - (BOOL)applyMovieEnabled:(BOOL)enabled {
     self.layoutObservation=enabled ? NFBCaptureOpenWindows() : nil;
     NFBOpenWindowObservation *captured=self.layoutObservation;

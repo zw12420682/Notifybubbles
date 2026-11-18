@@ -164,6 +164,11 @@ extern id<NFBSplitBackend> NFBCreateOpenSplitBackend(void);
     [self beginUserWindowOperation];
     return [self.backend fullscreenCurrentWindow];
 }
+- (BOOL)rotateWindow:(UIView *)window {
+    if (!self.enabled || self.locked || self.updating || !window || [self.backend desktopActive]) return NO;
+    [self beginUserWindowOperation];
+    return [self.backend rotateWindow:window];
+}
 - (BOOL)replaceWindowWithDesktop:(UIView *)window {
     if (!self.enabled || self.locked || self.updating) return NO;
     // House single tap must never expose a black lower region in movie mode.
