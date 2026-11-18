@@ -529,7 +529,7 @@ BOOL NFBApplyMovieObservation(BOOL enabled, NFBOpenWindowObservation *observatio
     }
     if (!explicitlyClosed && enabled == movieWasEnabled && now - movieReadAt < 0.2) return movieIsActive;
     movieReadAt = now; movieWasEnabled = enabled;
-    NSArray *miniRoots=NFBPlaceMovieMinis(enabled,observation);
+
     if (!movieRecords) movieRecords = [NSMapTable weakToStrongObjectsMapTable];
     if (!movieBackdrops) movieBackdrops = [NSMapTable weakToStrongObjectsMapTable];
     NSArray<UIView *> *windows=enabled ? (observation.windows ?: @[]) : @[];
@@ -744,6 +744,7 @@ BOOL NFBApplyMovieObservation(BOOL enabled, NFBOpenWindowObservation *observatio
     NFBUpdateMovieDesktopTouchHosts(touchHosts);
     // Publish roots from exactly the observation that produced the geometry and
     // host lease. No hit-time full-window rescan may introduce unrelated views.
+    NSArray *miniRoots=NFBPlaceMovieMinis(enabled,observation);
     if (miniRoots.count) NFBPublishMovieTouchWindows([(observation.landscapeWindows ?: @[]) arrayByAddingObjectsFromArray:miniRoots], NFBDesktopSessionIdentifier());
     else NFBPublishMovieTouchWindows(observation.landscapeWindows, NFBDesktopSessionIdentifier());
     for (UIView *view in movieRecords.keyEnumerator.allObjects)
