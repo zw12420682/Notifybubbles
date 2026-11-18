@@ -1,0 +1,17 @@
+import pathlib,re,sys
+p=pathlib.Path('/var/minis/shared/jailbreak/builds/OwnSplit/Sources')
+def read(n):return (p/n).read_text()
+def check(n,pattern,ok,why):
+ s=read(n)
+ if bool(re.search(pattern,s,re.S))!=ok:raise SystemExit('FAIL '+why)
+ print('PASS '+why)
+check('OSWindowManager.h',r'OSPresentationModeSplit',True,'split presentation mode declared')
+check('OSWindowManager.m',r'if\s*\(mode\s*==\s*OSPresentationModeSplit\).*?openSplitWithPrimary:',True,'split activation reaches split manager')
+check('OSWindowManager.m',r'initWithPrimaryBundle:.*?OSSplitView.*?attachSecondaryHost',True,'own split container is created')
+check('Tweak.x',r'com\.ownsplit\.action\.split.*?OSPresentationModeSplit',True,'split shortcut registered and dispatched')
+check('OSSceneHost.m',r'sceneMissCount\s*>=\s*2.*?handleSceneConnectionLoss',True,'lost hosted scene triggers reconnect')
+check('OSSceneHost.m',r'MIN\(30\.0,\s*0\.75\s*\*\s*pow\(2\.0.*?scheduleReconnect',True,'reconnect retries use exponential backoff')
+check('OSSceneHost.m',r'if\s*\(self2\.reconnectAllowed\s*&&\s*!self2\.live\).*?onReconnectRequested',True,'reconnect delegates to owning manager')
+check('OSSceneHost.m',r'-\s*\(void\)didChangeStatusBarOrientation:.*?refreshHostedOrientation',True,'orientation observation wired')
+check('OSSceneHost.m',r'addObserver:self\s+selector:@selector\(didChangeStatusBarOrientation:',True,'orientation observer installed')
+check('OSSceneHost.m',r'clearExternalSceneHosts\].*?stopSceneKeepAlive',True,'scene teardown clears transient host state')

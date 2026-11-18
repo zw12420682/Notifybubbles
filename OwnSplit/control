@@ -1,0 +1,9 @@
+Package: com.ownsplit.tweak
+Name: OwnSplit
+Version: 0.1.0~dev2
+Architecture: iphoneos-arm64
+Description: Experimental rootless split and floating windows for iOS 16
+Maintainer: OwnSplit contributors
+Author: OwnSplit contributors
+Section: Tweaks
+Depends: mobilesubstrate (>= 0.9.5000)
