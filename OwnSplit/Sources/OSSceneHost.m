@@ -1012,12 +1012,6 @@
         }
     } @catch (__unused NSException *exception) {}
 
-    @try {
-        SEL setCurrentKeyboard = NSSelectorFromString(@"setCurrentKeyboard:");
-        if ([keyboards respondsToSelector:setCurrentKeyboard]) {
-            ((void (*)(id, SEL, BOOL))objc_msgSend)(keyboards, setCurrentKeyboard, YES);
-        }
-    } @catch (__unused NSException *exception) {}
 
     @try {
         SEL prepareHosted = NSSelectorFromString(@"prepareForHostedWindow");
@@ -1186,7 +1180,7 @@
 #pragma mark - Main attach
 
 - (void)attemptLiveSceneHost {
-    if (self.attaching || (self.live && self.hostView.superview == self.view)) return;
+    if (!self.reconnectAllowed || self.attaching || (self.live && self.hostView.superview == self.view)) return;
     self.attaching = YES;
     self.attemptCount += 1;
 
@@ -1275,6 +1269,11 @@
 
 - (void)scheduleReconnect {
     if (self.reconnectTimer || self.live || !self.reconnectAllowed) return;
+    if (self.reconnectAttempts >= 6) {
+        self.statusText = @"自动重连未成功，请手动重试";
+        [self updatePlaceholderHint:self.statusText];
+        return;
+    }
     NSUInteger exponent = MIN(self.reconnectAttempts, 5);
     NSTimeInterval delay = MIN(30.0, 0.75 * pow(2.0, (double)exponent));
     self.reconnectAttempts = MIN(self.reconnectAttempts + 1, 6);
@@ -1365,8 +1364,8 @@
         SEL selector = NSSelectorFromString(@"interfaceOrientation");
         if ([settings respondsToSelector:selector]) orientation = (UIInterfaceOrientation)((NSInteger (*)(id, SEL))objc_msgSend)(settings, selector);
     } @catch (__unused NSException *e) {}
-    if (orientation < UIInterfaceOrientationPortrait || orientation > UIInterfaceOrientationLandscapeRight)
-        orientation = UIInterfaceOrientationPortrait;
+    if (orientation < UIInterfaceOrientationPortrait || orientation > MAX(UIInterfaceOrientationLandscapeRight, UIInterfaceOrientationLandscapeLeft))
+        return;
     if (orientation == self.sceneOrientation) return;
     self.sceneOrientation = orientation;
     CGRect screen = [UIScreen mainScreen].bounds;
@@ -1520,8 +1519,8 @@
     self.hostView.transform = CGAffineTransformIdentity;
     self.hostView.bounds = CGRectMake(0, 0, canvas.width, canvas.height);
     self.hostView.center = CGPointMake(target.width / 2.0, target.height / 2.0);
-    self.hostView.transform = CGAffineTransformMakeScale(target.width / canvas.width,
-                                                         target.height / canvas.height);
+    CGFloat scale = MIN(target.width / canvas.width, target.height / canvas.height);
+    self.hostView.transform = CGAffineTransformMakeScale(scale, scale);
 }
 
 - (void)applySnapshotFallback {
@@ -1605,7 +1604,7 @@
     [retry setTitle:@"重新连接画面" forState:UIControlStateNormal];
     retry.tintColor = [UIColor colorWithRed:0.45 green:0.72 blue:1.0 alpha:1.0];
     retry.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
-    [retry addTarget:self action:@selector(retryAttach) forControlEvents:UIControlEventTouchUpInside];
+    [retry addTarget:self action:@selector(manualReconnect) forControlEvents:UIControlEventTouchUpInside];
     [stack addArrangedSubview:retry];
 
     [NSLayoutConstraint activateConstraints:@[
@@ -1751,6 +1750,13 @@
     [self startObservingLayerManager];
     [self startSceneKeepAlive];
     }
+}
+
+- (void)manualReconnect {
+    if (!self.reconnectAllowed || self.live) return;
+    [self stopReconnect];
+    if (self.onReconnectRequested) self.onReconnectRequested(self);
+    else [self retryAttach];
 }
 
 - (void)retryAttach {

@@ -1,5 +1,5 @@
 import pathlib,re,sys
-p=pathlib.Path('/var/minis/shared/jailbreak/builds/OwnSplit/Sources')
+p=pathlib.Path(__file__).resolve().parents[1] / 'Sources'
 def read(n):return (p/n).read_text()
 def check(n,pattern,ok,why):
  s=read(n)

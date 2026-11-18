@@ -14,10 +14,11 @@
 
 @implementation OSPassthroughWindow
 
+- (void)sendEvent:(UIEvent *)event {
         if (event.type == UIEventTypeTouches) {
             for (UITouch *touch in event.allTouches) {
                 if (touch.phase != UITouchPhaseBegan || touch.window != self) continue;
-                UIView *hit = [super hitTest:[touch locationInWindow] withEvent:event];
+                UIView *hit = [super hitTest:[touch locationInView:self] withEvent:event];
                 [[OSWindowManager shared] prepareForHostedInputForView:hit];
                 break;
             }

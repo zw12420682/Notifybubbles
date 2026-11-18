@@ -451,12 +451,6 @@
     } @catch (__unused NSException *exception) {}
 
     if (enabled) {
-        @try {
-            SEL setCurrentKeyboard = NSSelectorFromString(@"setCurrentKeyboard:");
-            if ([keyboards respondsToSelector:setCurrentKeyboard]) {
-                ((void (*)(id, SEL, BOOL))objc_msgSend)(keyboards, setCurrentKeyboard, YES);
-            }
-        } @catch (__unused NSException *exception) {}
 
         @try {
             SEL prepareHosted = NSSelectorFromString(@"prepareForHostedWindow");
@@ -490,13 +484,14 @@
 }
 
 - (void)prepareForHostedInputForView:(UIView *)view {
-    if (!view) { [self prepareForHostedInput]; return; }
+    if (!view) return;
     OSSceneHost *target = nil;
     for (OSFloatingWindow *window in self.mutableFloatingWindows) {
         if (view == window.sceneHost.view || [view isDescendantOfView:window.sceneHost.view]) { target=window.sceneHost; break; }
     }
     if (!target && self.splitView.primaryHost && (view==self.splitView.primaryHost.view || [view isDescendantOfView:self.splitView.primaryHost.view])) target=self.splitView.primaryHost;
     if (!target && self.splitView.secondaryHost && (view==self.splitView.secondaryHost.view || [view isDescendantOfView:self.splitView.secondaryHost.view])) target=self.splitView.secondaryHost;
+    if (!target.isLive) return;
     [self ensureOverlayVisible];
     [self configureRemoteKeyboardsForHostedInput:YES];
     [target prepareForInput];

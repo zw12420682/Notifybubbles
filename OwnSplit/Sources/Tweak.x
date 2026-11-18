@@ -433,25 +433,7 @@ static NSArray *OSInjectedShortcutItems(void) {
 
 %end
 
-%hook UIApplication
 
-- (void)sendEvent:(UIEvent *)event {
-    if (event.type == UIEventTypeTouches) {
-        Class overlayClass = NSClassFromString(@"OSPassthroughWindow");
-        for (UITouch *touch in event.allTouches) {
-            if (touch.phase == UITouchPhaseBegan
-                && overlayClass
-                && [touch.window isKindOfClass:overlayClass]) {
-                UIView *hit = [touch.view isKindOfClass:[UIView class]] ? (UIView *)touch.view : nil;
-                [[OSWindowManager shared] prepareForHostedInputForView:hit];
-                break;
-            }
-        }
-    }
-    %orig;
-}
-
-%end
 
 // Hosted controls live inside the SpringBoard-owned overlay window. Make that
 // window key before UIKit asks the responder chain to present the keyboard.
