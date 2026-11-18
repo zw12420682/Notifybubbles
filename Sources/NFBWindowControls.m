@@ -460,15 +460,18 @@ CGRect NFBMovieLowerFrameInView(UIView *root) {
     if (moviePortrait.window) return [moviePortrait convertRect:moviePortrait.bounds toView:root];
     return [root convertRect:movieLowerScreen fromView:movieDesktopAnchor.window];
 }
-static void movieCollect(UIView *view, Class cls, NSMutableArray<UIView *> *out) {
+static void movieCollect(UIView *view, Class cls, NSMutableArray<UIView *> *out, NSMutableArray<UIView *> *minis) {
     if (view.hidden || view.alpha < 0.01) return;
     if ([view isKindOfClass:cls]) {
         if (visibleView(view) && appOfWindow(view).length &&
-            boolStateOf(view, @"miniWindowModeEnabled") == 0 &&
-            boolStateOf(view, @"isClosingWithKeepAliveAnimation") != 1) [out addObject:view];
+            boolStateOf(view, @"isClosingWithKeepAliveAnimation") != 1) {
+            NSInteger mini=boolStateOf(view,@"miniWindowModeEnabled");
+            if (mini==0) [out addObject:view];
+            else if (mini==1 && boolStateOf(view,@"isTransitioningFromMiniMode")==0) [minis addObject:view];
+        }
         return; // Never traverse app content.
     }
-    for (UIView *child in view.subviews) movieCollect(child, cls, out);
+    for (UIView *child in view.subviews) movieCollect(child, cls, out, minis);
 }
 @implementation NFBOpenWindowObservation @end
 NFBOpenWindowObservation *NFBCaptureOpenWindows(void) {
@@ -476,15 +479,16 @@ NFBOpenWindowObservation *NFBCaptureOpenWindows(void) {
     NFBOpenWindowObservation *observation=[NFBOpenWindowObservation new];
     NSMutableArray<UIView *> *windows=[NSMutableArray array];
     Class cls=NFBTrollFloatingWindowClass();
+    NSMutableArray<UIView *> *minis=[NSMutableArray array];
     observation.classAvailable=cls!=Nil;
     if (cls) for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
         if (![scene isKindOfClass:UIWindowScene.class] ||
             scene.activationState==UISceneActivationStateBackground ||
             scene.activationState==UISceneActivationStateUnattached) continue;
         observation.sceneAvailable=YES;
-        for (UIWindow *window in ((UIWindowScene *)scene).windows) movieCollect(window,cls,windows);
+        for (UIWindow *window in ((UIWindowScene *)scene).windows) movieCollect(window,cls,windows,minis);
     }
-    observation.windows=windows;
+    observation.windows=windows; observation.miniWindows=minis;
     NSMutableArray<UIView *> *landscapes=[NSMutableArray array];
     for (UIView *view in windows) if (movieLandscape(view)) [landscapes addObject:view];
     observation.landscapeWindows=landscapes;
@@ -509,6 +513,40 @@ static void movieRestore(UIView *view) {
         if (view.superview) view.center = record.center;
     }
     [movieRecords removeObjectForKey:view];
+}
+// Keep native sibling order for both UIKit and the leased host hit-test.
+@interface NFBMovieMiniOrder : NSObject
+@property(nonatomic,weak) UIView *parent,*next,*upper;
+@end
+@implementation NFBMovieMiniOrder @end
+static NSMapTable<UIView *,NFBMovieMiniOrder *> *miniOrder;
+static void NFBReconcileMiniOrder(NSArray<UIView *> *minis, NSArray<UIView *> *uppers) {
+    if (!miniOrder) miniOrder=[NSMapTable weakToStrongObjectsMapTable];
+    for (UIView *mini in miniOrder.keyEnumerator.allObjects) {
+        NFBMovieMiniOrder *r=[miniOrder objectForKey:mini];
+        if ([minis containsObject:mini] && [uppers containsObject:r.upper] && mini.superview==r.parent) continue;
+        NSArray *siblings=r.parent.subviews;
+        NSUInteger index=[siblings indexOfObjectIdenticalTo:r.upper];
+        if (mini.superview==r.parent && r.next.superview==r.parent && r.next && index!=NSNotFound &&
+            index+1<siblings.count && siblings[index+1]==mini && boolStateOf(mini,@"miniWindowModeEnabled")==1)
+            [r.parent insertSubview:mini belowSubview:r.next];
+        [miniOrder removeObjectForKey:mini];
+    }
+    for (UIView *mini in minis) {
+        if ([miniOrder objectForKey:mini] || !mini.superview || mini.layer.animationKeys.count) continue;
+        UIView *p=mini.superview; NSArray *siblings=p.subviews;
+        NSUInteger index=[siblings indexOfObjectIdenticalTo:mini];
+        UIView *upper=nil; NSUInteger front=index;
+        for (UIView *candidate in uppers) {
+            if (candidate.superview!=p || candidate.layer.zPosition!=mini.layer.zPosition || !CGRectIntersectsRect(candidate.frame,mini.frame)) continue;
+            NSUInteger i=[siblings indexOfObjectIdenticalTo:candidate];
+            if (i!=NSNotFound && i>front) { upper=candidate; front=i; }
+        }
+        if (!upper || index==NSNotFound || index+1>=siblings.count) continue;
+        NFBMovieMiniOrder *r=[NFBMovieMiniOrder new];r.parent=p;r.next=siblings[index+1];r.upper=upper;
+        [p insertSubview:mini aboveSubview:upper];
+        [miniOrder setObject:r forKey:mini];
+    }
 }
 BOOL NFBUpdateMovieMode(BOOL enabled) {
     if (!NSThread.isMainThread) return NO;
@@ -740,7 +778,13 @@ BOOL NFBApplyMovieObservation(BOOL enabled, NFBOpenWindowObservation *observatio
     NFBUpdateMovieDesktopTouchHosts(touchHosts);
     // Publish roots from exactly the observation that produced the geometry and
     // host lease. No hit-time full-window rescan may introduce unrelated views.
-    NFBPublishMovieTouchWindows(observation.landscapeWindows, NFBDesktopSessionIdentifier());
+    NSArray<UIView *> *minis=movieIsActive ? observation.miniWindows : nil;
+    NSMutableArray<UIView *> *uppers=[NSMutableArray array];
+    for (UIView *upper in observation.landscapeWindows) if ([active containsObject:upper]) [uppers addObject:upper];
+    NFBReconcileMiniOrder(minis,uppers);
+    NSMutableArray<UIView *> *touchRoots=[uppers mutableCopy];
+    for (UIView *mini in minis) if ([touchHosts containsObject:mini.window]) [touchRoots addObject:mini];
+    NFBPublishMovieTouchWindows(touchRoots, NFBDesktopSessionIdentifier());
     for (UIView *view in movieRecords.keyEnumerator.allObjects)
         if (![active containsObject:view]) movieRestore(view);
     for (UIView *parent in movieBackdrops.keyEnumerator.allObjects) if (![parents containsObject:parent]) {

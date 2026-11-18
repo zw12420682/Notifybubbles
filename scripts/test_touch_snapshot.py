@@ -8,7 +8,12 @@ assert '[root isDescendantOfView:view]' in l
 assert 'view.clipsToBounds' in l
 assert 'publishTouchWindows:windows session:desktopSession' in h
 assert 'current.identifier==activationSession' in h
-assert 'NFBPublishMovieTouchWindows(observation.landscapeWindows, NFBDesktopSessionIdentifier())' in w
+assert 'NFBPublishMovieTouchWindows(touchRoots, NFBDesktopSessionIdentifier())' in w
 assert 'sendEvent:' not in l
 assert 'NFBDesktopFloatingHit(object, nil' not in h
 print('PASS: touch candidates from movie observation, native same-window hit, live ancestor checks, stale-session activation rejected')
+
+assert 'else if (mini==1' in w and '[minis addObject:view]' in w
+assert '[touchHosts containsObject:mini.window]' in w
+assert '[p insertSubview:mini aboveSubview:upper]' in w
+assert '[r.parent insertSubview:mini belowSubview:r.next]' in w
