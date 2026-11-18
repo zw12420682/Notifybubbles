@@ -15,6 +15,8 @@ NSString *NFBSplitAttachmentApp(void);
 
 // Execute the current window's original TrollOpen right-region single-tap action.
 BOOL NFBCloseCurrentSplit(void);
+// Close the exact observed landscape window using Open's native close entry.
+BOOL NFBCloseObservedLandscape(UIView *window);
 
 // The desktop button attaches only to an expanded portrait window.
 UIView *NFBDesktopActionWindow(void);

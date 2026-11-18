@@ -510,6 +510,7 @@ static void movieRestore(UIView *view) {
     }
     [movieRecords removeObjectForKey:view];
 }
+#include "NFBCloseObservedLandscape.inc"
 BOOL NFBUpdateMovieMode(BOOL enabled) {
     if (!NSThread.isMainThread) return NO;
     return NFBApplyMovieObservation(enabled,enabled ? NFBCaptureOpenWindows() : nil);

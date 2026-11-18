@@ -913,14 +913,25 @@ static NSString *NFBFrontmostAppID(void) {
 - (void)clearAllTapped:(UITapGestureRecognizer *)gesture {
     if (gesture.state != UIGestureRecognizerStateEnded || [self isLocked] || ![self acceptGestureForKey:@"clearAll"]) return;
     if (NFBDesktopSplitActive()) {
-        // A hosted system desktop is a split even when Open has no visible app.
-        // The user closes only this desktop session. Movie mode and its upper
-        // app remain enabled; suppress movie fallback until a new enable cycle.
-        [NFBSplitCoordinator.shared beginUserWindowOperation];
-        NFBCloseMovieDesktopWithTransition(NFBDesktopSessionIdentifier());
+        NFBSplitCoordinator *core=NFBSplitCoordinator.shared;
+        if (NFBPreference(@"MovieMode",NO)) {
+            // Treat the movie app and hosted desktop as one user-visible split.
+            // Validate the exact observed upper target before touching either pane.
+            if (!self.enabled || [self isLocked]) return;
+            NFBOpenWindowObservation *observation=NFBCaptureOpenWindows();
+            if (observation.landscapeWindows.count!=1 || !NFBCloseObservedLandscape(observation.landscapeWindows.firstObject)) {
+                [self showOpenNotice:@"未能唯一确认并关闭上方横屏 App；分屏桌面保持不变"];
+                return;
+            }
+            [core beginUserWindowOperation];
+            NFBCloseMovieDesktopWithTransition(NFBDesktopSessionIdentifier());
+            NFBDebugLog(@"movie-exit: X closed exact upper app and hosted desktop; movie mode retained");
+        } else {
+            [core closeDesktop];
+            NFBDebugLog(@"desktop: X closed hosted desktop");
+        }
         self.edgeExpanded=NO;
         [self resetAutoCollapseTimer];
-        NFBDebugLog(@"desktop: X dismissed hosted desktop; movie app and mode retained");
         [self refresh];
         return;
     }
