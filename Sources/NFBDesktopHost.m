@@ -54,8 +54,6 @@ typedef NS_ENUM(NSUInteger, NFBDesktopMutationPhase) {
 @property(nonatomic,strong) UIColor *originalWindowColor;
 @property(nonatomic) BOOL originalWindowOpaque;
 @property(nonatomic) NSUInteger blockedHitReports;
-@property(nonatomic,strong) UIViewController *desktopController;
-@property(nonatomic) BOOL suppliedAppearance;
 @property(nonatomic,copy) NSString *pendingApp;
 @property(nonatomic) CFTimeInterval pendingDeadline;
 @property(nonatomic,strong) UIScrollView *refreshScroll;
@@ -238,14 +236,6 @@ static CGFloat NFBConfiguredDesktopRadius(void) {
 
 CGFloat NFBDesktopSplitCornerRadius(void) {
     return session && !session.restoring ? session.panel.layer.cornerRadius : NAN;
-}
-static UIViewController *NFBDesktopOwner(UIViewController *controller, UIView *view) {
-    if (controller.isViewLoaded && controller.view==view) return controller;
-    for (UIViewController *child in controller.childViewControllers) {
-        UIViewController *found=NFBDesktopOwner(child,view);
-        if (found) return found;
-    }
-    return nil;
 }
 static UIScrollView *NFBFindIconPager(UIView *view) {
     if (view.hidden || view.alpha<0.01) return nil;
@@ -1089,21 +1079,15 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
     self.mutationPhase=NFBDesktopMutationRestoring;
     self.widgetRefreshCancelled=YES;
     if (NFBDebugLoggingEnabled()) {
-        NFBDebugLog(@"desktop-widget: restore begin startedHome=%d suppliedAppearance=%d parent=%@ original=%@",
-            self.startedHome, self.suppliedAppearance, NSStringFromClass(self.desktop.superview.class),
+        NFBDebugLog(@"desktop-widget: restore begin startedHome=%d appearanceOwner=system parent=%@ original=%@",
+            self.startedHome, NSStringFromClass(self.desktop.superview.class),
             NSStringFromClass(self.originalParent.class));
         NSUInteger budget=32; NFBLogWidgetHosts(self.desktop,0,&budget);
     }
     [self.timer invalidate]; self.timer=nil;
     [self finishWidgetRefresh];
     [self restoreDesktopInteraction];
-    if (self.suppliedAppearance) {
-        NFBAttemptCleanup(@"desktop lifecycle", ^{
-            [self.desktopController beginAppearanceTransition:NO animated:NO];
-            [self.desktopController endAppearanceTransition];
-        });
-        self.suppliedAppearance=NO;
-    }
+    // UIKit owns the native home controller; the pane borrowed only its view.
     [self restoreDesktopAppearance];
     UIView *view=self.desktop;
     if (self.mutated && view && self.originalParent) {
@@ -1154,7 +1138,7 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
         });
     }
     self.backgroundFrost=nil; self.window=nil; self.desktop=nil; self.originalParent=nil;
-    self.constraints=nil; self.desktopController=nil;
+    self.constraints=nil;
     self.mutationPhase=NFBDesktopMutationFinished;
     NFBInvalidateWindowState();
     if (timing) NFBDebugLog(@"desktop-cleanup-time: session=%lu totalMs=%.3f",(unsigned long)self.identifier,(CFAbsoluteTimeGetCurrent()-restoreStart)*1000);
@@ -1282,7 +1266,6 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
         NFBInstallDesktopFolderAnimationHook();
 #endif
         next.window = window;
-        next.desktopController=NFBDesktopOwner(window.rootViewController,desktop);
         next.originalWindowLevel = window.windowLevel;
         next.originalWindowAlpha = window.alpha;
         next.originalWindowHidden = window.hidden;
@@ -1354,8 +1337,8 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
         [window bringSubviewToFront:panel];
         [next activateDesktop];
         NFBDesktopTestCheckpoint(3); // Window/focus leased: restore every captured property.
-        NFBDebugLog(@"desktop-widget: open startedHome=%d controller=%@ corner=%.2f desktop=%@ bounds=%@",
-            next.startedHome, NSStringFromClass(next.desktopController.class), panel.layer.cornerRadius,
+        NFBDebugLog(@"desktop-widget: open startedHome=%d appearanceOwner=system corner=%.2f desktop=%@ bounds=%@",
+            next.startedHome, panel.layer.cornerRadius,
             NSStringFromClass(desktop.class), NSStringFromCGRect(desktop.bounds));
         // Observational samples only: do not wake, page or rebuild widget hosts.
         if (NFBDebugLoggingEnabled()) for (NSNumber *delay in @[@0.2, @0.8, @1.5]) {
@@ -1367,12 +1350,8 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
                 NFBLogWidgetHosts(sample.desktop, 0, &budget);
             });
         }
-        if (!next.startedHome && next.desktopController) {
-            // Fullscreen apps leave the home controller disappeared. Moving its
-            // view alone does not resume widget child controllers/render hosts.
-            next.suppliedAppearance=YES;
-            [next.desktopController beginAppearanceTransition:YES animated:NO];
-            [next.desktopController endAppearanceTransition];
+        if (!next.startedHome) {
+            // Layout the borrowed view without impersonating a controller transition.
             [desktop setNeedsLayout]; [desktop layoutIfNeeded];
             __weak NFBDesktopSession *refreshSession=next;
             dispatch_async(dispatch_get_main_queue(), ^{
@@ -1380,7 +1359,7 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
                 if (active && session==active && !active.restoring) {
                     @try {
                         [active.desktop setNeedsLayout]; [active.desktop layoutIfNeeded];
-                        NFBDebugLog(@"desktop widget appearance refreshed for fullscreen background");
+                        NFBDebugLog(@"desktop widget layout completed for fullscreen background");
                     } @catch (NSException *error) { NFBErrorLog(@"desktop widget activation failed: %@",error); }
                 }
             });
