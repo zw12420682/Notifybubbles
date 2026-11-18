@@ -63,8 +63,8 @@ jobs:
           import glob,subprocess
           p=glob.glob('packages/*.deb')[0]
           listing=subprocess.check_output(['dpkg-deb','-c',p],text=True)
-          if '/var/jb/Library/MobileSubstrate/DynamicLibraries/OwnSplit.dylib' not in listing:raise SystemExit('missing /var/jb dylib')
-          if '/var/jb/Library/MobileSubstrate/DynamicLibraries/OwnSplit.plist' not in listing:raise SystemExit('missing /var/jb filter plist')
+          if 'var/jb/Library/MobileSubstrate/DynamicLibraries/OwnSplit.dylib' not in listing:raise SystemExit('missing var/jb dylib')
+          if 'var/jb/Library/MobileSubstrate/DynamicLibraries/OwnSplit.plist' not in listing:raise SystemExit('missing var/jb filter plist')
           print('PASS rootless package paths')
           PY
           shasum -a 256 packages/*.deb > packages/SHA256SUMS.txt
