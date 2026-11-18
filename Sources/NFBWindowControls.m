@@ -460,21 +460,23 @@ CGRect NFBMovieLowerFrameInView(UIView *root) {
     if (moviePortrait.window) return [moviePortrait convertRect:moviePortrait.bounds toView:root];
     return [root convertRect:movieLowerScreen fromView:movieDesktopAnchor.window];
 }
-static void movieCollect(UIView *view, Class cls, NSMutableArray<UIView *> *out) {
+static void movieCollect(UIView *view, Class cls, NSMutableArray<UIView *> *out, NSMutableArray<UIView *> *minis) {
     if (view.hidden || view.alpha < 0.01) return;
     if ([view isKindOfClass:cls]) {
         if (visibleView(view) && appOfWindow(view).length &&
             boolStateOf(view, @"miniWindowModeEnabled") == 0 &&
             boolStateOf(view, @"isClosingWithKeepAliveAnimation") != 1) [out addObject:view];
+        else if (visibleView(view) && appOfWindow(view).length && boolStateOf(view,@"miniWindowModeEnabled")==1 && boolStateOf(view,@"isTransitioningFromMiniMode")==0 && boolStateOf(view,@"isClosingWithKeepAliveAnimation")==0 && orientationOf(view,@"sceneOrientation")==1) [minis addObject:view];
         return; // Never traverse app content.
     }
-    for (UIView *child in view.subviews) movieCollect(child, cls, out);
+    for (UIView *child in view.subviews) movieCollect(child, cls, out, minis);
 }
 @implementation NFBOpenWindowObservation @end
 NFBOpenWindowObservation *NFBCaptureOpenWindows(void) {
     NSCAssert(NSThread.isMainThread,@"Open observations require main queue");
     NFBOpenWindowObservation *observation=[NFBOpenWindowObservation new];
     NSMutableArray<UIView *> *windows=[NSMutableArray array];
+    NSMutableArray *minis=[NSMutableArray array];
     Class cls=NFBTrollFloatingWindowClass();
     observation.classAvailable=cls!=Nil;
     if (cls) for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
@@ -482,9 +484,9 @@ NFBOpenWindowObservation *NFBCaptureOpenWindows(void) {
             scene.activationState==UISceneActivationStateBackground ||
             scene.activationState==UISceneActivationStateUnattached) continue;
         observation.sceneAvailable=YES;
-        for (UIWindow *window in ((UIWindowScene *)scene).windows) movieCollect(window,cls,windows);
+        for (UIWindow *window in ((UIWindowScene *)scene).windows) movieCollect(window,cls,windows,minis);
     }
-    observation.windows=windows;
+    observation.windows=windows; observation.miniWindows=minis;
     NSMutableArray<UIView *> *landscapes=[NSMutableArray array];
     for (UIView *view in windows) if (movieLandscape(view)) [landscapes addObject:view];
     observation.landscapeWindows=landscapes;
@@ -492,6 +494,7 @@ NFBOpenWindowObservation *NFBCaptureOpenWindows(void) {
     if ([windows containsObject:portrait] && !movieLandscape(portrait)) observation.portrait=portrait;
     return observation;
 }
+#include "NFBMovieMiniRow.inc"
 static void movieRestore(UIView *view) {
     NFBMovieRecord *record = [movieRecords objectForKey:view];
     if (!record) return;
@@ -526,6 +529,7 @@ BOOL NFBApplyMovieObservation(BOOL enabled, NFBOpenWindowObservation *observatio
     }
     if (!explicitlyClosed && enabled == movieWasEnabled && now - movieReadAt < 0.2) return movieIsActive;
     movieReadAt = now; movieWasEnabled = enabled;
+    NSArray *miniRoots=NFBPlaceMovieMinis(enabled,observation);
     if (!movieRecords) movieRecords = [NSMapTable weakToStrongObjectsMapTable];
     if (!movieBackdrops) movieBackdrops = [NSMapTable weakToStrongObjectsMapTable];
     NSArray<UIView *> *windows=enabled ? (observation.windows ?: @[]) : @[];
@@ -740,7 +744,8 @@ BOOL NFBApplyMovieObservation(BOOL enabled, NFBOpenWindowObservation *observatio
     NFBUpdateMovieDesktopTouchHosts(touchHosts);
     // Publish roots from exactly the observation that produced the geometry and
     // host lease. No hit-time full-window rescan may introduce unrelated views.
-    NFBPublishMovieTouchWindows(observation.landscapeWindows, NFBDesktopSessionIdentifier());
+    if (miniRoots.count) NFBPublishMovieTouchWindows([(observation.landscapeWindows ?: @[]) arrayByAddingObjectsFromArray:miniRoots], NFBDesktopSessionIdentifier());
+    else NFBPublishMovieTouchWindows(observation.landscapeWindows, NFBDesktopSessionIdentifier());
     for (UIView *view in movieRecords.keyEnumerator.allObjects)
         if (![active containsObject:view]) movieRestore(view);
     for (UIView *parent in movieBackdrops.keyEnumerator.allObjects) if (![parents containsObject:parent]) {

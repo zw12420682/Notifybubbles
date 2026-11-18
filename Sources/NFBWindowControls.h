@@ -35,7 +35,7 @@ BOOL NFBRecheckMovieDesktopAfterCleanup(NSArray<NSString *> *clearedApps);
 
 // One main-queue observation used synchronously by Open layout and snapshots.
 @interface NFBOpenWindowObservation : NSObject
-@property(nonatomic,copy) NSArray<UIView *> *windows, *landscapeWindows;
+@property(nonatomic,copy) NSArray<UIView *> *windows, *landscapeWindows, *miniWindows;
 @property(nonatomic,weak) UIView *portrait;
 @property(nonatomic) BOOL classAvailable, sceneAvailable;
 @end
