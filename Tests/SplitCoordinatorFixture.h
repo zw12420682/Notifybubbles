@@ -6,6 +6,7 @@ void NFBRecheckMovieLayout(void) {}
 @property(nonatomic) BOOL active, desktop;
 @property(nonatomic) NSUInteger refits, closes, replacements, keyboardChecks, portraitChecks, transitionCancels, windowCloses, fullscreens, rotations;
 @property(nonatomic,copy) NSString *scene;
+@property(nonatomic,strong) UIView *upperTarget;
 @end
 @implementation SplitBackendFixture
 - (NSString *)identifier { return @"test-engine"; }
@@ -20,6 +21,8 @@ void NFBRecheckMovieLayout(void) {}
 - (BOOL)closeCurrentWindow { self.windowCloses++; return YES; }
 - (BOOL)fullscreenCurrentWindow { self.fullscreens++; return YES; }
 - (BOOL)rotateWindow:(__unused UIView *)window { self.rotations++;return YES; }
+- (UIView *)upperRotationTarget { return self.upperTarget; }
+- (BOOL)rotateUpperWindow:(UIView *)window { if (window!=self.upperTarget) return NO; self.rotations++;return YES; }
 - (BOOL)applyMovieEnabled:(BOOL)enabled { self.refits++; return enabled && self.active; }
 - (void)settleMovieKeyboard { self.keyboardChecks++; }
 - (void)closeDesktop { self.closes++; self.desktop=NO; }
@@ -112,6 +115,9 @@ static void RunSplitCoordinatorTests(void) {
     Check([core rotateWindow:rotationTarget] && engine.rotations==1,@"house up swipe calls exact window rotation once");
     engine.desktop=YES;
     Check(![core rotateWindow:rotationTarget] && engine.rotations==1,@"desktop cannot rotate upper movie accidentally");
+    engine.upperTarget=[UIView new];
+    Check([core rotateUpperWindow:engine.upperTarget],@"upper rotation works while lower is desktop");
+    Check(![core rotateUpperWindow:[UIView new]],@"stale upper identity is rejected");
     engine.desktop=NO;
     [core scheduleDesktopAfterCleanup:@[@"old"] delay:0 guard:^BOOL { return YES; } refresh:^{}];
     [core beginUserWindowOperation]; [core drainChecks];

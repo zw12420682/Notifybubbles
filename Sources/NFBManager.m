@@ -201,6 +201,8 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, strong) UILongPressGestureRecognizer *desktopActionHold;
 @property(nonatomic, strong) UISwipeGestureRecognizer *desktopActionSwipe;
 @property(nonatomic, strong) UISwipeGestureRecognizer *desktopActionUpSwipe;
+@property(nonatomic, strong) UISwipeGestureRecognizer *desktopActionDownSwipe;
+@property(nonatomic, weak) UIView *desktopUpperRotateTarget;
 @property(nonatomic, weak) UIView *desktopRotateTouchTarget;
 @property(nonatomic, strong) UISwipeGestureRecognizer *backgroundUnfoldSwipe;
 @property(nonatomic, weak) UIView *desktopActionTarget;
@@ -1008,6 +1010,16 @@ static NSString *NFBFrontmostAppID(void) {
     NFBDebugLog(@"gesture: collapsed background left swipe -> unfold");
     [self performDesktopAction:NFBActionUnfoldColumn];
 }
+- (void)desktopActionDownSwiped:(UISwipeGestureRecognizer *)gesture {
+    UIView *target=self.desktopUpperRotateTarget; self.desktopUpperRotateTarget=nil;
+    if (gesture.state!=UIGestureRecognizerStateEnded || gesture.direction!=UISwipeGestureRecognizerDirectionDown ||
+        !self.enabled || [self isLocked] || self.desktopActionToggle || !target ||
+        target!=[NFBSplitCoordinator.shared upperRotationTarget]) return;
+    if (![self acceptGestureForKey:@"desktopRotateDown"]) return;
+    if (![NFBSplitCoordinator.shared rotateUpperWindow:target])
+        [self showOpenNotice:@"Open 上方窗口旋转接口不可用"];
+    [self refresh];
+}
 - (void)desktopActionUpSwiped:(UISwipeGestureRecognizer *)gesture {
     UIView *target=self.desktopRotateTouchTarget;
     self.desktopRotateTouchTarget=nil;
@@ -1048,6 +1060,12 @@ static NSString *NFBFrontmostAppID(void) {
         button.accessibilityHint = @"单击显示桌面，双击切换电影模式，上划旋转 App，长按打开 Open 控制台";
         self.desktopActionTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(desktopActionTapped:)];
         self.desktopActionTap.delegate = self;
+        self.desktopActionDownSwipe=[[UISwipeGestureRecognizer alloc] initWithTarget:self action:@selector(desktopActionDownSwiped:)];
+        self.desktopActionDownSwipe.direction=UISwipeGestureRecognizerDirectionDown;
+        self.desktopActionDownSwipe.numberOfTouchesRequired=1;
+        self.desktopActionDownSwipe.delegate=self;
+        [button addGestureRecognizer:self.desktopActionDownSwipe];
+        [self.desktopActionTap requireGestureRecognizerToFail:self.desktopActionDownSwipe];
         self.desktopActionUpSwipe=[[UISwipeGestureRecognizer alloc] initWithTarget:self action:@selector(desktopActionUpSwiped:)];
         self.desktopActionUpSwipe.direction=UISwipeGestureRecognizerDirectionUp;
         self.desktopActionUpSwipe.numberOfTouchesRequired=1;
@@ -1057,6 +1075,7 @@ static NSString *NFBFrontmostAppID(void) {
         self.movieDoubleTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(movieDoubleTapped:)];
         self.movieDoubleTap.numberOfTapsRequired = 2;
         self.movieDoubleTap.delegate = self;
+        [self.movieDoubleTap requireGestureRecognizerToFail:self.desktopActionDownSwipe];
         [self.movieDoubleTap requireGestureRecognizerToFail:self.desktopActionUpSwipe];
         [self.desktopActionTap requireGestureRecognizerToFail:self.movieDoubleTap];
         [button addGestureRecognizer:self.movieDoubleTap];
@@ -3024,6 +3043,11 @@ static NSString *NFBFrontmostAppID(void) {
         [gesture.view isDescendantOfView:self.fixedBackgroundHost];
 }
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldReceiveTouch:(UITouch *)touch {
+    if (gesture==self.desktopActionDownSwipe) {
+        self.desktopUpperRotateTarget=[NFBSplitCoordinator.shared upperRotationTarget];
+        return self.enabled && ![self isLocked] && !self.desktopActionToggle &&
+            [self desktopActionMode]==NFBActionModeSplit && self.desktopUpperRotateTarget!=nil;
+    }
     if (gesture==self.desktopActionUpSwipe) {
         self.desktopRotateTouchTarget=self.desktopActionTarget;
         return self.enabled && ![self isLocked] && !self.desktopActionToggle &&

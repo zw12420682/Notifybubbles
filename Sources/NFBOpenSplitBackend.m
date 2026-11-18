@@ -68,6 +68,15 @@
         self.layoutObservation=nil; NFBInvalidateWindowState(); return YES;
     } @catch (__unused NSException *error) { return NO; }
 }
+- (UIView *)upperRotationTarget {
+    NFBOpenWindowObservation *observation=NFBCaptureOpenWindows();
+    // Multiple upper windows are ambiguous: refuse instead of rotating a random app.
+    return observation.landscapeWindows.count==1 ? observation.landscapeWindows.firstObject : nil;
+}
+- (BOOL)rotateUpperWindow:(UIView *)window {
+    if (!window || window!=[self upperRotationTarget]) return NO;
+    return [self rotateWindow:window];
+}
 - (BOOL)applyMovieEnabled:(BOOL)enabled {
     self.layoutObservation=enabled ? NFBCaptureOpenWindows() : nil;
     NFBOpenWindowObservation *captured=self.layoutObservation;
