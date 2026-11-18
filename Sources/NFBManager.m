@@ -914,16 +914,13 @@ static NSString *NFBFrontmostAppID(void) {
     if (gesture.state != UIGestureRecognizerStateEnded || [self isLocked] || ![self acceptGestureForKey:@"clearAll"]) return;
     if (NFBDesktopSplitActive()) {
         // A hosted system desktop is a split even when Open has no visible app.
-        // End movie ownership first so reconcile cannot immediately refill it.
-        CFPreferencesSetAppValue(CFSTR("MovieMode"), kCFBooleanFalse, NFBDomain);
-        CFPreferencesAppSynchronize(NFBDomain);
-        NFBSplitCoordinator *core=NFBSplitCoordinator.shared;
-        [core beginUserWindowOperation];
-        [core updateEnabled:self.enabled locked:NO movie:NO keyboard:NFBKeyboardVisible()];
-        [core closeDesktop];
+        // The user closes only this desktop session. Movie mode and its upper
+        // app remain enabled; suppress movie fallback until a new enable cycle.
+        [NFBSplitCoordinator.shared beginUserWindowOperation];
+        NFBCloseMovieDesktopWithTransition(NFBDesktopSessionIdentifier());
         self.edgeExpanded=NO;
         [self resetAutoCollapseTimer];
-        NFBDebugLog(@"desktop: X dismissed hosted desktop and movie ownership without closing Open app");
+        NFBDebugLog(@"desktop: X dismissed hosted desktop; movie app and mode retained");
         [self refresh];
         return;
     }
