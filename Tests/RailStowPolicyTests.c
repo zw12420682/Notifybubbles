@@ -6,7 +6,9 @@ int main(void) {
     assert(!NFBStowCanBegin(true,false,true,false,true,false));
     assert(!NFBStowCanBegin(false,false,true,false,false,false));
     assert(!NFBStowCanBegin(true,true,true,false,false,false));
-    assert(!NFBStowCanBegin(true,false,false,false,false,false));
+    assert(NFBStowCanBegin(true,false,false,false,false,false));
+    assert(!NFBStowCanBegin(true,false,false,true,false,false));
+    assert(!NFBStowCanBegin(true,false,false,false,true,false));
     assert(!NFBStowCanBegin(true,false,true,false,false,true));
     return 0;
 }

@@ -1172,8 +1172,8 @@ static NSString *NFBFrontmostAppID(void) {
         glyph = self.edgeExpanded ? chevronRightIcon : chevronLeftIcon;
         tint = UIColor.systemBlueColor;
         button.accessibilityLabel = self.edgeExpanded ? @"收起图标列" : @"展开图标列";
-        button.accessibilityHint = self.edgeExpanded ? @"单击收起图标列；桌面上滑完全收纳，长按清后台"
-                                                     : @"单击或左滑展开；桌面上滑完全收纳，长按清后台";
+        button.accessibilityHint = self.edgeExpanded ? @"单击收起图标列；上滑完全收纳，长按清后台"
+                                                     : @"单击或左滑展开；上滑完全收纳，长按清后台";
     } else {
         button.accessibilityLabel = @"显示桌面 / Open 控制台";
         button.accessibilityHint = @"单击显示桌面，上划旋转 App，长按打开 Open 控制台";
