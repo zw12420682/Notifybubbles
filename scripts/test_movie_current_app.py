@@ -3,7 +3,7 @@ r=Path(__file__).resolve().parents[1]
 s=(r/'Sources/NFBManager.m').read_text()
 a=s.index('- (void)tapped:(NFBBubble *)button {'); b=s.index('[NFBSplitCoordinator.shared closeDesktop];',a)
 entry=s[a:b]
-assert 'NFBPreference(@"MovieMode", NO)' in entry
+assert 'NFBSplitCoordinator.shared.movieActive' in entry
 assert 'NFBTrollVisibleApp()' in entry and 'NFBSplitAttachmentApp()' in entry
 assert 'current app tap ignored' in entry and 'return;' in entry
 assert entry.index('current app tap ignored') < entry.index('[self touchColumn]')

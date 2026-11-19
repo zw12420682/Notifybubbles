@@ -198,7 +198,6 @@ static double NFBNumber(NSString *key, double fallback) {
 
 @property(nonatomic, strong) NFBBubble *desktopActionButton;
 @property(nonatomic, strong) UITapGestureRecognizer *desktopActionTap;
-@property(nonatomic, strong) UITapGestureRecognizer *movieDoubleTap;
 @property(nonatomic, strong) UILongPressGestureRecognizer *desktopActionHold;
 @property(nonatomic, strong) UISwipeGestureRecognizer *desktopActionSwipe;
 @property(nonatomic, strong) UISwipeGestureRecognizer *desktopActionUpSwipe;
@@ -502,7 +501,7 @@ static const CFTimeInterval kTickReconcileInterval = 2.0;
             if (keyboardUp != wasUp) {
                 NFBSplitCoordinator *core=NFBSplitCoordinator.shared;
                 [core updateEnabled:weakSelf.enabled locked:[weakSelf isLocked]
-                    movie:NFBPreference(@"MovieMode", NO) keyboard:keyboardUp];
+                    movie:YES keyboard:keyboardUp];
                 if (keyboardUp) [core scheduleMovieKeyboardChecks];
             }
             if (!keyboardUp && wasUp) {
@@ -899,13 +898,13 @@ static NSString *NFBFrontmostAppID(void) {
     // The column is free again once the last verification pass is done. A clear
     // that produced no target at all releases it immediately above.
     NSUInteger epoch = self.clearEpoch;
-    if (NFBPreference(@"MovieMode", NO)) {
+    if (self.enabled) {
         __weak NFBManager *weakManager=self;
         [NFBSplitCoordinator.shared scheduleDesktopAfterCleanup:targets
             delay:0.05 + targets.count*0.12 + 0.65 guard:^BOOL {
                 NFBManager *manager=weakManager;
                 if (!manager || !manager.enabled || manager.exitEpoch!=exitEpoch || manager.clearEpoch!=epoch ||
-                    [manager isLocked] || !NFBPreference(@"MovieMode", NO)) return NO;
+                    [manager isLocked] || !manager.enabled) return NO;
                 for (NSString *app in targets)
                     if ([exitVersions[app] unsignedIntegerValue] != [manager.generations[app] unsignedIntegerValue]) return NO;
                 return YES;
@@ -920,7 +919,7 @@ static NSString *NFBFrontmostAppID(void) {
 
 - (BOOL)railStowEligible {
     return NFBStowCanBegin(self.enabled,[self isLocked],NFBCurrentWindowState().home,
-        self.splitLayout || NFBDesktopSplitActive(),NFBPreference(@"MovieMode",NO),self.railFullyStowed);
+        self.splitLayout || NFBDesktopSplitActive(),NFBSplitCoordinator.shared.movieActive,self.railFullyStowed);
 }
 - (void)enterRailStow {
     if (![self railStowEligible]) return;
@@ -970,7 +969,7 @@ static NSString *NFBFrontmostAppID(void) {
     CGFloat w=self.window.bounds.size.width;
     CGFloat y=isfinite(self.railStowCenterY)?self.railStowCenterY:CGRectGetMidY(self.window.bounds);
     self.railStowHandle.bounds=CGRectMake(0,0,48,48);
-    self.railStowHandle.center=CGPointMake(w-24,MAX(32,MIN(self.window.bounds.size.height-32,y)));
+    self.railStowHandle.center=CGPointMake(w,MAX(32,MIN(self.window.bounds.size.height-32,y)));
     self.railStowHandle.hidden=NO;
     self.railStowHandle.alpha=1;
     [self.window bringSubviewToFront:self.railStowHandle];
@@ -1047,15 +1046,6 @@ static NSString *NFBFrontmostAppID(void) {
     }
     [self refresh];
 }
-- (void)movieDoubleTapped:(UITapGestureRecognizer *)gesture {
-    if (gesture.state != UIGestureRecognizerStateEnded || !self.enabled || [self isLocked] ||
-        self.desktopActionToggle) return;
-    BOOL enabled = !NFBPreference(@"MovieMode", NO);
-    CFPreferencesSetAppValue(CFSTR("MovieMode"), (__bridge CFPropertyListRef)@(enabled), NFBDomain);
-    CFPreferencesAppSynchronize(NFBDomain);
-    NFBDebugLog(@"movie: double tap enabled=%d", enabled);
-    [self refresh];
-}
 - (void)desktopActionTapped:(UITapGestureRecognizer *)gesture {
     if (gesture.state != UIGestureRecognizerStateEnded || !self.enabled || [self isLocked]) return;
     [self performDesktopAction:NFBActionEffectFor([self desktopActionMode], NFBActionTap, YES, NO)];
@@ -1129,7 +1119,7 @@ static NSString *NFBFrontmostAppID(void) {
         button.imageView.tintColor = UIColor.systemGreenColor;
         button.imageView.backgroundColor = UIColor.secondarySystemBackgroundColor;
         button.accessibilityLabel = @"显示桌面 / Open 控制台";
-        button.accessibilityHint = @"单击显示桌面，双击切换电影模式，上划旋转 App，长按打开 Open 控制台";
+        button.accessibilityHint = @"单击显示桌面，上划旋转 App，长按打开 Open 控制台";
         self.desktopActionTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(desktopActionTapped:)];
         self.desktopActionTap.delegate = self;
         self.desktopActionDownSwipe=[[UISwipeGestureRecognizer alloc] initWithTarget:self action:@selector(desktopActionDownSwiped:)];
@@ -1144,13 +1134,6 @@ static NSString *NFBFrontmostAppID(void) {
         self.desktopActionUpSwipe.delegate=self;
         [button addGestureRecognizer:self.desktopActionUpSwipe];
         [self.desktopActionTap requireGestureRecognizerToFail:self.desktopActionUpSwipe];
-        self.movieDoubleTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(movieDoubleTapped:)];
-        self.movieDoubleTap.numberOfTapsRequired = 2;
-        self.movieDoubleTap.delegate = self;
-        [self.movieDoubleTap requireGestureRecognizerToFail:self.desktopActionDownSwipe];
-        [self.movieDoubleTap requireGestureRecognizerToFail:self.desktopActionUpSwipe];
-        [self.desktopActionTap requireGestureRecognizerToFail:self.movieDoubleTap];
-        [button addGestureRecognizer:self.movieDoubleTap];
         self.desktopActionHold = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(desktopActionHeld:)];
         self.desktopActionHold.minimumPressDuration = 0.45;
         self.desktopActionHold.delegate = self;
@@ -1184,16 +1167,16 @@ static NSString *NFBFrontmostAppID(void) {
         chevronRightIcon = [UIImage systemImageNamed:@"chevron.right"];
     }
     UIImage *glyph = houseIcon;
-    UIColor *tint = NFBPreference(@"MovieMode", NO) ? UIColor.systemRedColor : UIColor.systemGreenColor;
+    UIColor *tint = NFBSplitCoordinator.shared.movieActive ? UIColor.systemRedColor : UIColor.systemGreenColor;
     if (toggleMode) {
         glyph = self.edgeExpanded ? chevronRightIcon : chevronLeftIcon;
         tint = UIColor.systemBlueColor;
         button.accessibilityLabel = self.edgeExpanded ? @"收起图标列" : @"展开图标列";
-        button.accessibilityHint = self.edgeExpanded ? @"单击收起图标列；普通桌面上滑完全收纳，长按清后台"
-                                                     : @"单击或左滑展开；普通桌面上滑完全收纳，长按清后台";
+        button.accessibilityHint = self.edgeExpanded ? @"单击收起图标列；桌面上滑完全收纳，长按清后台"
+                                                     : @"单击或左滑展开；桌面上滑完全收纳，长按清后台";
     } else {
         button.accessibilityLabel = @"显示桌面 / Open 控制台";
-        button.accessibilityHint = @"单击显示桌面，双击切换电影模式，上划旋转 App，长按打开 Open 控制台";
+        button.accessibilityHint = @"单击显示桌面，上划旋转 App，长按打开 Open 控制台";
     }
     if (button.imageView.image != glyph) button.imageView.image = glyph;
     if (!CGColorEqualToColor(button.imageView.tintColor.CGColor, tint.CGColor)) button.imageView.tintColor = tint;
@@ -1712,7 +1695,7 @@ static NSString *NFBFrontmostAppID(void) {
     NFBObserveHomeWidgetLockDiagnostics([self isLocked], self.enabled);
     NFBUpdateArcOverlay(self.enabled && ![self isLocked]);
     [NFBSplitCoordinator.shared updateEnabled:self.enabled locked:[self isLocked]
-        movie:NFBPreference(@"MovieMode", NO) keyboard:NFBKeyboardVisible()];
+        movie:YES keyboard:NFBKeyboardVisible()];
     NFBSetCaptureHidden(self.window.rootViewController.view, self.enabled && self.hideInScreenshots);
 }
 // Coalesced entry point: at most one full layout per runloop turn. Use this for
@@ -2191,11 +2174,6 @@ static NSString *NFBFrontmostAppID(void) {
         }
     }
     [self ensureWindow];
-    BOOL onHome=NFBCurrentWindowState().home;
-    if (self.railFullyStowed && NFBStowMustRestore(onHome,floatingApp.length>0 || NFBDesktopSplitActive(),NFBPreference(@"MovieMode",NO))) {
-        self.railFullyStowed=NO;
-        self.edgeExpanded=self.railWasExpandedBeforeStow;
-    }
     if (self.railFullyStowed && ![self isLocked]) {
         UIView *stowRoot=self.window.rootViewController.view;
         stowRoot.hidden=YES;
@@ -3152,9 +3130,6 @@ static NSString *NFBFrontmostAppID(void) {
             [self desktopActionMode]==NFBActionModeSplit && !NFBDesktopSplitActive() &&
             self.desktopRotateTouchTarget!=nil;
     }
-    if (gesture == self.movieDoubleTap)
-        return self.enabled && ![self isLocked] && !self.desktopActionToggle &&
-            [self desktopActionMode] == NFBActionModeSplit;
     if (gesture == self.backgroundUnfoldSwipe) {
         return self.enabled && ![self isLocked] &&
             [self desktopActionMode] == NFBActionModeCollapsed &&
@@ -3228,7 +3203,7 @@ static NSString *NFBFrontmostAppID(void) {
     if (button.opening || (self.buttons[button.appID] != button && self.favoriteButtons[button.appID] != button)) return;
     // Must precede desktop teardown, notification consumption and opening flags.
     // Both favorites and background rows enter through this same handler.
-    if (NFBPreference(@"MovieMode", NO) &&
+    if (NFBSplitCoordinator.shared.movieActive &&
         ([button.appID isEqualToString:NFBTrollVisibleApp()] ||
          [button.appID isEqualToString:NFBSplitAttachmentApp()])) {
         NFBDebugLog(@"movie: current app tap ignored %@", button.appID);

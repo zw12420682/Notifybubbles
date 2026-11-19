@@ -2,11 +2,11 @@ from pathlib import Path
 r=Path(__file__).resolve().parents[1]
 m=(r/'Sources/NFBManager.m').read_text()
 a=m.index('- (BOOL)railStowEligible {');b=m.index('- (void)clearAllTapped:',a);f=m[a:b]
-assert 'NFBStowCanBegin' in f and 'NFBStowMustRestore' in m
+assert 'NFBStowCanBegin' in f and 'NFBStowMustRestore' not in m
 assert 'self.railWasExpandedBeforeStow=self.edgeExpanded' in f
 assert 'self.railFullyStowed=YES' in f and 'self.railFullyStowed=NO' in f
 assert 'self.edgeExpanded=self.railWasExpandedBeforeStow' in f
-assert 'chevron.left' in m and 'CGPointMake(w-24,MAX(32' in m
+assert 'chevron.left' in m and 'CGPointMake(w,MAX(32' in m
 assert 'installStowSwipeOnView' not in m and 'stowSwipes' not in m
 assert 'railStowSwipeRecognized' not in m
 h=m[m.index('- (void)desktopActionHeld:(UILongPressGestureRecognizer *)gesture {'):m.index('- (void)backgroundUnfoldSwiped:(UISwipeGestureRecognizer *)gesture {')]

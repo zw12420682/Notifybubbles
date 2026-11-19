@@ -11,7 +11,7 @@ assert 'attempt<6' in c
 assert 'core.operationEpoch!=operation' in c
 assert '[backend desktopSessionIdentifier]!=session' in c
 assert '[backend recheckDesktopAfterCleanup:targets]' in c
-for token in ['manager.exitEpoch!=exitEpoch','manager.clearEpoch!=epoch','[manager isLocked]','!NFBPreference(@"MovieMode", NO)','scheduleDesktopAfterCleanup:targets']:
+for token in ['manager.exitEpoch!=exitEpoch','manager.clearEpoch!=epoch','[manager isLocked]','!manager.enabled','scheduleDesktopAfterCleanup:targets']:
  assert token in m,token
 # stopped vs retry policy: existing desktop or new lower must not be toggled.
 def check(desktop,landscape,lower,targets):

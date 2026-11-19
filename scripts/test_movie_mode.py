@@ -5,8 +5,8 @@ r=Path(__file__).resolve().parents[1]
 s=(r/'Sources/NFBWindowControls.m').read_text()
 m=(r/'Sources/NFBManager.m').read_text()
 p=plistlib.loads((r/'Preferences/Resources/Root.plist').read_bytes())
-option=next(x for x in p['items'] if x.get('key')=='MovieMode')
-assert option['default'] is False
+assert not any(x.get('key')=='MovieMode' for x in p['items'])
+assert 'movie:YES' in m
 movie=s[s.index('// Movie layout is opt-in'):]
 for token in ('movieRestore(view)', 'view.transform = record.transform',
               'view.center = record.center', 'black.userInteractionEnabled = NO',

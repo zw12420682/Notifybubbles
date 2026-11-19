@@ -2,9 +2,9 @@ from pathlib import Path
 r=Path(__file__).resolve().parents[1]
 m=(r/'Sources/NFBManager.m').read_text()
 w=(r/'Sources/NFBWindowControls.m').read_text()
-assert 'self.movieDoubleTap.numberOfTapsRequired = 2' in m
-assert '[self.desktopActionTap requireGestureRecognizerToFail:self.movieDoubleTap]' in m
-assert 'CFPreferencesSetAppValue(CFSTR("MovieMode")' in m
+assert 'movieDoubleTap' not in m
+assert 'movieDoubleTapped:' not in m
+assert 'movie:YES' in m and 'CFSTR("MovieMode")' not in m
 assert 'UIColor.systemRedColor : UIColor.systemGreenColor' in m
 assert 'movieFit' not in m
 assert 'plan.favoritesVisible =' not in m

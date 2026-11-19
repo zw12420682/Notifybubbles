@@ -182,8 +182,8 @@ extern id<NFBSplitBackend> NFBCreateOpenSplitBackend(void);
 - (BOOL)replaceWindowWithDesktop:(UIView *)window {
     if (!self.enabled || self.locked || self.updating) return NO;
     // House single tap must never expose a black lower region in movie mode.
-    // Keep the existing desktop; double tap owns the mode switch separately.
-    if (self.movie && [self.backend desktopActive]) return YES;
+    // Keep the existing desktop only while a landscape layout is actually active.
+    if (self.movieActive && [self.backend desktopActive]) return YES;
     [self beginUserWindowOperation];
     return [self.backend replaceWindowWithDesktop:window];
 }

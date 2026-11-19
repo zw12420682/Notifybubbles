@@ -65,8 +65,10 @@ static void RunSplitCoordinatorTests(void) {
     Check([core replaceWindowWithDesktop:nil],@"movie desktop house tap accepted as no-op");
     Check(engine.desktop && engine.replacements==1 && core.generation==houseGeneration &&
         engine.transitionCancels==houseCancels,@"movie desktop single tap preserves session and pending state");
-    [core updateEnabled:YES locked:NO movie:NO keyboard:YES];
-    Check([core replaceWindowWithDesktop:nil] && engine.replacements==2,@"ordinary mode house retains backend toggle behavior");
+    engine.active=NO;
+    [core updateEnabled:YES locked:NO movie:YES keyboard:YES]; [core reconcile];
+    Check(!core.movieActive && [core replaceWindowWithDesktop:nil] && engine.replacements==2,@"automatic landscape enabled without landscape preserves ordinary house toggle");
+    engine.active=YES;
     [core updateEnabled:YES locked:NO movie:YES keyboard:YES];
     [core closeDesktop];
     [core scheduleDesktopAfterCleanup:@[@"old"] delay:0 guard:^BOOL { return YES; } refresh:^{}];

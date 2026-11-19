@@ -6,7 +6,7 @@ assert 'movieFit' not in m and 'CGFloat movieSide' not in m
 assert 'BOOL hideForPosition = floatingApp.length && !atBottomLeft;' in m
 assert 'plan.favoritesVisible =' not in m
 assert 'NFBRailPlan plan = NFBPlanRail(' in m
-assert 'self.movieDoubleTap.numberOfTapsRequired = 2' in m
+assert 'movieDoubleTap' not in m
 assert 'if (!NFBDesktopSplitActive()) movieOwnsDesktop = NFBShowDesktopInSplit' in w
 start=w.index('static void movieRestore('); end=w.index('BOOL NFBUpdateMovieMode(', start)
 restore=w[start:end]

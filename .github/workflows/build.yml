@@ -94,8 +94,8 @@ jobs:
           clang -std=c11 -Wall -Wextra -Werror -I Sources Tests/RailStowPolicyTests.c -o "$RUNNER_TEMP/test-rail-stow"
           "$RUNNER_TEMP/test-rail-stow"
           python3 scripts/test_rail_stow.py
-      - name: Test full rail stow boundaries
-        run: python3 scripts/test_rail_stow.py
+      - name: Test automatic landscape and persistent session stow
+        run: python3 scripts/test_auto_landscape.py
       - name: Test layout/burst/drag/metric/probe policies (-Werror)
         run: |
           clang -std=c11 -Wall -Wextra -Werror -I Sources Tests/PolicyTests.c -lm -o "$RUNNER_TEMP/test-policies"
