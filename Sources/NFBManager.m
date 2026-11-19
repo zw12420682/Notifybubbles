@@ -206,7 +206,7 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, weak) UIView *desktopUpperRotateTarget;
 @property(nonatomic, weak) UIView *desktopRotateTouchTarget;
 @property(nonatomic, strong) UISwipeGestureRecognizer *backgroundUnfoldSwipe;
-@property(nonatomic,strong) NSHashTable<UISwipeGestureRecognizer *> *stowSwipes;
+@property(nonatomic,strong) NSHashTable<UIGestureRecognizer *> *stowSwipes;
 @property(nonatomic, strong) NFBBubble *railStowHandle;
 @property(nonatomic) BOOL railFullyStowed, railWasExpandedBeforeStow;
 @property(nonatomic) CGFloat railStowCenterY;
