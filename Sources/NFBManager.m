@@ -612,7 +612,8 @@ static const CFTimeInterval kTickReconcileInterval = 2.0;
     // are collected and the burst is laid out once, on the next runloop turn; the
     // reminder effects then run from that pass, after it has placed the bubbles
     // (runBurstEffects), so a request arriving mid-layout just joins it.
-    if (![self.pendingBurstApps containsObject:appID]) [self.pendingBurstApps addObject:appID];
+    // The notification stays in the store; hidden rows owe no visual reminder.
+    if (!self.railFullyStowed) [self.pendingBurstApps addObject:appID];
     if (self.burstRefreshPending) return;
     self.burstRefreshPending = YES;
     __weak typeof(self) weakSelf = self;
@@ -930,6 +931,7 @@ static NSString *NFBFrontmostAppID(void) {
     if (!isfinite(y)) y=CGRectGetMidY(self.window.bounds);
     self.railStowCenterY=MAX(32,MIN(self.window.bounds.size.height-32,y));
     self.railFullyStowed=YES;
+    [self.pendingBurstApps removeAllObjects];
     self.lastInteractionAt=CACurrentMediaTime();
     [self refresh];
 }
