@@ -981,11 +981,8 @@ static NSString *NFBFrontmostAppID(void) {
 - (void)clearAllTapped:(UITapGestureRecognizer *)gesture {
     if (gesture.state != UIGestureRecognizerStateEnded || [self isLocked] || ![self acceptGestureForKey:@"clearAll"]) return;
     if (!NFBTrollVisibleApp().length) {
-        // Outside a split this button clears the notification queue and folds the
-        // list away; it is not a split-close action.
-        [self.store clear];
-        self.edgeExpanded = NO;
-        [self refresh];
+        // X belongs to split layout. An unavailable Open target is not a clear request.
+        [self showOpenNotice:@"暂时无法确认要关闭的分屏窗口，请稍后再试"];
         return;
     }
     [self resetAutoCollapseTimer];
@@ -1243,14 +1240,6 @@ static NSString *NFBFrontmostAppID(void) {
     button.imageView.tintColor = UIColor.systemBlueColor;
     button.imageView.backgroundColor = UIColor.secondarySystemBackgroundColor;
     button.accessibilityTraits = UIAccessibilityTraitButton;
-    if (!self.splitLayout) {
-        // Fullscreen: the X only empties the notification queue. Its gestures are
-        // unchanged (tap clears, long press clears the background), so only the
-        // spoken description follows the new meaning.
-        button.accessibilityLabel = @"清空通知";
-        button.accessibilityHint = @"单击清空通知列表，长按清理后台";
-        return;
-    }
     button.accessibilityLabel = @"关闭分屏 / 清理后台";
     button.accessibilityHint = @"单击执行 TrollOpen 右侧区域关闭，长按清理后台";
 }
