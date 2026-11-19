@@ -31,6 +31,7 @@
 #import "NFBEdgeInspection.h"
 #import "NFBEdgeLayout.h"
 #import "NFBPrivacy.h"
+#import "NFBRailStowPolicy.h"
 #import "NFBContainerLayout.h"
 #import "NFBRailMetricQueue.h"
 #import "NFBProbePolicy.h"
@@ -205,6 +206,15 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, weak) UIView *desktopUpperRotateTarget;
 @property(nonatomic, weak) UIView *desktopRotateTouchTarget;
 @property(nonatomic, strong) UISwipeGestureRecognizer *backgroundUnfoldSwipe;
+@property(nonatomic,strong) NSHashTable<UISwipeGestureRecognizer *> *stowSwipes;
+@property(nonatomic, strong) NFBBubble *railStowHandle;
+@property(nonatomic) BOOL railFullyStowed, railWasExpandedBeforeStow;
+@property(nonatomic) CGFloat railStowCenterY;
+- (void)railStowSwipeRecognized:(UISwipeGestureRecognizer *)gesture;
+- (BOOL)railStowEligible;
+- (UISwipeGestureRecognizer *)installStowSwipeOnView:(UIView *)view;
+- (void)restoreStowedRail;
+- (void)layoutRailStowHandle;
 @property(nonatomic, weak) UIView *desktopActionTarget;
 @property(nonatomic, weak) UIView *desktopActionTouchTarget;
 @property(nonatomic, weak) UIView *observedActionTarget;
@@ -910,6 +920,73 @@ static NSString *NFBFrontmostAppID(void) {
     [self refresh];
 }
 
+- (UISwipeGestureRecognizer *)installStowSwipeOnView:(UIView *)view {
+    if (!self.stowSwipes) self.stowSwipes=[NSHashTable weakObjectsHashTable];
+    UISwipeGestureRecognizer *swipe=[[UISwipeGestureRecognizer alloc] initWithTarget:self action:@selector(railStowSwipeRecognized:)];
+    swipe.direction=UISwipeGestureRecognizerDirectionRight; swipe.numberOfTouchesRequired=1;
+    swipe.delegate=self; swipe.cancelsTouchesInView=YES;
+    [view addGestureRecognizer:swipe]; [self.stowSwipes addObject:swipe];
+    return swipe;
+}
+- (BOOL)railStowEligible {
+    return NFBStowCanBegin(self.enabled,[self isLocked],NFBCurrentWindowState().home,
+        self.splitLayout || NFBDesktopSplitActive(),NFBPreference(@"MovieMode",NO),self.railFullyStowed);
+}
+- (void)railStowSwipeRecognized:(UISwipeGestureRecognizer *)gesture {
+    if (gesture.state!=UIGestureRecognizerStateEnded || gesture.direction!=UISwipeGestureRecognizerDirectionRight ||
+        ![self railStowEligible]) return;
+    self.railWasExpandedBeforeStow=self.edgeExpanded;
+    self.edgeExpanded=NO;
+    CGFloat y=self.desktopActionButton && !self.desktopActionButton.hidden ? self.desktopActionButton.center.y : NAN;
+    if (!isfinite(y)) y=CGRectGetMidY(self.window.bounds);
+    self.railStowCenterY=MAX(32,MIN(self.window.bounds.size.height-32,y));
+    self.railFullyStowed=YES;
+    self.lastInteractionAt=CACurrentMediaTime();
+    [self refresh];
+}
+- (void)railStowHandleTapped:(UITapGestureRecognizer *)gesture {
+    if (gesture.state==UIGestureRecognizerStateEnded) [self restoreStowedRail];
+}
+- (void)restoreStowedRail {
+    if (!self.railFullyStowed || !self.enabled || [self isLocked]) return;
+    self.railFullyStowed=NO;
+    self.edgeExpanded=self.railWasExpandedBeforeStow;
+    self.lastInteractionAt=CACurrentMediaTime();
+    self.window.rootViewController.view.hidden=NO;
+    self.desktopActionButton.hidden=NO;
+    self.railStowHandle.hidden=YES;
+    [self refresh];
+}
+- (void)layoutRailStowHandle {
+    if (!self.railStowHandle) {
+        NFBBubble *handle=[[NFBBubble alloc] initWithFrame:CGRectMake(0,0,48,48)];
+        handle.badge.hidden=YES;
+        handle.imageView.frame=CGRectMake(7,7,34,34);
+        handle.imageView.layer.cornerRadius=8;
+        handle.layer.shadowPath=[UIBezierPath bezierPathWithRoundedRect:handle.imageView.frame cornerRadius:8].CGPath;
+        __weak NFBManager *weakSelf=self;
+        handle.tapHandler=^{ [weakSelf restoreStowedRail]; };
+        handle.imageView.image=[UIImage systemImageNamed:@"chevron.left"];
+        handle.imageView.contentMode=UIViewContentModeCenter;
+        handle.imageView.tintColor=UIColor.systemBlueColor;
+        handle.imageView.backgroundColor=UIColor.secondarySystemBackgroundColor;
+        handle.accessibilityTraits=UIAccessibilityTraitButton;
+        handle.accessibilityLabel=@"展开收纳的图标栏";
+        handle.accessibilityHint=@"点按恢复收纳前的图标栏状态";
+        UITapGestureRecognizer *tap=[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(railStowHandleTapped:)];
+        [handle addGestureRecognizer:tap];
+        self.railStowHandle=handle;
+        [self.window addSubview:handle];
+    }
+    CGFloat w=self.window.bounds.size.width;
+    CGFloat y=isfinite(self.railStowCenterY)?self.railStowCenterY:CGRectGetMidY(self.window.bounds);
+    self.railStowHandle.bounds=CGRectMake(0,0,48,48);
+    self.railStowHandle.center=CGPointMake(w-24,MAX(32,MIN(self.window.bounds.size.height-32,y)));
+    self.railStowHandle.hidden=NO;
+    self.railStowHandle.alpha=1;
+    [self.window bringSubviewToFront:self.railStowHandle];
+    NFBSetCaptureHidden(self.railStowHandle,self.hideInScreenshots);
+}
 - (void)clearAllTapped:(UITapGestureRecognizer *)gesture {
     if (gesture.state != UIGestureRecognizerStateEnded || [self isLocked] || ![self acceptGestureForKey:@"clearAll"]) return;
     if (!NFBTrollVisibleApp().length) {
@@ -1060,6 +1137,8 @@ static NSString *NFBFrontmostAppID(void) {
         button.accessibilityHint = @"单击显示桌面，双击切换电影模式，上划旋转 App，长按打开 Open 控制台";
         self.desktopActionTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(desktopActionTapped:)];
         self.desktopActionTap.delegate = self;
+        UISwipeGestureRecognizer *stow=[self installStowSwipeOnView:button];
+        [self.desktopActionTap requireGestureRecognizerToFail:stow];
         self.desktopActionDownSwipe=[[UISwipeGestureRecognizer alloc] initWithTarget:self action:@selector(desktopActionDownSwiped:)];
         self.desktopActionDownSwipe.direction=UISwipeGestureRecognizerDirectionDown;
         self.desktopActionDownSwipe.numberOfTouchesRequired=1;
@@ -1541,6 +1620,7 @@ static NSString *NFBFrontmostAppID(void) {
     self.window.rootViewController = [UIViewController new];
     self.window.rootViewController.view.backgroundColor = UIColor.clearColor;
     self.rail = [NFBRail new];
+    [self installStowSwipeOnView:self.rail];
     // Scroll contents always clip to their own viewport. Half-hidden columns
     // move the viewport itself to the screen edge; no vertical overflow is needed.
     self.rail.clipsToBounds = YES;
@@ -2119,6 +2199,28 @@ static NSString *NFBFrontmostAppID(void) {
         }
     }
     [self ensureWindow];
+    BOOL onHome=NFBCurrentWindowState().home;
+    if (self.railFullyStowed && NFBStowMustRestore(onHome,floatingApp.length>0 || NFBDesktopSplitActive(),NFBPreference(@"MovieMode",NO))) {
+        self.railFullyStowed=NO;
+        self.edgeExpanded=self.railWasExpandedBeforeStow;
+    }
+    if (self.railFullyStowed && ![self isLocked]) {
+        UIView *stowRoot=self.window.rootViewController.view;
+        stowRoot.hidden=YES;
+        stowRoot.userInteractionEnabled=NO;
+        self.desktopActionButton.hidden=YES;
+        self.window.hidden=NO;
+        [self layoutRailStowHandle];
+        NFBUpdateOpenEdgeSplitIconsVisible(NO);
+        self.lastRefreshComplete=YES;
+        self.lastRefreshIncomplete=NO;
+        self.lastLayoutAt=CACurrentMediaTime();
+        self.layoutRecording=NO;
+        return;
+    }
+    self.window.rootViewController.view.hidden=NO;
+    if (self.desktopActionButton) self.desktopActionButton.hidden=NO;
+    if (self.railStowHandle) self.railStowHandle.hidden=YES;
     // A clear is one continuous motion: the reads it triggers (switcher diff,
     // frontmost lookup while apps die) must not hide the column halfway through
     // and reveal it again when the sweep settles. That blink was the "flash".
@@ -2279,6 +2381,7 @@ static NSString *NFBFrontmostAppID(void) {
         self.fixedBackgroundMaterial.userInteractionEnabled = NO;
         self.fixedBackgroundMaterial.clipsToBounds = YES;
         self.fixedBackgroundHost = [NFBRail new];
+        [self installStowSwipeOnView:self.fixedBackgroundHost];
         self.fixedBackgroundHost.clipsToBounds = YES;
         self.fixedBackgroundHost.delegate = self;
         self.backgroundUnfoldSwipe = [[UISwipeGestureRecognizer alloc]
@@ -2632,6 +2735,7 @@ static NSString *NFBFrontmostAppID(void) {
     if (!self.favoritesRail) {
         self.favoriteButtons = [NSMutableDictionary dictionary];
         self.favoritesRail = [NFBRail new];
+        [self installStowSwipeOnView:self.favoritesRail];
         self.favoritesRail.delegate = self;
         self.favoriteHold = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(favoriteHeld:)];
         self.favoriteHold.minimumPressDuration = 0.45;
@@ -3032,10 +3136,17 @@ static NSString *NFBFrontmostAppID(void) {
 // Only this host's scroll pan may recognise alongside its left swipe. Vertical
 // scrolling stays native; no global simultaneous-recognition exemption.
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)other {
+    if ([self.stowSwipes containsObject:gesture] || [self.stowSwipes containsObject:other]) {
+        UIGestureRecognizer *stow=[self.stowSwipes containsObject:gesture]?gesture:other;
+        UIGestureRecognizer *pan=stow==gesture?other:gesture;
+        return [stow.view isKindOfClass:UIScrollView.class] && pan==((UIScrollView *)stow.view).panGestureRecognizer;
+    }
     return (gesture == self.backgroundUnfoldSwipe && other == self.fixedBackgroundHost.panGestureRecognizer) ||
         (other == self.backgroundUnfoldSwipe && gesture == self.fixedBackgroundHost.panGestureRecognizer);
 }
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldRequireFailureOfGestureRecognizer:(UIGestureRecognizer *)other {
+    if ([self.stowSwipes containsObject:other] && [gesture isKindOfClass:UITapGestureRecognizer.class] &&
+        (gesture.view==other.view || [gesture.view isDescendantOfView:other.view])) return YES;
     // A left swipe beginning on an icon must not release into an app-opening tap.
     // No hold dependency: existing long-press timing remains unchanged.
     return other == self.backgroundUnfoldSwipe &&
@@ -3043,6 +3154,9 @@ static NSString *NFBFrontmostAppID(void) {
         [gesture.view isDescendantOfView:self.fixedBackgroundHost];
 }
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldReceiveTouch:(UITouch *)touch {
+    if ([self.stowSwipes containsObject:gesture])
+        return [self railStowEligible] && !self.favoriteDrag &&
+            (touch.view==gesture.view || [touch.view isDescendantOfView:gesture.view]);
     if (gesture==self.desktopActionDownSwipe) {
         self.desktopUpperRotateTarget=[NFBSplitCoordinator.shared upperRotationTarget];
         return self.enabled && ![self isLocked] && !self.desktopActionToggle &&

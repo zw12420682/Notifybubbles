@@ -15,7 +15,7 @@ name: Build DEB (rootless + roothide)
 on:
   workflow_dispatch:
   push:
-    branches: [main, master, refactor/unified-split-core, fix/movie-mini-4920]
+    branches: [main, master, refactor/unified-split-core, fix/movie-mini-4920, feat/rail-stow]
     paths-ignore: ['**.md']
 
 permissions:
@@ -89,6 +89,13 @@ jobs:
 
       - name: Test rail layout wiring without a toolchain
         run: python3 scripts/test_rail_layout.py
+      - name: Test rail stow policy (-Werror)
+        run: |
+          clang -std=c11 -Wall -Wextra -Werror -I Sources Tests/RailStowPolicyTests.c -o "$RUNNER_TEMP/test-rail-stow"
+          "$RUNNER_TEMP/test-rail-stow"
+          python3 scripts/test_rail_stow.py
+      - name: Test full rail stow boundaries
+        run: python3 scripts/test_rail_stow.py
       - name: Test layout/burst/drag/metric/probe policies (-Werror)
         run: |
           clang -std=c11 -Wall -Wextra -Werror -I Sources Tests/PolicyTests.c -lm -o "$RUNNER_TEMP/test-policies"
