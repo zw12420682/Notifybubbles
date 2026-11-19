@@ -204,6 +204,7 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, strong) UISwipeGestureRecognizer *desktopActionDownSwipe;
 @property(nonatomic, weak) UIView *desktopUpperRotateTarget;
 @property(nonatomic, weak) UIView *desktopRotateTouchTarget;
+@property(nonatomic) BOOL nfbUpSwipeStartedOnStowArrow;
 @property(nonatomic, strong) UISwipeGestureRecognizer *backgroundUnfoldSwipe;
 @property(nonatomic, strong) NFBBubble *railStowHandle;
 @property(nonatomic) BOOL railFullyStowed, railWasExpandedBeforeStow;
@@ -1077,14 +1078,17 @@ static NSString *NFBFrontmostAppID(void) {
     [self refresh];
 }
 - (void)desktopActionUpSwiped:(UISwipeGestureRecognizer *)gesture {
+    BOOL startedOnArrow=self.nfbUpSwipeStartedOnStowArrow;
+    UIView *target=self.desktopRotateTouchTarget;
+    self.nfbUpSwipeStartedOnStowArrow=NO;
+    self.desktopRotateTouchTarget=nil;
+    // A disappearing split can turn the house into an arrow during a swipe.
+    if (self.desktopActionToggle!=startedOnArrow) return;
     if (self.desktopActionToggle) {
-        self.desktopRotateTouchTarget=nil;
         if (gesture.state==UIGestureRecognizerStateEnded && gesture.direction==UISwipeGestureRecognizerDirectionUp &&
             [self railStowEligible]) [self enterRailStow];
         return;
     }
-    UIView *target=self.desktopRotateTouchTarget;
-    self.desktopRotateTouchTarget=nil;
     if (gesture.state!=UIGestureRecognizerStateEnded || gesture.direction!=UISwipeGestureRecognizerDirectionUp ||
         !self.enabled || [self isLocked] || self.desktopActionToggle || NFBDesktopSplitActive() ||
         !target || target!=self.desktopActionTarget || target!=NFBDesktopActionWindow()) return;
@@ -1110,6 +1114,10 @@ static NSString *NFBFrontmostAppID(void) {
     BOOL visible = ((target && !CGRectIsNull(frame) && !CGRectIsEmpty(frame)) || toggleMode) && self.enabled;
     self.desktopActionTarget = (target && !toggleMode) ? target : nil;
     if (!self.desktopActionButton && !visible) return;
+    if (self.desktopActionToggle!=toggleMode) {
+        self.nfbUpSwipeStartedOnStowArrow=NO;
+        self.desktopRotateTouchTarget=nil;
+    }
     self.desktopActionToggle = toggleMode;
     if (!self.desktopActionButton) {
         NFBBubble *button = [[NFBBubble alloc] initWithFrame:frame];
@@ -3123,8 +3131,10 @@ static NSString *NFBFrontmostAppID(void) {
     if (gesture==self.desktopActionUpSwipe) {
         if (self.desktopActionToggle) {
             self.desktopRotateTouchTarget=nil;
-            return [self railStowEligible] && [self visibleHalfContainsTouch:touch forView:self.desktopActionButton];
+            self.nfbUpSwipeStartedOnStowArrow=[self railStowEligible] && [self visibleHalfContainsTouch:touch forView:self.desktopActionButton];
+            return self.nfbUpSwipeStartedOnStowArrow;
         }
+        self.nfbUpSwipeStartedOnStowArrow=NO;
         self.desktopRotateTouchTarget=self.desktopActionTarget;
         return self.enabled && ![self isLocked] && !self.desktopActionToggle &&
             [self desktopActionMode]==NFBActionModeSplit && !NFBDesktopSplitActive() &&
