@@ -1,7 +1,7 @@
 from pathlib import Path
 r=Path(__file__).resolve().parents[1]
 s=(r/'Sources/NFBDesktopHost.m').read_text()
-a=s.index('@interface NFBWidgetWatch');b=s.index('// One manual radius',a);f=s[a:b]
+a=s.index('@interface NFBWidgetWatch');b=s.index('// An open request is not success',a);f=s[a:b]
 assert '@property(nonatomic,weak) UIView *view' in f
 assert 'visited<4096' in f and 'depth>=40' in f
 assert 'pending=%lu depthLimitHits=%lu' in f

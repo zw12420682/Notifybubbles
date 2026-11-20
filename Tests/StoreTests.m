@@ -156,8 +156,6 @@ int main(void) {
         for (NSUInteger i=0; i<600; i++)
             [s putApp:@"chat" notification:[NSString stringWithFormat:@"n%lu", (unsigned long)i] request:Request(i) destination:destination];
         Check(s.count == 512, @"Queue memory bounded");
-        Check(NFBSize(1)==32 && NFBSize(200)==80 && NFBSize(NAN)==48, @"Size bounds and invalid input");
-        Check(NFBOpacity(-1)==0.2 && NFBOpacity(5)==1 && NFBOpacity(NAN)==1, @"Opacity bounds and invalid input");
         for (int d=32; d<=80; d++) {
             double left=390-(d+14)+7+NFBRetraction(d);
             Check(fabs(390-left-d/2.0)<0.001, @"Half visible for all sizes");

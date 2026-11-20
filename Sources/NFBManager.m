@@ -369,8 +369,6 @@ static double NFBNumber(NSString *key, double fallback) {
 // frontmost. That state dims the whole column and shows the left half of it.
 @property(nonatomic, strong) NSMutableArray<NSString *> *recentUsedApps;
 @property(nonatomic, copy) NSArray *lastLayoutApps;
-@property(nonatomic) CGFloat iconSize;
-@property(nonatomic) CGFloat iconOpacity;
 @property(nonatomic) BOOL enabled;
 @property(nonatomic) BOOL showHome;
 @property(nonatomic) BOOL showApps;
@@ -563,8 +561,6 @@ static const CFTimeInterval kTickReconcileInterval = 2.0;
     NSAssert(NSThread.isMainThread, @"UI must be on main thread");
     CFPreferencesAppSynchronize(NFBDomain);
     self.verticalPosition = NFBPosition(NFBNumber(@"EdgeVerticalPosition", NFBNumber(@"VerticalPosition", 0.7)));
-    self.iconSize = NFBSize(NFBNumber(@"IconSize", 48));
-    self.iconOpacity = NFBOpacity(NFBNumber(@"IconOpacity", 1));
     BOOL nextEnabled = NFBPreference(@"Enabled", YES);
     if (self.enabled != nextEnabled) { ++self.exitEpoch; ++self.presentationEpoch; }
     self.enabled = nextEnabled;
@@ -2111,7 +2107,7 @@ static NSString *NFBFrontmostAppID(void) {
         }
         [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : 0.2 delay:0
             options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseInOut animations:^{
-            button.alpha = 0; button.transform = CGAffineTransformMakeTranslation(self.iconSize + 20, 0);
+            button.alpha = 0; button.transform = CGAffineTransformMakeTranslation(48.0 + 20, 0);
         } completion:^(__unused BOOL done) {
             // Only tear down if nothing re-adopted this app in the meantime,
             // otherwise a returning notification authors a second bubble. The
@@ -2261,7 +2257,7 @@ static NSString *NFBFrontmostAppID(void) {
     // A restored record only applies on the screen shape it was measured on; a
     // rotation or a different device drops it before the plan can reuse it.
     [self invalidateRestoredRailMetricForSize:bounds.size];
-    NFBRailPlan plan = NFBPlanRail(bounds.size.width, bounds.size.height, planSafe, top, self.iconSize,
+    NFBRailPlan plan = NFBPlanRail(bounds.size.width, bounds.size.height, planSafe, top, 48.0,
         NFBFloatingPosition, splitNow, splitA, splitUsable, self.verticalPosition, collapse,
         hideFavorites ? 0 : self.favoriteApps.count, (unsigned long)columnRows, (unsigned long)notifiedCount,
         (double)self.splitRailTop, (double)self.splitRailDiameter, (double)self.splitRailScreenWidth,
@@ -2276,7 +2272,7 @@ static NSString *NFBFrontmostAppID(void) {
             railReference = self.validRailSplitFrame;
         NFBDebugLog(@"rail-transient: rejected diameter=%.2f split=%@ retained=%@",
             plan.diameter, NSStringFromCGRect(splitA), NSStringFromCGRect(railReference));
-        plan = NFBPlanRail(bounds.size.width, bounds.size.height, planSafe, top, self.iconSize,
+        plan = NFBPlanRail(bounds.size.width, bounds.size.height, planSafe, top, 48.0,
             NFBFloatingPosition, YES, railReference, YES, self.verticalPosition, collapse,
             hideFavorites ? 0 : self.favoriteApps.count, (unsigned long)columnRows, (unsigned long)notifiedCount,
             (double)self.splitRailTop, (double)self.splitRailDiameter, (double)self.splitRailScreenWidth,
@@ -2289,7 +2285,7 @@ static NSString *NFBFrontmostAppID(void) {
     // Keep the old fullscreen placement available if a device asks for it; the
     // default replays the measured split column (see NFBRailLayout.h).
     if (!splitNow && !NFBPreference(@"ColumnReuseSplitMeasure", YES))
-        plan = NFBPlanRail(bounds.size.width, bounds.size.height, planSafe, top, self.iconSize,
+        plan = NFBPlanRail(bounds.size.width, bounds.size.height, planSafe, top, 48.0,
             NFBFloatingPosition, NO, CGRectZero, NO, self.verticalPosition, collapse,
             hideFavorites ? 0 : self.favoriteApps.count, (unsigned long)columnRows,
             (unsigned long)notifiedCount, (double)self.splitRailTop, (double)self.splitRailDiameter,
@@ -2631,7 +2627,7 @@ static NSString *NFBFrontmostAppID(void) {
         // it stays discoverable, unlike the dimmed background bubbles around it.
         // Every row keeps its own opacity; the half-hidden state dims the whole
         // column (self.rail.alpha) instead, so no unread icon stays fully visible.
-        CGFloat alpha = self.iconOpacity;
+        CGFloat alpha = 1.0;
         if (isClearAll) {
             alpha = 1.0;
         } else if ([active isEqualToString:appID]) {
@@ -2780,13 +2776,13 @@ static NSString *NFBFrontmostAppID(void) {
         button.badge.hidden = YES;
         [button updateActiveMark:[app isEqual:active] diameter:diameter duration:duration];
         CGPoint targetCenter = CGPointMake(side / 2, NFBRowCenter(self.favoriteApps.count, index, step, side));
-        BOOL changed = !CGRectEqualToRect(button.bounds, CGRectMake(0,0,side,side)) || (button != self.favoriteDrag && !CGPointEqualToPoint(button.center, targetCenter)) || !CGRectEqualToRect(button.imageView.frame, CGRectMake(7,7,diameter,diameter)) || button.imageView.layer.cornerRadius != diameter * 0.23 || button.alpha != ([app isEqual:active] ? 1 : self.iconOpacity);
+        BOOL changed = !CGRectEqualToRect(button.bounds, CGRectMake(0,0,side,side)) || (button != self.favoriteDrag && !CGPointEqualToPoint(button.center, targetCenter)) || !CGRectEqualToRect(button.imageView.frame, CGRectMake(7,7,diameter,diameter)) || button.imageView.layer.cornerRadius != diameter * 0.23 || button.alpha != ([app isEqual:active] ? 1 : 1.0);
         if (changed) [UIView animateWithDuration:duration delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{
             button.bounds = CGRectMake(0, 0, side, side);
             if (button != self.favoriteDrag) button.center = CGPointMake(side / 2, NFBRowCenter(self.favoriteApps.count, index, step, side));
             button.imageView.frame = CGRectMake(7, 7, diameter, diameter);
             button.imageView.layer.cornerRadius = diameter * 0.23;
-            button.alpha = [app isEqual:active] ? 1 : self.iconOpacity;
+            button.alpha = [app isEqual:active] ? 1 : 1.0;
         } completion:nil];
         // Same rule as the main column: the badge follows the icon geometry.
         [self layoutBadge:button diameter:diameter];
@@ -3038,7 +3034,7 @@ static NSString *NFBFrontmostAppID(void) {
     ring.layer.cornerRadius = diameter/2;
     ring.layer.borderWidth = 2;
     ring.layer.borderColor = UIColor.systemTealColor.CGColor;
-    ring.alpha = self.iconOpacity;
+    ring.alpha = 1.0;
     [root addSubview:ring];
     [UIView animateWithDuration:0.55 animations:^{
         ring.transform = CGAffineTransformMakeScale(1.65, 1.65); ring.alpha = 0;
@@ -3049,7 +3045,7 @@ static NSString *NFBFrontmostAppID(void) {
         drop.center = CGPointMake(origin.x + cos(angle)*diameter*0.32, origin.y + sin(angle)*diameter*0.32);
         drop.layer.cornerRadius = drop.bounds.size.width/2;
         drop.backgroundColor = i % 2 ? UIColor.systemTealColor : UIColor.whiteColor;
-        drop.userInteractionEnabled = NO; drop.alpha = self.iconOpacity;
+        drop.userInteractionEnabled = NO; drop.alpha = 1.0;
         [root addSubview:drop];
         [UIView animateWithDuration:0.55 delay:0 options:UIViewAnimationOptionCurveEaseOut animations:^{
             drop.center = CGPointMake(origin.x + cos(angle)*diameter*0.95, origin.y + sin(angle)*diameter*0.95);

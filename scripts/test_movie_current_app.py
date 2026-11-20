@@ -11,7 +11,7 @@ w=(r/'Sources/NFBWindowControls.m').read_text()
 assert 'portraitCornerRadius' not in w
 h=(r/'Sources/NFBDesktopHost.m').read_text()
 assert 'panel.clipsToBounds = YES' in h
-assert 'panel.layer.cornerRadius = NFBConfiguredDesktopRadius();' in h
+assert 'panel.layer.cornerRadius = 14.0;' in h
 assert 'session!=self || self.restoring || self.widgetRefreshCancelled || self.pendingApp.length' in h
 assert 'NFBLogWidgetHosts(sample.desktop, 0, &budget)' in h
 print('PASS: movie current tap blocked before side effects; movie desktop corners; widget strategy unchanged')

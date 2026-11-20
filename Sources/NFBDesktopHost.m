@@ -226,14 +226,6 @@ void NFBObserveHomeWidgetLockDiagnostics(BOOL locked, BOOL enabled) {
     }
 }
 
-// One manual radius for every desktop session. No Open geometry/style probes.
-static CGFloat NFBConfiguredDesktopRadius(void) {
-    id value = CFBridgingRelease(CFPreferencesCopyAppValue(CFSTR("DesktopCornerRadius"), CFSTR("local.notifybubbles")));
-    double radius = [value respondsToSelector:@selector(doubleValue)] ? [value doubleValue] : 14;
-    if (!isfinite(radius)) radius = 14;
-    return MAX(0, MIN(100, radius));
-}
-
 CGFloat NFBDesktopSplitCornerRadius(void) {
     return session && !session.restoring ? session.panel.layer.cornerRadius : NAN;
 }
@@ -1006,7 +998,7 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
     self.panelFrame = frame;
     // The session's existing safety timer runs place: updates apply in both
     // modes without reopening, resizing or rebuilding the desktop.
-    CGFloat radius = NFBConfiguredDesktopRadius();
+    CGFloat radius = 14.0;
     if (fabs(self.panel.layer.cornerRadius-radius) > 0.001) {
         [CATransaction begin]; [CATransaction setDisableActions:YES];
         self.panel.layer.cornerRadius = radius;
@@ -1277,7 +1269,7 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
         // No new UIWindow or scene; do not replace the native root controller.
         UIView *panel = [[UIView alloc] initWithFrame:CGRectZero];
         panel.backgroundColor = UIColor.secondarySystemBackgroundColor;
-        panel.layer.cornerRadius = NFBConfiguredDesktopRadius();
+        panel.layer.cornerRadius = 14.0;
         panel.layer.cornerCurve = kCACornerCurveContinuous;
         panel.clipsToBounds = YES;
         // Start hidden when the open animation is enabled, otherwise the fully
