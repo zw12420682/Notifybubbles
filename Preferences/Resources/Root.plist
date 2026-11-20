@@ -32,7 +32,7 @@
 			<key>label</key>
 			<string>显示与隐私</string>
 			<key>footerText</key>
-			<string>显示开关决定插件在哪些界面可见；锁屏和键盘隐藏规则仍优先于完全收纳。截屏隐藏仅作用于插件控件，不隐藏分屏 App，也可能影响录屏。</string>
+			<string>显示开关决定插件在哪些界面可见；锁屏及键盘弹出时插件栏自动隐藏。截屏隐藏仅作用于插件控件，不隐藏分屏 App，也可能影响录屏。</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -53,18 +53,6 @@
 			<string>App 内显示</string>
 			<key>key</key>
 			<string>ShowInApps</string>
-			<key>default</key>
-			<true/>
-			<key>defaults</key>
-			<string>local.notifybubbles</string>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>label</key>
-			<string>锁屏显示</string>
-			<key>key</key>
-			<string>ShowOnLock</string>
 			<key>default</key>
 			<true/>
 			<key>defaults</key>

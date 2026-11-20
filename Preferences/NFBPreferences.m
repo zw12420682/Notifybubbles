@@ -16,7 +16,7 @@
 - (NSArray *)specifiers {
     if (!_specifiers) {
         _specifiers = [self loadSpecifiersFromPlistName:@"Root" target:self];
-        NSDictionary *symbols = @{@"Enabled": @"bell.badge.fill", @"ShowOnLock": @"lock.fill",
+        NSDictionary *symbols = @{@"Enabled": @"bell.badge.fill",
             @"ShowOnHome": @"house.fill", @"ShowInApps": @"app.fill", @"IconSize": @"arrow.up.left.and.arrow.down.right",
             @"IconOpacity": @"circle.lefthalf.filled", @"ClosePreviousSplit": @"rectangle.on.rectangle",
             @"HideInScreenshots": @"eye.slash.fill", @"DebugLogging": @"ladybug.fill", @"HotspotAutoClose": @"personalhotspot", @"HotspotIdleMinutes": @"timer"};

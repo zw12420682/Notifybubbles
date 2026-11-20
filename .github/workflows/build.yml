@@ -99,6 +99,7 @@ jobs:
           python3 scripts/test_auto_landscape.py
           python3 scripts/test_interaction_edges.py
           python3 scripts/test_settings_layout.py
+          python3 scripts/test_lock_hidden.py
       - name: Test layout/burst/drag/metric/probe policies (-Werror)
         run: |
           clang -std=c11 -Wall -Wextra -Werror -I Sources Tests/PolicyTests.c -lm -o "$RUNNER_TEMP/test-policies"

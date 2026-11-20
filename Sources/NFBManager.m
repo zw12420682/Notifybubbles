@@ -372,7 +372,6 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic) CGFloat iconSize;
 @property(nonatomic) CGFloat iconOpacity;
 @property(nonatomic) BOOL enabled;
-@property(nonatomic) BOOL showLock;
 @property(nonatomic) BOOL showHome;
 @property(nonatomic) BOOL showApps;
 @property(nonatomic) NSTimeInterval lastGestureAt;
@@ -575,7 +574,6 @@ static const CFTimeInterval kTickReconcileInterval = 2.0;
     self.favoriteScrollRows = NFBNumber(@"FavoriteScrollRows", 0);
     NFBConfigureHotspotAutoClose(self.enabled && NFBPreference(@"HotspotAutoClose",NO),NFBNumber(@"HotspotIdleMinutes",5));
     NFBUpdateOpenEdge(self.enabled);
-    self.showLock = NFBPreference(@"ShowOnLock", YES);
     self.showHome = NFBPreference(@"ShowOnHome", YES);
     self.showApps = NFBPreference(@"ShowInApps", YES);
 
@@ -1568,7 +1566,7 @@ static NSString *NFBFrontmostAppID(void) {
     id lock = NFBSingleton(@"SBLockScreenManager");
     // An unknown lock state must not display an interactive overlay.
     if (!NFBBooleanGetterCompatible(lock, @selector(isUILocked))) return NO;
-    if (NFBCheckedBool(lock, @"isUILocked", YES)) return self.showLock;
+    if (NFBCheckedBool(lock, @"isUILocked", YES)) return NO;
     id springboard = UIApplication.sharedApplication;
     if (!NFBBooleanGetterCompatible(springboard, @selector(isShowingHomescreen))) return NO;
     return NFBCurrentWindowState().home ? self.showHome : self.showApps;
