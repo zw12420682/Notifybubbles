@@ -22,6 +22,9 @@ UIView *NFBDesktopIndependentAnchor(void);
 void NFBObserveHomeWidgetLockDiagnostics(BOOL locked, BOOL enabled);
 
 NSUInteger NFBDesktopSessionIdentifier(void);
+// Only a movie-owned session may park; identity guards against stale callers.
+void NFBSetMovieDesktopParked(NSUInteger identifier, BOOL parked);
+BOOL NFBMovieDesktopParked(void);
 
 void NFBPublishMovieTouchWindows(NSArray<UIView *> *windows, NSUInteger desktopSession);
 

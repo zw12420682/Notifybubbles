@@ -13,9 +13,9 @@ for phase in ('Began','Updated','Ended','Canceled'):
     assert f'grabberTongue{phase}Pulling:withDistance:andVelocity:andGesture:' in s
 assert s.index('sig.numberOfArguments != 6')<s.index('MSHookMessageEx(cls, selector')
 for guard in ('deckGrabberTongue','homeGestureBottomEdgeRecognizer','edgePullGestureRecognizer',
-              'session.configuration != NFBHomeSwipeConfiguration','session.generation != NFBSplitCoordinator.shared.generation',
+              'session.configuration != NFBHomeSwipeConfiguration','session.operationEpoch != NFBSplitCoordinator.shared.operationEpoch',
               'session.invalid = YES','session.finished = YES','session.tongue != tongue',
-              'NFBHomeSwipeCanBegin','NFBHomeSwipeCanFinish'):
+              'NFBHomeSwipeCanCapture','NFBHomeSwipeCanFinish'):
     assert guard in s,guard
 strict=w.split('BOOL NFBCloseHomeSwipeWindow(UIView *window) {',1)[1].split('BOOL NFBCloseCurrentSplit(void) {',1)[0]
 assert 'NFBHomeSwipeCloseWindow() != window' in strict

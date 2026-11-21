@@ -49,6 +49,8 @@ typedef NS_ENUM(NSUInteger, NFBSplitPhase) {
 @interface NFBSplitCoordinator : NSObject
 + (instancetype)shared;
 @property(nonatomic, readonly) NSUInteger generation;
+// Changes for explicit user operations, not keyboard/layout observation sync.
+@property(nonatomic, readonly) NSUInteger operationEpoch;
 @property(nonatomic, strong, readonly) NFBWindowLease *windowLease;
 @property(nonatomic, readonly) NFBSplitPhase phase;
 @property(nonatomic, readonly) BOOL movieActive;

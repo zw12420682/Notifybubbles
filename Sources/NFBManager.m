@@ -1085,7 +1085,7 @@ static NSString *NFBFrontmostAppID(void) {
         return;
     }
     if (gesture.state!=UIGestureRecognizerStateEnded || gesture.direction!=UISwipeGestureRecognizerDirectionUp ||
-        !self.enabled || [self isLocked] || self.desktopActionToggle || NFBDesktopSplitActive() ||
+        !self.enabled || [self isLocked] || self.desktopActionToggle || (NFBDesktopSplitActive() && !NFBMovieDesktopParked()) ||
         !target || target!=self.desktopActionTarget || target!=NFBDesktopActionWindow()) return;
     if (![self acceptGestureForKey:@"desktopRotateUp"]) return;
     if (![NFBSplitCoordinator.shared rotateWindow:target])
@@ -3124,7 +3124,7 @@ static NSString *NFBFrontmostAppID(void) {
         self.nfbUpSwipeStartedOnStowArrow=NO;
         self.desktopRotateTouchTarget=self.desktopActionTarget;
         return self.enabled && ![self isLocked] && !self.desktopActionToggle &&
-            [self desktopActionMode]==NFBActionModeSplit && !NFBDesktopSplitActive() &&
+            [self desktopActionMode]==NFBActionModeSplit && (!NFBDesktopSplitActive() || NFBMovieDesktopParked()) &&
             self.desktopRotateTouchTarget!=nil;
     }
     if (gesture == self.backgroundUnfoldSwipe) {

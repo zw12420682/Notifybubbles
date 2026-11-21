@@ -14,7 +14,8 @@ extern id<NFBSplitBackend> NFBCreateOpenSplitBackend(void);
 @property(nonatomic,strong,readwrite) NFBSplitSnapshot *snapshot;
 @property(nonatomic) BOOL enabled, locked, movie, keyboard, updating;
 @property(nonatomic,copy) NSString *identity;
-@property(nonatomic) NSUInteger operationEpoch, cleanupEpoch;
+@property(nonatomic,readwrite) NSUInteger operationEpoch;
+@property(nonatomic) NSUInteger cleanupEpoch;
 @end
 @implementation NFBSplitCoordinator {
     NFBWindowLease *_windowLease;

@@ -27,7 +27,7 @@ static char NFBHomeSwipeSessionKey;
 @property(nonatomic,weak) UIView *target, *parent, *region;
 @property(nonatomic,weak) UIWindow *host;
 @property(nonatomic,copy) NSString *bundle, *sceneKey;
-@property(nonatomic) NSUInteger generation, configuration;
+@property(nonatomic) NSUInteger operationEpoch, configuration;
 @property(nonatomic) BOOL invalid, finished;
 @end
 @implementation NFBHomeSwipeSession @end
@@ -44,7 +44,7 @@ static BOOL NFBHomeSwipeUnlocked(void) {
 static BOOL NFBHomeSwipeSessionValid(NFBHomeSwipeSession *session) {
     if (session.invalid || !NFBHomeSwipeEnabled || !NFBHomeSwipeUnlocked() ||
         session.configuration != NFBHomeSwipeConfiguration ||
-        session.generation != NFBSplitCoordinator.shared.generation) return NO;
+        session.operationEpoch != NFBSplitCoordinator.shared.operationEpoch) return NO;
     UIView *target = session.target;
     NFBWindowState *state = NFBCurrentWindowState();
     return target && session.host && target.window == session.host && target.superview == session.parent &&
@@ -56,7 +56,7 @@ static BOOL NFBHomeSwipeSessionValid(NFBHomeSwipeSession *session) {
         !NFBCheckedBool(target, @"isTransitioningFromMiniMode", YES) &&
         !NFBCheckedBool(target, @"isClosingWithKeepAliveAnimation", YES);
 }
-static NFBHomeSwipeSession *NFBHomeSwipeBegin(id manager, id tongue) {
+static NFBHomeSwipeSession *NFBHomeSwipeBegin(id manager, id tongue, double distance, double velocity) {
     if (!NFBHomeSwipeEnabled || !NFBHomeSwipeUnlocked() ||
         NFBGet(manager, @"deckGrabberTongue") != tongue) return nil;
     id value = NFBGet(tongue, @"edgePullGestureRecognizer");
@@ -65,7 +65,12 @@ static NFBHomeSwipeSession *NFBHomeSwipeBegin(id manager, id tongue) {
     UIPanGestureRecognizer *recognizer = value;
     if (recognizer.state != UIGestureRecognizerStateBegan || !recognizer.view) return nil;
     CGPoint translation = [recognizer translationInView:recognizer.view];
-    if (!NFBHomeSwipeCanBegin(translation.x, translation.y)) return nil;
+    CGPoint speed = [recognizer velocityInView:recognizer.view];
+    if (!NFBHomeSwipeCanCapture(translation.x, translation.y, speed.x, speed.y, distance, velocity)) {
+        NFBDebugLog(@"home-swipe: begin rejected translation=%@ velocity=%@ native=%.1f/%.1f",
+            NSStringFromCGPoint(translation), NSStringFromCGPoint(speed), distance, velocity);
+        return nil;
+    }
     NFBInvalidateWindowState();
     UIView *target = NFBHomeSwipeCloseWindow();
     if (!target) return nil; // No proven native orange action: leave system alone.
@@ -75,7 +80,7 @@ static NFBHomeSwipeSession *NFBHomeSwipeBegin(id manager, id tongue) {
     session.region = NFBGet(target, @"rightTouchRegion");
     session.bundle = NFBString(NFBGet(target, @"bundleID"));
     session.sceneKey = NFBCurrentWindowState().sceneKey;
-    session.generation = NFBSplitCoordinator.shared.generation;
+    session.operationEpoch = NFBSplitCoordinator.shared.operationEpoch;
     session.configuration = NFBHomeSwipeConfiguration;
     if (!NFBHomeSwipeSessionValid(session)) return nil;
     NFBDebugLog(@"home-swipe: captured app=%@", session.bundle);
@@ -96,7 +101,7 @@ static void NFBHomeSwipePull(id manager, SEL command, id tongue, double distance
         // A new began is the only point where ownership can change. Retain the
         // finished tombstone through duplicate terminal callbacks of one stream.
         session = nil;
-        @try { session = NFBHomeSwipeBegin(manager, tongue); }
+        @try { session = NFBHomeSwipeBegin(manager, tongue, distance, velocity); }
         @catch (NSException *error) { NFBErrorLog(@"home-swipe: begin %@", error); }
         objc_setAssociatedObject(manager, &NFBHomeSwipeSessionKey, session, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }

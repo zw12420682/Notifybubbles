@@ -72,6 +72,7 @@ typedef NS_ENUM(NSUInteger, NFBDesktopMutationPhase) {
 @property(nonatomic) CGRect panelFrame;
 @property(nonatomic) BOOL placed;
 @property(nonatomic) BOOL restoring, mutated;
+@property(nonatomic) BOOL movieParked, moviePersistent;
 - (BOOL)place;
 - (void)check;
 - (void)checkBody;
@@ -82,6 +83,7 @@ typedef NS_ENUM(NSUInteger, NFBDesktopMutationPhase) {
 @end
 static NFBDesktopSession *session;
 static NSUInteger desktopSequence;
+static NFBWindowLease *NFBMovieHostLease(void);
 #ifdef NFB_DESKTOP_SIM_TEST
 // Simulator-only one-shot fault injection; never compiled into the tweak.
 static NSUInteger desktopFailurePoint;
@@ -96,6 +98,33 @@ static void NFBDesktopTestCheckpoint(NSUInteger point) {
 #endif
 
 NSUInteger NFBDesktopSessionIdentifier(void) { return session && !session.restoring ? session.identifier : 0; }
+BOOL NFBMovieDesktopParked(void) { return session && !session.restoring && session.movieParked; }
+void NFBSetMovieDesktopParked(NSUInteger identifier, BOOL parked) {
+    if (!NSThread.isMainThread || !session || session.restoring || !identifier || session.identifier!=identifier) return;
+    NFBDesktopSession *active=session;
+    active.moviePersistent=YES;
+    if (active.movieParked==parked) return;
+    active.movieParked=parked;
+    if (parked) {
+        [NFBMovieHostLease() releaseSession:identifier];
+        active.widgetRefreshCancelled=YES;
+        [active finishWidgetRefresh];
+        active.pendingApp=nil;
+        // Hide only our panel, not the shared native home window. Keep its
+        // desktop subtree attached. The existing hit hook returns nil below.
+        [active.panel.layer removeAllAnimations];
+        active.panel.hidden=YES; active.panel.userInteractionEnabled=NO;
+        if (active.window.isKeyWindow && active.previousKeyWindow && !active.previousKeyWindow.hidden)
+            [active.previousKeyWindow makeKeyWindow];
+    } else {
+        // No re-transplant, refresh, focus acquisition or opening animation.
+        [UIView performWithoutAnimation:^{
+            active.panel.transform=CGAffineTransformIdentity; active.panel.alpha=1;
+            active.panel.hidden=NO; active.panel.userInteractionEnabled=YES;
+        }];
+    }
+    NFBDebugLog(@"movie-desktop: session=%lu parked=%d",(unsigned long)identifier,parked);
+}
 static UIScrollView *NFBDesktopPager(UIView *desktop);
 static void NFBLogWidgetHosts(UIView *view, NSUInteger depth, NSUInteger *budget);
 // Object tracking distinguishes deallocation/detachment from tree scan limits.
@@ -454,6 +483,11 @@ UIView *NFBDesktopSplitHitTest(UIWindow *window, CGPoint point, UIEvent *event, 
     NFBDesktopSession *active = session;
     *handled = active && !active.restoring && active.window == window;
     if (!*handled) return nil;
+    if (active.movieParked) {
+        // Shared host may contain Open roots: route those only, never hidden home.
+        Class floatingClass=NFBTrollFloatingWindowClass();
+        return floatingClass ? NFBDesktopFloatingHit(window,active.panel,floatingClass,window,point,event) : nil;
+    }
     CGPoint local = [active.panel convertPoint:point fromView:window];
     if (![active.panel pointInside:local withEvent:event]) {
         Class floatingClass = NFBTrollFloatingWindowClass();
@@ -877,7 +911,7 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
     }
 }
 - (void)activateDesktop {
-    if (self.restoring) return;
+    if (self.restoring || self.movieParked) return;
     [self adoptDesktopInteraction];
     if (!self.window.isKeyWindow) [self.window makeKeyWindow];
 }
@@ -1042,9 +1076,11 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
         NFBWindowState *state=NFBCurrentWindowState();
         if ([state.floatingApp isEqualToString:self.pendingApp] && state.floatingWindow && !state.mini) {
             NFBDebugLog(@"desktop split launch visible: %@",self.pendingApp);
-            NFBCloseDesktopSplit(); return;
+            if (self.moviePersistent) {
+                NFBSetMovieDesktopParked(self.identifier, YES);
+            } else { NFBCloseDesktopSplit(); return; }
         }
-        if (CACurrentMediaTime()>=self.pendingDeadline) {
+        if (self.pendingApp.length && CACurrentMediaTime()>=self.pendingDeadline) {
             NFBErrorLog(@"desktop split launch timed out: %@",self.pendingApp);
             self.pendingApp=nil;
             UIAccessibilityPostNotification(UIAccessibilityAnnouncementNotification,@"尚未确认应用分屏打开，桌面分屏已保留");
@@ -1059,6 +1095,8 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
         NFBDesktopFail(@"系统隐藏了原生桌面窗口，已恢复桌面");
         failurePending = YES; NFBCloseDesktopSplit(); return;
     }
+    // A parked desktop must not re-enable hidden content or claim interaction.
+    if (self.movieParked) return;
     // Repair native interaction changes without overwriting the original state.
     [self adoptDesktopInteraction];
 }

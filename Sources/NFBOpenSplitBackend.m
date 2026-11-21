@@ -89,7 +89,7 @@
 - (void)settleMovieKeyboard { NFBRecheckMovieLayout(); }
 - (void)closeDesktop { self.layoutObservation=nil; NFBCloseDesktopSplit(); }
 - (BOOL)replaceWindowWithDesktop:(UIView *)window { return NFBReplaceSplitWithDesktop(window); }
-- (BOOL)desktopActive { return NFBDesktopSplitActive(); }
+- (BOOL)desktopActive { return NFBDesktopSplitActive() && !NFBMovieDesktopParked(); }
 - (NSUInteger)desktopSessionIdentifier { return NFBDesktopSessionIdentifier(); }
 - (BOOL)recheckDesktopAfterCleanup:(NSArray<NSString *> *)apps { return NFBRecheckMovieDesktopAfterCleanup(apps); }
 @end

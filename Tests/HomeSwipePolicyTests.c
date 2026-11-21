@@ -18,6 +18,15 @@ int main(void) {
     assert(!NFBHomeSwipeCanFinish(0,-80,900,-500));
     assert(!NFBHomeSwipeCanFinish(0,-80,NAN,-800));
     assert(!NFBHomeSwipeCanFinish(0,-80,0,-INFINITY));
+    assert(NFBHomeSwipeCanCapture(0,0,0,-100,5,100));
+    assert(NFBHomeSwipeCanCapture(0,0,0,0,5,100));
+    assert(!NFBHomeSwipeCanCapture(0,0,300,-10,5,100));
+    assert(!NFBHomeSwipeCanCapture(0,0,0,100,5,100));
+    assert(!NFBHomeSwipeCanCapture(0,0,0,0,0,0));
+    assert(!NFBHomeSwipeCanCapture(10,0,0,-300,5,100));
+    assert(NFBHomeSwipeCanFinish(0,-40,0,-100));
+    assert(NFBHomeSwipeCanFinish(0,-50,0,-100));
+    assert(!NFBHomeSwipeCanFinish(0,-39,0,-100));
     puts("Home swipe direction/completion boundaries PASS");
     return 0;
 }

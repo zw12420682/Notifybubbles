@@ -630,10 +630,8 @@ BOOL NFBApplyMovieObservation(BOOL enabled, NFBOpenWindowObservation *observatio
     // Reuse the same frontmost portrait selection as the rail. Never choose
     // an arbitrary first window from UIWindowScene enumeration order.
     moviePortrait=observation.portrait;
-    if (moviePortrait) {
-        if (movieOwnsDesktop && movieDesktopSession==NFBDesktopSessionIdentifier()) NFBCloseDesktopSplit();
-        movieOwnsDesktop = NO; movieDesktopAttempted = NO;
-        [movieDesktopAnchor removeFromSuperview]; movieDesktopAnchor = nil;
+    if (movieIsActive && movieOwnsDesktop && movieDesktopSession==NFBDesktopSessionIdentifier()) {
+        NFBSetMovieDesktopParked(movieDesktopSession, moviePortrait != nil);
     }
     if (!movieIsActive) {
         if (movieOwnsDesktop && movieDesktopSession==NFBDesktopSessionIdentifier()) {
@@ -769,6 +767,7 @@ BOOL NFBApplyMovieObservation(BOOL enabled, NFBOpenWindowObservation *observatio
         movieDesktopAttempted = YES;
         if (!NFBDesktopSplitActive()) movieOwnsDesktop = NFBShowDesktopInSplit(movieDesktopAnchor);
         movieDesktopSession=movieOwnsDesktop ? NFBDesktopSessionIdentifier() : 0;
+        if (movieOwnsDesktop) NFBSetMovieDesktopParked(movieDesktopSession, NO);
         NFBDebugLog(@"movie: desktop fallback active=%d", NFBDesktopSplitActive());
         if (NFBDebugLoggingEnabled()) for (UIView *view in windows) {
             NFBDebugLog(@"movie-touch: floating app=%@ view=%p window=%p class=%@ level=%.1f hidden=%d interaction=%d frame=%@",
@@ -777,7 +776,7 @@ BOOL NFBApplyMovieObservation(BOOL enabled, NFBOpenWindowObservation *observatio
         }
     }
     NSMutableArray<UIWindow *> *touchHosts = [NSMutableArray array];
-    if (movieIsActive && ((movieOwnsDesktop && movieDesktopSession==NFBDesktopSessionIdentifier()) || NFBDesktopIndependentAnchor()) && NFBDesktopSplitActive()) {
+    if (movieIsActive && !NFBMovieDesktopParked() && ((movieOwnsDesktop && movieDesktopSession==NFBDesktopSessionIdentifier()) || NFBDesktopIndependentAnchor()) && NFBDesktopSplitActive()) {
         for (UIView *view in observation.landscapeWindows) if (view.window &&
             ![touchHosts containsObject:view.window]) [touchHosts addObject:view.window];
     }

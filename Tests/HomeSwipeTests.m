@@ -6,7 +6,7 @@
 #import "NFBWindowControls.h"
 #import "NFBDebugLog.h"
 
-static NSUInteger hookCount, originalCalls, closeCalls, fixtureGeneration;
+static NSUInteger hookCount, originalCalls, closeCalls, fixtureOperation;
 static UIView *currentTarget, *lastClosed;
 static NFBWindowState *fixtureState;
 static BOOL locked;
@@ -30,7 +30,8 @@ BOOL NFBCloseHomeSwipeWindow(UIView *target) {
 #pragma clang diagnostic ignored "-Wobjc-property-implementation"
 @implementation NFBSplitCoordinator
 + (instancetype)shared { static id shared; if (!shared) shared=[self new]; return shared; }
-- (NSUInteger)generation { return fixtureGeneration; }
+- (NSUInteger)operationEpoch { return fixtureOperation; }
+- (NSUInteger)generation { return fixtureOperation+100; }
 @end
 #pragma clang diagnostic pop
 
@@ -130,7 +131,7 @@ static void NFBRunHomeSwipeTests(UIWindow *host) {
         fixtureState.sceneKey=@"test.A|test.B|1|0"; locked=NO; NFBConfigureHomeSwipeClose(YES);
         NFBTestPhase(manager,pan,0);
         switch (scenario) {
-            case 0: fixtureGeneration++; break;
+            case 0: fixtureOperation++; break;
             case 1: fixtureState.sceneKey=@"test.A|test.C|1|0"; break;
             case 2: target.bundleID=@"test.C"; break;
             case 3: target.miniWindowModeEnabled=YES; break;
@@ -167,6 +168,12 @@ static void NFBRunHomeSwipeTests(UIWindow *host) {
     NFBCheck(originalCalls==native+2,@"other tongue unaffected during owned bottom pull");
     NFBTestPhase(manager,pan,3);
     NFBCheck(originalCalls==native+2 && closeCalls==1,@"side began cannot discard bottom ownership");
+    pan.fixtureState=UIGestureRecognizerStateBegan; pan.fixtureTranslation=CGPointZero;
+    pan.fixtureVelocity=CGPointMake(0,-100);
+    [manager grabberTongueBeganPulling:tongue withDistance:5 andVelocity:100 andGesture:pan];
+    pan.fixtureState=UIGestureRecognizerStateEnded; pan.fixtureTranslation=CGPointMake(0,-50);
+    [manager grabberTongueEndedPulling:tongue withDistance:50 andVelocity:100 andGesture:pan];
+    NFBCheck(closeCalls==2 && originalCalls==native+2,@"zero translation began and gentle 50pt swipe close immediately");
     NFBCheck([fixtureState.frontApp isEqualToString:@"test.A"],@"underlying A identity preserved");
 }
 @interface NFBHomeSwipeTestApp : UIResponder <UIApplicationDelegate>

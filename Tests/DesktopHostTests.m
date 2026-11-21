@@ -290,6 +290,27 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
         [movie removeFromSuperview]; movieFixtureEnabled=NO;
         Check([desktop.window hitTest:CGPointMake(1,1) withEvent:nil]==nil,@"empty space still passes through");
         Check(desktop.window.isKeyWindow,@"touch activation gives native desktop focus");
+        NSUInteger retainedSession=NFBDesktopSessionIdentifier();
+        UIView *retainedParent=desktop.superview;
+        for (NSUInteger cycle=0;cycle<3;++cycle) {
+            NFBSetMovieDesktopParked(retainedSession,YES);
+            Check(NFBMovieDesktopParked() && NFBDesktopSplitActive(),@"park keeps movie desktop session alive");
+            Check(panel.hidden && !panel.userInteractionEnabled,@"park hides only desktop panel");
+            Check([nativeWindow hitTest:point withEvent:nil]==nil,@"parked desktop cannot eat lower app touches");
+            Check(!nativeWindow.isKeyWindow,@"parked desktop releases native focus");
+            NFBUpdateDesktopSplit(YES);
+            Check(NFBDesktopSessionIdentifier()==retainedSession && desktop.superview==retainedParent,
+                @"park safety tick does not close or re-transplant desktop");
+            NFBSetMovieDesktopParked(retainedSession+1,NO);
+            Check(NFBMovieDesktopParked(),@"stale session cannot resume parked desktop");
+            NFBSetMovieDesktopParked(retainedSession,NO);
+            Check(!NFBMovieDesktopParked() && !panel.hidden && panel.userInteractionEnabled,
+                @"resume restores same desktop without opening animation");
+            Check(NFBDesktopSessionIdentifier()==retainedSession && desktop.superview==retainedParent,
+                @"repeated resume keeps same desktop and session identity");
+            Check([nativeWindow hitTest:point withEvent:nil]==touch,@"resumed desktop is natively interactive");
+            Check(!nativeWindow.isKeyWindow,@"resume does not steal key-window focus");
+        }
         UIWindow *separateHost=[[UIWindow alloc] initWithFrame:nativeWindow.bounds];
         separateHost.windowLevel=30; separateHost.hidden=NO;
         NFBUpdateMovieDesktopTouchHosts(@[separateHost]);
