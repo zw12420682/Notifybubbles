@@ -1,4 +1,4 @@
-name: OwnSplit Rootless arm64e CI
+name: OwnSplit RootHide arm64e CI
 on:
   push:
     branches: [ownsplit-dev]
@@ -17,7 +17,7 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           p=Path('OwnSplit/Sources')
-          forbidden=['OSOverlayController','OSSplitManager','DPPassthroughView','kDP','jbroot(','<roothide.h>']
+          forbidden=['OSOverlayController','OSSplitManager','DPPassthroughView','kDP']
           bad=[]
           for f in p.glob('*'):
             if f.is_file():
@@ -25,11 +25,11 @@ jobs:
               for x in forbidden:
                 if x in s:bad.append(f'{f}: {x}')
           if bad:raise SystemExit('\n'.join(bad))
-          print('PASS no retired/rootHide symbols')
+          print('PASS no retired symbols')
           PY
       - name: Install package tooling
         run: brew install ldid xz dpkg
-      - name: Install pinned Rootless Theos + SDK
+      - name: Install pinned RootHide Theos + SDK
         env:
           THEOS: ${{ github.workspace }}/.theos-toolchain
         run: |
@@ -47,30 +47,32 @@ jobs:
           git -C "$RUNNER_TEMP/sdks" checkout --detach FETCH_HEAD
           mkdir -p "$THEOS/sdks"
           cp -R "$RUNNER_TEMP/sdks/iPhoneOS16.5.sdk" "$THEOS/sdks/"
-      - name: Build arm64e rootless package
+      - name: Build arm64e roothide package
         env:
           THEOS: ${{ github.workspace }}/.theos-toolchain
-          THEOS_PACKAGE_SCHEME: rootless
+          THEOS_PACKAGE_SCHEME: roothide
         run: |
           set -euo pipefail
           cd OwnSplit
           make clean >/dev/null 2>&1 || true
-          make package FINALPACKAGE=1 ARCHS=arm64e THEOS_PACKAGE_SCHEME=rootless -j2 2>&1 | tee build.log
+          make package FINALPACKAGE=1 ARCHS=arm64e THEOS_PACKAGE_SCHEME=roothide -j2 2>&1 | tee build.log
           dpkg-deb -I packages/*.deb
           dpkg-deb -c packages/*.deb
-          dpkg-deb -f packages/*.deb Architecture | grep -Fx iphoneos-arm64
+          dpkg-deb -f packages/*.deb Architecture | grep -Fx iphoneos-arm64e
           python3 - <<'PY'
           import glob,subprocess
           p=glob.glob('packages/*.deb')[0]
           listing=subprocess.check_output(['dpkg-deb','-c',p],text=True)
-          if 'var/jb/Library/MobileSubstrate/DynamicLibraries/OwnSplit.dylib' not in listing:raise SystemExit('missing var/jb dylib')
-          if 'var/jb/Library/MobileSubstrate/DynamicLibraries/OwnSplit.plist' not in listing:raise SystemExit('missing var/jb filter plist')
-          print('PASS rootless package paths')
+          if 'Library/MobileSubstrate/DynamicLibraries/OwnSplit.dylib' not in listing:raise SystemExit('missing var/jb dylib')
+          if 'Library/MobileSubstrate/DynamicLibraries/OwnSplit.plist' not in listing:raise SystemExit('missing var/jb filter plist')
+          if 'var/jb/' in listing:raise SystemExit('unexpected /var/jb prefix')
+          print('PASS roothide package paths')
           PY
           shasum -a 256 packages/*.deb > packages/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: OwnSplit-rootless-arm64e-dev
+          name: OwnSplit-roothide-arm64e-dev
           path: |
             OwnSplit/packages/*.deb
             OwnSplit/packages/SHA256SUMS.txt

@@ -1,12 +1,13 @@
 #import "OSSettings.h"
 #import <notify.h>
+#import <roothide.h>
 
 NSString * const kOSSettingsChangedNotification = @"com.ownsplit.tweak/settings.changed";
 
 static NSString * const kPrefsDomain = @"com.ownsplit.tweak";
 
 static NSString *OSPreferencesPath(void) {
-    return @"/var/mobile/Library/Preferences/com.ownsplit.tweak.plist";
+    return jbroot(@"/var/mobile/Library/Preferences/com.ownsplit.tweak.plist");
 }
 
 @interface OSSettings ()
