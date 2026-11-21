@@ -9,7 +9,7 @@ sdk=run('xcrun','--sdk','iphonesimulator','--show-sdk-path')
 arch='arm64' if platform.machine()=='arm64' else 'x86_64'
 run('xcrun','--sdk','iphonesimulator','clang','-target',arch+'-apple-ios16.0-simulator','-isysroot',sdk,
     '-DNFB_HOME_SWIPE_TEST','-fobjc-arc','-fblocks','-Wall','-Wextra','-Werror','-Wno-deprecated-declarations',
-    '-I',str(root/'Sources'),'-framework','UIKit','-framework','Foundation',
+    '-I',str(root/'Sources'),'-framework','UIKit','-framework','Foundation','-framework','CoreGraphics',
     str(root/'Sources/NFBHomeSwipeClose.m'),str(root/'Sources/NFBInterfaces.m'),
     str(root/'Tests/HomeSwipeTests.m'),'-o',str(app/'HomeSwipeTest'))
 bundle='local.notifybubbles.home-swipe-tests'
