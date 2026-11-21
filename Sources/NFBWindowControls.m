@@ -1,4 +1,5 @@
 #import "NFBWindowControls.h"
+#import "NFBSplitCoordinator.h"
 #import "NFBSplitLayout.h"
 #import "NFBSplitObservation.h"
 #import "NFBDesktopHost.h"
@@ -354,6 +355,41 @@ void NFBRecheckSplitPlacement(void) {
     return [region convertPoint:CGPointMake(CGRectGetMidX(region.bounds), CGRectGetMidY(region.bounds)) toView:view];
 }
 @end
+
+// Unlike the existing button path, the home swipe never uses a global bridge
+// or a direct-close fallback: capability must be proven BEFORE owning the pull.
+UIView *NFBHomeSwipeCloseWindow(void) {
+    if (!NSThread.isMainThread) return nil;
+    @try {
+        NFBOpenWindowObservation *observation = NFBCaptureOpenWindows();
+        UIView *window = currentWindow();
+        if (![observation.windows containsObject:window])
+            window = observation.windows.count == 1 ? observation.windows.firstObject : nil;
+        if (!window || !visibleView(window) ||
+            boolStateOf(window, @"miniWindowModeEnabled") != 0 ||
+            boolStateOf(window, @"isTransitioningFromMiniMode") != 0 ||
+            boolStateOf(window, @"isClosingWithKeepAliveAnimation") != 0) return nil;
+        NSMethodSignature *signature = NFBSignature(window, NSSelectorFromString(@"handleBottomSingleTap:"));
+        if (signature.numberOfArguments != 3 || strcmp(signature.methodReturnType, @encode(void)) ||
+            strcmp([signature getArgumentTypeAtIndex:2], @encode(id))) return nil;
+        id region = NFBCheckedObject(window, @"rightTouchRegion");
+        return [region isKindOfClass:UIView.class] && [region isDescendantOfView:window] ? window : nil;
+    } @catch (__unused NSException *error) { return nil; }
+}
+BOOL NFBCloseHomeSwipeWindow(UIView *window) {
+    if (!NSThread.isMainThread || !window) return NO;
+    @try {
+        NFBInvalidateWindowState();
+        if (NFBHomeSwipeCloseWindow() != window) return NO;
+        UIView *region = NFBCheckedObject(window, @"rightTouchRegion");
+        if (![region isKindOfClass:UIView.class] || ![region isDescendantOfView:window]) return NO;
+        NFBRightEdgeTap *tap = [NFBRightEdgeTap new]; tap.edgeRegion = region;
+        [NFBSplitCoordinator.shared beginUserWindowOperation];
+        BOOL closed = NFBDispatchRightEdgeTap(window, tap);
+        if (closed) NFBInvalidateWindowState();
+        return closed;
+    } @catch (__unused NSException *error) { return NO; }
+}
 
 BOOL NFBCloseCurrentSplit(void) {
     if (!NSThread.isMainThread) return NO;

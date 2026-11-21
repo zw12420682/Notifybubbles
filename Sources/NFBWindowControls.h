@@ -15,6 +15,9 @@ NSString *NFBSplitAttachmentApp(void);
 
 // Execute the current window's original TrollOpen right-region single-tap action.
 BOOL NFBCloseCurrentSplit(void);
+// Strict gesture path: saved expanded window, native orange single tap only.
+UIView *NFBHomeSwipeCloseWindow(void);
+BOOL NFBCloseHomeSwipeWindow(UIView *window);
 
 // The desktop button attaches only to an expanded portrait window.
 UIView *NFBDesktopActionWindow(void);

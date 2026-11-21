@@ -11,6 +11,7 @@
 #import "NFBActionGesturePolicy.h"
 #import "NFBIcon.h"
 #import "NFBManager.h"
+#import "NFBHomeSwipeClose.h"
 #import "NFBPrivate.h"
 #import "NFBStore.h"
 #import "NFBGeometry.h"
@@ -564,6 +565,7 @@ static const CFTimeInterval kTickReconcileInterval = 2.0;
     BOOL nextEnabled = NFBPreference(@"Enabled", YES);
     if (self.enabled != nextEnabled) { ++self.exitEpoch; ++self.presentationEpoch; }
     self.enabled = nextEnabled;
+    NFBConfigureHomeSwipeClose(self.enabled);
     NFBConfigureDebugLogging(NFBPreference(@"DebugLogging", NO));
     self.closePreviousSplit = NFBPreference(@"ClosePreviousSplit", YES);
     self.hideInScreenshots = NFBPreference(@"HideInScreenshots", NO);

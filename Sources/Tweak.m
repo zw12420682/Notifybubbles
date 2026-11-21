@@ -1,4 +1,5 @@
 #import "NFBManager.h"
+#import "NFBHomeSwipeClose.h"
 #import "NFBDebugLog.h"
 #import "NFBVersion.h"
 #import "NFBPrivate.h"
@@ -116,6 +117,7 @@ static void NFBPreferencesChanged(CFNotificationCenterRef center, void *observer
 }
 static void NFBInstall(void) {
     static BOOL installed = NO;
+    NFBInstallHomeSwipeClose();
     if (installed) return;
     Class dispatcher = NSClassFromString(@"NCNotificationDispatcher");
     if (!dispatcher) return;
