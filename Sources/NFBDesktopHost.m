@@ -129,6 +129,12 @@ void NFBSetMovieDesktopParked(NSUInteger identifier, BOOL parked) {
         // No re-transplant, refresh, focus acquisition or opening animation.
         [UIView performWithoutAnimation:^{
             active.panel.transform=CGAffineTransformIdentity; active.panel.alpha=1;
+            if (active.desktop.superview==active.desktopHost) {
+                NFBDebugLog(@"movie-desktop: resume content hidden=%d alpha=%.2f",active.desktop.hidden,active.desktop.alpha);
+                active.desktop.hidden=NO;
+                active.desktop.alpha=1;
+                [active adoptDesktopAppearance];
+            }
             active.panel.hidden=NO; active.panel.userInteractionEnabled=YES;
         }];
     }
@@ -1108,6 +1114,14 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
     }
     // A parked desktop must not re-enable hidden content or claim interaction.
     if (self.movieParked) return;
+    if (self.moviePersistent && (self.desktop.hidden || self.desktop.alpha<0.01)) {
+        NFBDebugLog(@"movie-desktop: repair hosted content visibility");
+        [UIView performWithoutAnimation:^{
+            self.desktop.hidden=NO;
+            self.desktop.alpha=1;
+            [self adoptDesktopAppearance];
+        }];
+    }
     // Repair native interaction changes without overwriting the original state.
     [self adoptDesktopInteraction];
 }

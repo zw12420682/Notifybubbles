@@ -493,6 +493,7 @@ static __weak UIView *moviePortrait;
 static BOOL movieOwnsDesktop;
 static NSUInteger movieDesktopSession;
 static BOOL movieDesktopAttempted;
+static BOOL movieDesktopRecoveryUsed;
 BOOL NFBMovieOwnsDesktopSession(void) {
     return NSThread.isMainThread && movieIsActive && movieOwnsDesktop &&
         movieDesktopSession!=0 && movieDesktopSession==NFBDesktopSessionIdentifier();
@@ -680,7 +681,7 @@ BOOL NFBApplyMovieObservation(BOOL enabled, NFBOpenWindowObservation *observatio
             if (enabled && explicitlyClosed) NFBCloseMovieDesktopWithTransition(movieDesktopSession);
             else NFBCloseDesktopSplit();
         }
-        movieOwnsDesktop = NO; movieDesktopAttempted = NO;
+        movieOwnsDesktop = NO; movieDesktopAttempted = NO; movieDesktopRecoveryUsed = NO;
         [movieDesktopAnchor removeFromSuperview]; movieDesktopAnchor = nil;
         movieLowerScreen = CGRectZero;
     }
@@ -799,6 +800,16 @@ BOOL NFBApplyMovieObservation(BOOL enabled, NFBOpenWindowObservation *observatio
         UIView *lowest = nil;
         for (UIView *child in parent.subviews) if ([windows containsObject:child]) { lowest = child; break; }
         if (lowest) [parent insertSubview:black belowSubview:lowest];
+    }
+    // Rearm only once after losing a previously owned session, and only in
+    // a complete observation with no lower app and no replacement desktop.
+    if (movieIsActive && classAvailable && sceneAvailable && !moviePortrait &&
+        movieOwnsDesktop && movieDesktopSession && !NFBDesktopSessionIdentifier() &&
+        !movieDesktopRecoveryUsed && movieDesktopAnchor.window &&
+        NFBMovieValidLower(movieDesktopAnchor.frame, movieDesktopAnchor.superview.bounds)) {
+        movieDesktopRecoveryUsed=YES;
+        movieDesktopAttempted=NO;
+        NFBDebugLog(@"movie-desktop: recover lost session=%lu",(unsigned long)movieDesktopSession);
     }
     if (movieIsActive && !moviePortrait && movieDesktopAnchor.window && !movieDesktopAttempted &&
         NFBMovieValidLower(movieDesktopAnchor.frame, movieDesktopAnchor.superview.bounds)) {

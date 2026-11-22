@@ -305,7 +305,11 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
                 @"park safety tick does not close or re-transplant desktop");
             NFBSetMovieDesktopParked(retainedSession+1,NO);
             Check(NFBMovieDesktopParked(),@"stale session cannot resume parked desktop");
+            desktop.hidden=YES; desktop.alpha=0;
             NFBSetMovieDesktopParked(retainedSession,NO);
+            Check(!desktop.hidden && desktop.alpha==1,@"resume shows same hosted desktop content, not wallpaper only");
+            desktop.hidden=YES; NFBUpdateDesktopSplit(YES);
+            Check(!desktop.hidden,@"visible movie session repairs subsequent root hiding");
             Check(nativeWindow.windowLevel==hostedLevel,@"resume restores the hosted stacking level");
             Check(!NFBMovieDesktopParked() && !panel.hidden && panel.userInteractionEnabled,
                 @"resume restores same desktop without opening animation");
