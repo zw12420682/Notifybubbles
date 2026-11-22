@@ -1088,16 +1088,17 @@ static NSString *NFBFrontmostAppID(void) {
     self.movieUpperCloseTarget=target;
     if (!target) { self.movieUpperCloseButton.hidden=YES; return; }
     UIView *root=self.window.rootViewController.view;
-    CGRect house=[self.desktopActionButton convertRect:self.desktopActionButton.bounds toView:root];
-    CGFloat side=MIN(44,CGRectGetWidth(house));
+    CGRect house=[self.desktopActionButton.imageView convertRect:self.desktopActionButton.imageView.bounds toView:root];
+    CGFloat side=CGRectGetWidth(house);
+    if (side<=0 || self.desktopActionButton.alpha<0.01) { self.movieUpperCloseButton.hidden=YES; return; }
     CGRect box=CGRectMake(CGRectGetMidX(house)-side/2,CGRectGetMinY(house)-side-6,side,side);
     if (CGRectGetMinY(box)<root.safeAreaInsets.top) { self.movieUpperCloseButton.hidden=YES; return; }
     if (!self.movieUpperCloseButton) {
         UIButton *button=[UIButton buttonWithType:UIButtonTypeSystem];
         [button setImage:[UIImage systemImageNamed:@"xmark"] forState:UIControlStateNormal];
+        button.imageView.contentMode=UIViewContentModeScaleAspectFit;
         button.tintColor=UIColor.systemRedColor;
         button.backgroundColor=UIColor.secondarySystemBackgroundColor;
-        button.layer.cornerRadius=10;
         button.accessibilityLabel=@"关闭上方横屏";
         [button addTarget:self action:@selector(movieUpperCloseTapped) forControlEvents:UIControlEventTouchUpInside];
         [button addTarget:self action:@selector(movieUpperCloseDown) forControlEvents:UIControlEventTouchDown];
@@ -1105,6 +1106,8 @@ static NSString *NFBFrontmostAppID(void) {
         [root addSubview:button];
     }
     self.movieUpperCloseButton.frame=box;
+    self.movieUpperCloseButton.layer.cornerRadius=self.desktopActionButton.imageView.layer.cornerRadius;
+    [self.movieUpperCloseButton setPreferredSymbolConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:side*0.48 weight:UIImageSymbolWeightSemibold] forImageInState:UIControlStateNormal];
     self.movieUpperCloseButton.hidden=NO;
     [root bringSubviewToFront:self.movieUpperCloseButton];
 }
