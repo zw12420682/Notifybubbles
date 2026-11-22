@@ -1,0 +1,9 @@
+# 0.49.36 trial: preserve movie desktop on lower-pane handoff
+
+0.49.35 device trace (pid 58925): 10:32:06.680 fallback active with desktop session 2; 10:32:08.952 session restored during bubble launch, then Open places News; 10:32:10.102 upward gesture succeeds (`orange-close=1`), but no desktop parking/resume or new fallback occurs. The earlier 27×48 geometry failure is absent here. The bubble handler closed the desktop before submitting the lower app, leaving the movie one-shot attempt consumed. Keeping a desktop only at the moment of X does not address that ordering. 10:32:14.206 also shows an explicit house-created desktop, which previously was not marked as movie-owned.
+
+- A bubble launch keeps the matching existing movie desktop, but still invalidates previous user-operation callbacks. The live Open portrait observation, not submission, parks/resumes it; a failed launch does not blank the pane.
+- House during movie mode verifies the current lower and upper panes. It either adopts the new exact replacement into movie ownership or uses the parked session without replacing its desktop view or anchor. Stale identity is rejected. Closing the lower window still preserves its process. Non-movie house behavior and safety teardown remain unchanged.
+- No gesture, retry timer, automatic reopen loop, or changes to ordinary desktop mode. Lock, disable, movie exit and native tree safety still return the desktop to the system.
+
+Device acceptance: keep upper landscape video, open a lower app from the bubble, close it once via X and once via swipe in successive cycles. Verify the same lower home page returns and the upper continues; repeat after first creating the desktop via House. Trace should show `keep session for bubble launch` and same session `parked=1` → `parked=0`; there should not be another home view transplant during these cycles. A simulator cannot prove SpringBoard/Open rendering on device.

@@ -355,6 +355,20 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
         Check(independent.window!=nil,@"desktop keeps independent geometry anchor after original closes");
         NFBUpdateDesktopSplit(YES);
         Check(NFBDesktopSplitActive(),@"desktop survives removal of source app window");
+        NSUInteger houseSession=NFBDesktopSessionIdentifier();
+        UIView *houseParent=desktop.superview;
+        NFBSetMovieDesktopParked(houseSession,YES);
+        DesktopReplaceWindowFixture *lower=[[DesktopReplaceWindowFixture alloc] initWithFrame:anchor.frame];
+        [anchor.superview addSubview:lower];
+        Check(!NFBReplaceMoviePaneWithDesktop(lower,houseSession+1) && lower.closeCalls==0,
+            @"stale movie house action cannot close the lower pane");
+        Check(NFBReplaceMoviePaneWithDesktop(lower,houseSession) && lower.closeCalls==1 && !lower.superview,
+            @"movie house closes only its lower pane with the retained desktop");
+        Check(NFBMovieDesktopParked() && NFBDesktopIndependentAnchor()==independent,
+            @"movie house keeps the original anchor and waits for reconciled absence");
+        NFBSetMovieDesktopParked(houseSession,NO);
+        Check(NFBDesktopSessionIdentifier()==houseSession && desktop.superview==houseParent,
+            @"movie house resumes without re-transplanting the desktop");
         NFBCloseDesktopSplit();
         Check(!independent.superview,@"independent anchor removed on desktop close");
         Check(replace.closeCalls==1,@"desktop close never closes app twice");

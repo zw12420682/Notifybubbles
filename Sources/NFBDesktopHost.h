@@ -16,6 +16,7 @@ void NFBUpdateMovieDesktopTouchHosts(NSArray<UIWindow *> *hosts);
 
 // Explicit house action: close only the supplied portrait window, never its process.
 BOOL NFBReplaceSplitWithDesktop(UIView *window);
+BOOL NFBReplaceMoviePaneWithDesktop(UIView *window, NSUInteger retainedSession);
 UIView *NFBDesktopIndependentAnchor(void);
 
 // Read-only lock/unlock widget observations; never mutates desktop or pages.

@@ -3213,7 +3213,12 @@ static NSString *NFBFrontmostAppID(void) {
     [self touchColumn];
     if (self.pendingRecord && [self.pendingRecord.appID isEqual:button.appID]) return;
     if (![self acceptGestureForKey:button.appID ?: @"tap"]) return;
-    [NFBSplitCoordinator.shared closeDesktop];
+    if (NFBMovieOwnsDesktopSession()) {
+        // A submitted launch is not yet a visible lower pane. Reconcile parks
+        // the desktop only when Open actually publishes that portrait window.
+        [NFBSplitCoordinator.shared beginUserWindowOperation];
+        NFBDebugLog(@"movie-desktop: keep session for bubble launch app=%@",button.appID);
+    } else [NFBSplitCoordinator.shared closeDesktop];
     self.generations[button.appID] = @([self.generations[button.appID] unsignedIntegerValue] + 1);
     [self.closingApps removeObject:button.appID];
     button.opening = YES;

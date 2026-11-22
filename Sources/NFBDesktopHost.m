@@ -1439,6 +1439,12 @@ UIView *NFBDesktopIndependentAnchor(void) {
 BOOL NFBReplaceSplitWithDesktop(UIView *window) {
     if (!NSThread.isMainThread || !window.window) return NO;
     if (NFBDesktopSplitActive()) { NFBCloseDesktopSplit(); return YES; }
+    return NFBReplaceMoviePaneWithDesktop(window, 0);
+}
+BOOL NFBReplaceMoviePaneWithDesktop(UIView *window, NSUInteger retainedSession) {
+    if (!NSThread.isMainThread || !window.window) return NO;
+    if (retainedSession ? (NFBDesktopSessionIdentifier()!=retainedSession || !NFBMovieDesktopParked())
+                        : NFBDesktopSplitActive()) return NO;
     // Unlike the generic bridge, this verified instance method cannot close a
     // newly-current landscape window and explicitly preserves the process.
     SEL close = NSSelectorFromString(@"closeWindowWithoutTerminatingProcessWithoutAnimation");
@@ -1447,12 +1453,14 @@ BOOL NFBReplaceSplitWithDesktop(UIView *window) {
         NFBDesktopFail(@"当前 Open 未提供保留后台的精确关闭接口，未替换桌面");
         return NO;
     }
-    if (!NFBShowDesktopInSplit(window)) return NO;
-    NFBDesktopSession *active=session;
-    UIView *proxy=[[UIView alloc] initWithFrame:active.panelFrame];
-    proxy.userInteractionEnabled=NO;
-    [active.window addSubview:proxy];
-    active.independentAnchor=proxy; active.anchor=proxy;
+    if (!retainedSession) {
+        if (!NFBShowDesktopInSplit(window)) return NO;
+        NFBDesktopSession *active=session;
+        UIView *proxy=[[UIView alloc] initWithFrame:active.panelFrame];
+        proxy.userInteractionEnabled=NO;
+        [active.window addSubview:proxy];
+        active.independentAnchor=proxy; active.anchor=proxy;
+    }
     @try {
         NSInvocation *call=[NSInvocation invocationWithMethodSignature:sig];
         call.selector=close; [call invokeWithTarget:window];
@@ -1461,6 +1469,7 @@ BOOL NFBReplaceSplitWithDesktop(UIView *window) {
         return YES;
     } @catch (NSException *error) {
         NFBErrorLog(@"desktop: portrait close failed %@",error);
-        NFBCloseDesktopSplit(); return NO;
+        if (!retainedSession) NFBCloseDesktopSplit();
+        return NO;
     }
 }

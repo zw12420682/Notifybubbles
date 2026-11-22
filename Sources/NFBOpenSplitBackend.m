@@ -88,7 +88,7 @@
 }
 - (void)settleMovieKeyboard { NFBRecheckMovieLayout(); }
 - (void)closeDesktop { self.layoutObservation=nil; NFBCloseDesktopSplit(); }
-- (BOOL)replaceWindowWithDesktop:(UIView *)window { return NFBReplaceSplitWithDesktop(window); }
+- (BOOL)replaceWindowWithDesktop:(UIView *)window { return NFBReplaceObservedSplitWithDesktop(window); }
 - (BOOL)desktopActive { return NFBDesktopSplitActive() && !NFBMovieDesktopParked(); }
 - (NSUInteger)desktopSessionIdentifier { return NFBDesktopSessionIdentifier(); }
 - (BOOL)recheckDesktopAfterCleanup:(NSArray<NSString *> *)apps { return NFBRecheckMovieDesktopAfterCleanup(apps); }

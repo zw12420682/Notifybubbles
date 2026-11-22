@@ -496,6 +496,20 @@ static NFBSplitObservationTracker movieObservation;
 static NSHashTable<UIView *> *movieLastLandscape;
 static BOOL movieHadLandscape;
 static CGRect movieLowerScreen;
+BOOL NFBReplaceObservedSplitWithDesktop(UIView *window) {
+    if (!movieIsActive) return NFBReplaceSplitWithDesktop(window);
+    NFBOpenWindowObservation *observation=NFBCaptureOpenWindows();
+    if (!window || window!=observation.portrait || !observation.landscapeWindows.count) return NO;
+    NSUInteger retained=NFBMovieOwnsDesktopSession() ? movieDesktopSession : 0;
+    if (!NFBReplaceMoviePaneWithDesktop(window, retained)) return NO;
+    movieDesktopSession=NFBDesktopSessionIdentifier();
+    movieOwnsDesktop=movieDesktopSession!=0;
+    movieDesktopAttempted=movieOwnsDesktop;
+    if (movieOwnsDesktop && !retained) NFBSetMovieDesktopParked(movieDesktopSession, NO);
+    movieReadAt=0;
+    NFBDebugLog(@"movie-desktop: house session=%lu reused=%d",(unsigned long)movieDesktopSession,retained!=0);
+    return YES;
+}
 static BOOL movieLandscape(UIView *view) {
     NSInteger a = orientationOf(view, @"sceneOrientation"), b = orientationOf(view, @"containerOrientation");
     return a == 3 || a == 4 || b == 3 || b == 4;
