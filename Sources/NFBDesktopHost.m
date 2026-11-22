@@ -1125,10 +1125,29 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
     // Repair native interaction changes without overwriting the original state.
     [self adoptDesktopInteraction];
 }
+static void NFBLogHomeReturn(NSString *phase, NSUInteger identifier, UIView *desktop) {
+    if (!desktop || !NFBDebugLoggingEnabled()) return;
+    UIWindow *window=desktop.window;
+    NFBDebugLog(@"home-return: %@ session=%lu window=%p level=%.1f hidden=%d alpha=%.2f key=%d",phase,(unsigned long)identifier,window,window.windowLevel,window.hidden,window.alpha,window.isKeyWindow);
+    NSMutableArray<UIView *> *queue=[NSMutableArray arrayWithObject:desktop];
+    NSUInteger logged=0;
+    for (NSUInteger i=0;i<queue.count && i<128 && logged<10;i++) {
+        UIView *view=queue[i];
+        NSString *name=NSStringFromClass(view.class);
+        if (i==0 || [name containsString:@"Dock"] || [name containsString:@"IconList"] || [name containsString:@"IconScroll"] || [name containsString:@"RootFolder"]) {
+            UIView *blocked=nil;
+            for (UIView *p=view;p;p=p.superview) if (p.hidden || p.alpha<0.01 || p.layer.hidden || p.layer.opacity<0.01) { blocked=p; break; }
+            NFBDebugLog(@"home-return: %@ session=%lu class=%@ blocker=%@ frame=%@ layerOpacity=%.2f",phase,(unsigned long)identifier,name,NSStringFromClass(blocked.class),NSStringFromCGRect(view.frame),view.layer.opacity);
+            logged++;
+        }
+        for (UIView *child in view.subviews) { if (queue.count>=128) break; [queue addObject:child]; }
+    }
+}
 - (void)restore {
     if (self.restoring) return;
     BOOL timing=NFBDebugLoggingEnabled();
     CFAbsoluteTime restoreStart=timing ? CFAbsoluteTimeGetCurrent() : 0;
+    if (timing) NFBLogHomeReturn(@"before",self.identifier,self.desktop);
     [NFBMovieHostLease() releaseSession:self.identifier];
     self.restoring=YES;
     self.mutationPhase=NFBDesktopMutationRestoring;
@@ -1190,6 +1209,14 @@ static UIView *NFBSystemWallpaperView(UIWindow *excluding) {
         NFBAttemptCleanup(@"window focus", ^{
             if (self.window.isKeyWindow && self.previousKeyWindow && !self.previousKeyWindow.hidden)
                 [self.previousKeyWindow makeKeyWindow];
+        });
+    }
+    if (timing && self.desktop) {
+        NSUInteger returnedSession=self.identifier;
+        __weak UIView *returnedDesktop=self.desktop;
+        NFBLogHomeReturn(@"after",returnedSession,self.desktop);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC),dispatch_get_main_queue(),^{
+            if (!session) NFBLogHomeReturn(@"settled",returnedSession,returnedDesktop);
         });
     }
     self.backgroundFrost=nil; self.window=nil; self.desktop=nil; self.originalParent=nil;
