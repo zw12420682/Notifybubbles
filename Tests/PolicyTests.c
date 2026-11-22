@@ -348,7 +348,7 @@ static void testFixedBackgroundSections(void) {
             if (unread) check(fabs(p.unreadHeight - NFBEdgeViewportHeight(unread, NFBUnreadVisibleRows, side, step)) < 0.01,
                               "unread viewport shows one row per app up to three");
             check(fabs(p.backgroundHeight - NFBEdgeViewportHeight(6, NFBBackgroundVisibleRows, side, step)) < 0.01,
-                  "background viewport shows one row per app up to five");
+                  "background viewport shows one row per app up to four");
             if (unread) {
                 check(p.backgroundOffset >= p.unreadHeight + 9 - 0.01,
                       "with unread present the two viewports keep their 9pt gap");
@@ -367,7 +367,7 @@ static void testFixedBackgroundSections(void) {
               "without unread the background viewport starts at the top");
         NFBEdgeSections noBg = NFBEdgeSectionLayout(4000, side, step, 5, 0);
         check(noBg.backgroundHeight == 0, "an empty background group reserves no space");
-        double tight = NFBEdgeRowsHeight(5, side, step) + 9;
+        double tight = NFBEdgeRowsHeight(4, side, step) + 9;
         NFBEdgeSections squeezed = NFBEdgeSectionLayout(tight, side, step, 5, 6);
         check(fabs(squeezed.backgroundHeight - NFBEdgeViewportHeight(6, NFBBackgroundVisibleRows, side, step)) < 0.01,
               "backgrounds keep their capped viewport when the budget is tight");
@@ -381,6 +381,8 @@ static void testSplitRowCap(void) {
     NFBContainerHeights three = NFBFitContainersCapped(2000, side, step, 0, 3, 3);
     check(fabs(seven.regular - three.regular) < 0.01,
           "a long list shows the same height as three rows");
+    NFBContainerHeights splitFour = NFBFitContainersCapped(510, side, step, 8, 6, 4);
+    check(fabs(splitFour.regular - (3 * step + side)) < 0.01, "split shows four background icons with eight favorites and room for four");
     check(fabs(three.regular - (2 * step + side)) < 0.01, "three rows means two steps plus one icon");
     NFBContainerHeights two = NFBFitContainersCapped(2000, side, step, 0, 2, 3);
     check(two.regular < three.regular, "fewer apps still take less height");

@@ -98,11 +98,13 @@ if "isTracking" not in manager or "isDragging" not in manager:
 if "if (!NFBTrollVisibleApp().length) self.edgeExpanded = NO;" in manager:
     problems.append("tapping an app must not fold the expanded column")
 
-# 7. No bottom close key or reserved slot; collapsed background shows five rows.
+# 7. No bottom close key or reserved slot; split background shows four rows.
 if 'NFBClearAllID' in manager or 'bottomControlSpace' in read('Sources/NFBRailLayout.h'):
     problems.append('removed close key must not reserve a slot')
-if '#define NFBBackgroundVisibleRows 5' not in read('Sources/NFBEdgeSections.h'):
-    problems.append('background viewport should allow five visible rows')
+if 'NFBFitContainersCapped(room, side, step, favoriteRows, rows, 4)' not in read('Sources/NFBRailLayout.h'):
+    problems.append('split background viewport should allow four visible rows')
+if '#define NFBBackgroundVisibleRows 4' not in read('Sources/NFBEdgeSections.h'):
+    problems.append('non-split background viewport should retain four visible rows')
 
 # 8. No new independent edge control: only the one desktop-action button.
 if manager.count("desktopActionButton = button;") != 1:

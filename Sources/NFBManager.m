@@ -1997,7 +1997,7 @@ static NSString *NFBFrontmostAppID(void) {
         }
     }
     // Every column now lists the real app switcher; the split/expanded column only
-    // *shows* three rows and scrolls the rest, the collapsed background shows up to five.
+    // shows a capped viewport and scrolls the rest.
     NSMutableArray<NSString *> *liveSwitcher = [NSMutableArray array];
     if (!collapse) for (NSString *app in self.lastSwitcher ?: @[])
         if (![self.dismissedSwitcher containsObject:app] && ![self.closingApps containsObject:app]) [liveSwitcher addObject:app];
@@ -2276,7 +2276,7 @@ static NSString *NFBFrontmostAppID(void) {
     if (separateEdgeSections) {
         // Use the column's anchored screen span; only the upper notification
         // viewport scrolls. The fixed background group is never a scroll child.
-        // Fixed viewports: unread shows three rows, backgrounds five. Do not
+        // Fixed viewports: unread shows three rows, backgrounds four. Do not
         // anchor to the screen bottom; the span is the column budget only.
         double span = MAX(0, CGRectGetHeight(bounds) - MAX(safe.bottom, 12) - plan.rowsTop);
         NFBEdgeSections sections = NFBEdgeSectionLayout(span, side, step,

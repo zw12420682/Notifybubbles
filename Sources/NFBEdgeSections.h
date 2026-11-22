@@ -3,9 +3,9 @@
 
 // Collapsed edge column viewports. Each area shows as many rows as it has apps,
 // up to its cap; beyond the cap it scrolls inside its own clipped viewport.
-// Notifications cap at three rows, backgrounds at five.
+// Notifications cap at three rows, backgrounds at four.
 #define NFBUnreadVisibleRows 3
-#define NFBBackgroundVisibleRows 5
+#define NFBBackgroundVisibleRows 4
 
 typedef struct {
     double unreadHeight;

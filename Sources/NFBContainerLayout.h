@@ -35,13 +35,16 @@ static inline NFBContainerHeights NFBSnapToRows(NFBContainerHeights h, double si
     return (NFBContainerHeights){ first, second, h.gap };
 }
 
-static inline NFBContainerHeights NFBFitContainers(double available, double side, double step, unsigned long favorites, unsigned long regular) {
+static inline NFBContainerHeights NFBFitContainersCapped(double available, double side, double step,
+        unsigned long favorites, unsigned long regular, unsigned long regularCap) {
     // A NaN here propagates to UIView.frame and makes UIKit throw "CALayer bounds
     // contains NaN", which kills SpringBoard. Refuse the layout instead.
     if (!isfinite(available) || !isfinite(side) || !isfinite(step)) return (NFBContainerHeights){0, 0, 0};
     double room = fmax(0, available);
     double a = favorites ? ((favorites - 1) * step + side) : 0;
-    double b = regular ? fmin(2 * step + side, (regular - 1) * step + side) : 0;
+    if (!regularCap) regularCap = 3;
+    if (regular > regularCap) regular = regularCap;
+    double b = regular ? (regular - 1) * step + side : 0;
     double gap = a > 0 && b > 0 ? fmin(9, room) : 0;
     double budget = fmax(0, room - gap);
     // Share the budget as before, then snap each share down to whole rows.
@@ -53,11 +56,7 @@ static inline NFBContainerHeights NFBFitContainers(double available, double side
     return (NFBContainerHeights){ first, second, gap };
 }
 
-// Same as NFBFitContainers with an explicit row cap for the icon area. Split and
-// expanded columns list the whole switcher but only ever show three rows.
-static inline NFBContainerHeights NFBFitContainersCapped(double available, double side, double step,
-        unsigned long favorites, unsigned long regular, unsigned long regularCap) {
-    if (regularCap && regular > regularCap) regular = regularCap;
-    return NFBFitContainers(available, side, step, favorites, regular);
+static inline NFBContainerHeights NFBFitContainers(double available, double side, double step,
+        unsigned long favorites, unsigned long regular) {
+    return NFBFitContainersCapped(available, side, step, favorites, regular, 3);
 }
-// visible rows per column: split/expanded 3, collapsed 4
