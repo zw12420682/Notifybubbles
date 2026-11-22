@@ -1,6 +1,11 @@
 #import "NFBWindowControls.h"
 #import "NFBSplitCoordinator.h"
 #import "NFBSplitLayout.h"
+#import "NFBMovieGeometryPolicy.h"
+static BOOL NFBMovieValidLower(CGRect frame, CGRect area) {
+    return NFBMovieLowerGeometryValid(frame.origin.x,frame.origin.y,frame.size.width,frame.size.height,
+        area.origin.x,area.origin.y,area.size.width,area.size.height);
+}
 #import "NFBSplitObservation.h"
 #import "NFBDesktopHost.h"
 #import "NFBKeyboard.h"
@@ -38,7 +43,7 @@ CGRect NFBSplitFrameInView(UIView *root) {
         if (view.window && !view.hidden && !CGRectIsEmpty(view.bounds)) {
             CGRect frame = [view convertRect:view.bounds toView:root];
             // Match the original 0.48.127 input: the real portrait app window.
-            if (!CGRectIsEmpty(frame) && isfinite(frame.origin.x) && isfinite(frame.origin.y)) {
+            if (NFBMovieValidLower(frame, root.bounds)) {
                 portraitRailReference = frame;
                 portraitRailScreen = root.bounds.size;
                 portraitRailRoot = root;
@@ -50,7 +55,7 @@ CGRect NFBSplitFrameInView(UIView *root) {
         if (manualAnchor.window) return [manualAnchor convertRect:manualAnchor.bounds toView:root];
         if (NFBDesktopSplitActive() && movieDesktopAnchor.window) {
             if (CGSizeEqualToSize(portraitRailScreen, root.bounds.size) &&
-                !CGRectIsEmpty(portraitRailReference)) return portraitRailReference;
+                NFBMovieValidLower(portraitRailReference, root.bounds)) return portraitRailReference;
             // No real portrait measured in this session: use the normal Open
             // 0.86 portrait footprint, NOT the movie proxy's reduced footprint.
             CGSize size = root.bounds.size;
@@ -483,6 +488,10 @@ static __weak UIView *moviePortrait;
 static BOOL movieOwnsDesktop;
 static NSUInteger movieDesktopSession;
 static BOOL movieDesktopAttempted;
+BOOL NFBMovieOwnsDesktopSession(void) {
+    return NSThread.isMainThread && movieIsActive && movieOwnsDesktop &&
+        movieDesktopSession!=0 && movieDesktopSession==NFBDesktopSessionIdentifier();
+}
 static NFBSplitObservationTracker movieObservation;
 static NSHashTable<UIView *> *movieLastLandscape;
 static BOOL movieHadLandscape;
@@ -675,6 +684,7 @@ BOOL NFBApplyMovieObservation(BOOL enabled, NFBOpenWindowObservation *observatio
             CGRect lower = moviePortrait ? [moviePortrait convertRect:moviePortrait.bounds toView:parent] : CGRectZero;
             UIView *manualDesktop = NFBDesktopIndependentAnchor();
             if (CGRectIsEmpty(lower) && manualDesktop.window) lower = [manualDesktop convertRect:manualDesktop.bounds toView:parent];
+            BOOL needsMovieAnchor=CGRectIsEmpty(lower);
             if (CGRectIsEmpty(lower)) {
                 // Desktop occupies exactly the normal portrait footprint. Only
                 // the video fits the remaining space; never shrink this pane
@@ -684,9 +694,14 @@ BOOL NFBApplyMovieObservation(BOOL enabled, NFBOpenWindowObservation *observatio
                 if (portraitRailRoot.window && !CGRectIsEmpty(portraitRailReference) &&
                     CGSizeEqualToSize(portraitRailScreen, area.size)) {
                     CGRect reference = [portraitRailRoot convertRect:portraitRailReference toView:parent];
-                    if (!CGRectIsEmpty(reference) && isfinite(reference.origin.x) && isfinite(reference.origin.y) &&
-                        isfinite(reference.size.width) && isfinite(reference.size.height)) lower = reference;
+                    if (NFBMovieValidLower(reference, area)) lower = reference;
                 }
+            }
+            if (!NFBMovieValidLower(lower, area)) {
+                NFBDebugLog(@"movie: defer invalid lower=%@ area=%@", NSStringFromCGRect(lower), NSStringFromCGRect(area));
+                continue;
+            }
+            if (needsMovieAnchor) {
                 if (!movieDesktopAnchor) {
                     movieDesktopAnchor = [UIView new];
                     movieDesktopAnchor.userInteractionEnabled = NO;
@@ -694,15 +709,6 @@ BOOL NFBApplyMovieObservation(BOOL enabled, NFBOpenWindowObservation *observatio
                 // Reparent before assigning parent-local coordinates.
                 if (movieDesktopAnchor.superview != parent) [parent addSubview:movieDesktopAnchor];
                 movieDesktopAnchor.frame = lower;
-            }
-            // Reject transient closing/rotation geometry instead of shrinking
-            // the movie to a 1pt speck or caching an off-screen desktop anchor.
-            if (!isfinite(lower.origin.y) || !isfinite(lower.size.width) ||
-                !isfinite(lower.size.height) || lower.size.width < 120 || lower.size.height < 180 ||
-                CGRectGetMinY(lower) - CGRectGetMinY(area) < 32 ||
-                CGRectGetMaxY(lower) > CGRectGetMaxY(area) + 2) {
-                NFBDebugLog(@"movie: defer invalid lower=%@ area=%@", NSStringFromCGRect(lower), NSStringFromCGRect(area));
-                continue;
             }
             movieLowerScreen = [parent convertRect:lower toView:parent.window];
             // Open may rewrite bounds while preserving our transform. Never
@@ -763,7 +769,10 @@ BOOL NFBApplyMovieObservation(BOOL enabled, NFBOpenWindowObservation *observatio
         for (UIView *child in parent.subviews) if ([windows containsObject:child]) { lowest = child; break; }
         if (lowest) [parent insertSubview:black belowSubview:lowest];
     }
-    if (movieIsActive && !moviePortrait && movieDesktopAnchor.window && !movieDesktopAttempted) {
+    if (movieIsActive && !moviePortrait && movieDesktopAnchor.window && !movieDesktopAttempted &&
+        NFBMovieValidLower(movieDesktopAnchor.frame, movieDesktopAnchor.superview.bounds)) {
+        // Geometry is committed before consuming the one-shot attempt. Invalid
+        // close-animation samples never create a failed desktop transaction.
         movieDesktopAttempted = YES;
         if (!NFBDesktopSplitActive()) movieOwnsDesktop = NFBShowDesktopInSplit(movieDesktopAnchor);
         movieDesktopSession=movieOwnsDesktop ? NFBDesktopSessionIdentifier() : 0;

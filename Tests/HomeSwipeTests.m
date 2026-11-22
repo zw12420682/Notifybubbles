@@ -174,6 +174,16 @@ static void NFBRunHomeSwipeTests(UIWindow *host) {
     pan.fixtureState=UIGestureRecognizerStateEnded; pan.fixtureTranslation=CGPointMake(0,-50);
     [manager grabberTongueEndedPulling:tongue withDistance:50 andVelocity:100 andGesture:pan];
     NFBCheck(closeCalls==2 && originalCalls==native+2,@"zero translation began and gentle 50pt swipe close immediately");
+    double samples[][6]={{15,-5,449.88,-149.96,20,150},
+        {-6,-5.6667,-60.1178,-56.778,20.7,56.8},{5,-5,85.853,-85.853,20,85.9}};
+    for (NSUInteger i=0;i<3;++i) {
+        pan.fixtureState=UIGestureRecognizerStateBegan;
+        pan.fixtureTranslation=CGPointMake(samples[i][0],samples[i][1]);
+        pan.fixtureVelocity=CGPointMake(samples[i][2],samples[i][3]);
+        [manager grabberTongueBeganPulling:tongue withDistance:samples[i][4] andVelocity:samples[i][5] andGesture:pan];
+        NFBTestPhase(manager,pan,2);
+        NFBCheck(closeCalls==3+i && originalCalls==native+2,@"device diagonal began closes B without forwarding system home for A");
+    }
     NFBCheck([fixtureState.frontApp isEqualToString:@"test.A"],@"underlying A identity preserved");
 }
 @interface NFBHomeSwipeTestApp : UIResponder <UIApplicationDelegate>

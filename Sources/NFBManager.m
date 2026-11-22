@@ -982,7 +982,9 @@ static NSString *NFBFrontmostAppID(void) {
         return;
     }
     [self resetAutoCollapseTimer];
-    [NFBSplitCoordinator.shared closeDesktop];
+    // Movie exit still tears down its desktop in reconcile; lower-pane close
+    // must keep the parked session so it can resume without re-transplant.
+    if (!NFBMovieOwnsDesktopSession()) [NFBSplitCoordinator.shared closeDesktop];
     // Fold to the collapsed state first so the column slides to the edge with the
     // split's own dismissal animation instead of snapping after it.
     if (self.edgeExpanded) {

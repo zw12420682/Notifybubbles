@@ -1,0 +1,14 @@
+#include "NFBMovieGeometryPolicy.h"
+#include <assert.h>
+#include <stdio.h>
+int main(void) {
+ assert(NFBMovieLowerGeometryValid(0,248.02,335.4,595.98,0,0,390,844));
+ assert(NFBMovieLowerGeometryValid(0,118.16,335.4,725.84,0,0,390,844));
+ assert(!NFBMovieLowerGeometryValid(181.584,-23.8392,26.832,47.6784,0,0,390,844));
+ assert(!NFBMovieLowerGeometryValid(0,0,335.4,595.98,0,0,390,844));
+ assert(!NFBMovieLowerGeometryValid(400,248,335,596,0,0,390,844));
+ assert(!NFBMovieLowerGeometryValid(0,248,NAN,596,0,0,390,844));
+ assert(!NFBMovieLowerGeometryValid(0,248,335,INFINITY,0,0,390,844));
+ puts("Movie lower geometry device regression PASS");
+ return 0;
+}

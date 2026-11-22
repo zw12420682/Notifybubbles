@@ -15,7 +15,7 @@ name: Build DEB (rootless + roothide)
 on:
   workflow_dispatch:
   push:
-    branches: [main, master, refactor/unified-split-core, fix/movie-mini-4920, feat/rail-stow, feat/home-swipe-close, fix/home-swipe-movie-persist]
+    branches: [main, master, refactor/unified-split-core, fix/movie-mini-4920, feat/rail-stow, feat/home-swipe-close, fix/home-swipe-movie-persist, fix/device-feedback-4935]
     paths-ignore: ['**.md']
 
 permissions:
@@ -82,6 +82,7 @@ jobs:
         run: |
           python3 scripts/test_home_swipe.py
           python3 scripts/test_movie_persistent_desktop.py
+          python3 scripts/test_device_feedback.py
           python3 scripts/test_home_swipe_simulator.py
       - name: Test desktop view transfer and restoration in iOS simulator
         run: python3 scripts/test_desktop_simulator.py

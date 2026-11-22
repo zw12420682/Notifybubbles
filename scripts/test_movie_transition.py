@@ -6,8 +6,9 @@ assert '[touchHosts containsObject:parent.window]' in s
 assert 'else black.layer.mask = nil' in s
 assert s.index('black.layer.mask = mask') < s.index('NFBUpdateMovieDesktopTouchHosts(touchHosts)')
 assert 'CGFloat room = MAX(1,' in s
-assert 'CGRectGetMinY(lower) - CGRectGetMinY(area) < 32' in s
-assert 'lower.size.width < 120 || lower.size.height < 180' in s
+policy=(Path(__file__).resolve().parents[1]/'Sources/NFBMovieGeometryPolicy.h').read_text()
+assert 'if (!NFBMovieValidLower(lower, area))' in s
+assert 'y-ay>=32' in policy and 'w>=120 && h>=180' in policy
 assert 'animateWithDuration:0.28' in s and 'UIViewAnimationOptionBeginFromCurrentState' in s
 assert 'if (changed)' in s and 'completion:nil' in s
 # All window combinations: only an auto desktop plus movie gets a hole/host lease.
