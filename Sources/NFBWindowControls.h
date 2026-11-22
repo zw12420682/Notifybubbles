@@ -28,6 +28,7 @@ CGRect NFBWindowFrameInView(UIView *window, UIView *root);
 // Opt-in layout only; returns YES while a landscape floating scene is visible.
 BOOL NFBUpdateMovieMode(BOOL enabled);
 BOOL NFBMovieOwnsDesktopSession(void);
+BOOL NFBCloseMovieUpperWindow(UIView *target);
 BOOL NFBReplaceObservedSplitWithDesktop(UIView *window);
 
 CGRect NFBMovieLowerFrameInView(UIView *root);

@@ -197,6 +197,8 @@ static double NFBNumber(NSString *key, double fallback) {
 @property(nonatomic, strong) UIVisualEffectView *fixedBackgroundMaterial;
 
 @property(nonatomic, strong) NFBBubble *desktopActionButton;
+@property(nonatomic,strong) UIButton *movieUpperCloseButton;
+@property(nonatomic,weak) UIView *movieUpperCloseTarget, *movieUpperClosePressed;
 @property(nonatomic, strong) UITapGestureRecognizer *desktopActionTap;
 @property(nonatomic, strong) UILongPressGestureRecognizer *desktopActionHold;
 @property(nonatomic, strong) UISwipeGestureRecognizer *desktopActionSwipe;
@@ -1072,6 +1074,39 @@ static NSString *NFBFrontmostAppID(void) {
     if (gesture.state != UIGestureRecognizerStateEnded || !self.enabled || [self isLocked]) return;
     if (gesture.direction != UISwipeGestureRecognizerDirectionLeft) return;
     [self performDesktopAction:NFBActionEffectFor([self desktopActionMode], NFBActionSwipeLeft, YES, NO)];
+}
+- (void)movieUpperCloseDown { self.movieUpperClosePressed=self.movieUpperCloseTarget; }
+- (void)movieUpperCloseTapped {
+    if (!self.enabled || [self isLocked] || ![self acceptGestureForKey:@"movieUpperClose"]) return;
+    if (!NFBCloseMovieUpperWindow(self.movieUpperClosePressed))
+        [self showOpenNotice:@"暂时无法确认要关闭的上方横屏窗口"];
+    [self refresh];
+}
+- (void)layoutMovieUpperClose {
+    UIView *target=(NFBSplitCoordinator.shared.movieActive && !self.desktopActionButton.hidden && self.desktopActionButton.superview && ![self isLocked])
+        ? [NFBSplitCoordinator.shared upperRotationTarget] : nil;
+    self.movieUpperCloseTarget=target;
+    if (!target) { self.movieUpperCloseButton.hidden=YES; return; }
+    UIView *root=self.window.rootViewController.view;
+    CGRect house=[self.desktopActionButton convertRect:self.desktopActionButton.bounds toView:root];
+    CGFloat side=MIN(44,CGRectGetWidth(house));
+    CGRect box=CGRectMake(CGRectGetMidX(house)-side/2,CGRectGetMinY(house)-side-6,side,side);
+    if (CGRectGetMinY(box)<root.safeAreaInsets.top) { self.movieUpperCloseButton.hidden=YES; return; }
+    if (!self.movieUpperCloseButton) {
+        UIButton *button=[UIButton buttonWithType:UIButtonTypeSystem];
+        [button setImage:[UIImage systemImageNamed:@"xmark"] forState:UIControlStateNormal];
+        button.tintColor=UIColor.systemRedColor;
+        button.backgroundColor=UIColor.secondarySystemBackgroundColor;
+        button.layer.cornerRadius=10;
+        button.accessibilityLabel=@"关闭上方横屏";
+        [button addTarget:self action:@selector(movieUpperCloseTapped) forControlEvents:UIControlEventTouchUpInside];
+        [button addTarget:self action:@selector(movieUpperCloseDown) forControlEvents:UIControlEventTouchDown];
+        self.movieUpperCloseButton=button;
+        [root addSubview:button];
+    }
+    self.movieUpperCloseButton.frame=box;
+    self.movieUpperCloseButton.hidden=NO;
+    [root bringSubviewToFront:self.movieUpperCloseButton];
 }
 - (void)layoutDesktopAction:(CGRect)frame target:(UIView *)target split:(BOOL)splitNow toggleFrame:(CGRect)toggleFrame duration:(NSTimeInterval)duration {
     // This slot does double duty: in a split it is the desktop button, outside one
@@ -2120,6 +2155,7 @@ static NSString *NFBFrontmostAppID(void) {
     if (self.railFullyStowed && ![self isLocked]) {
         UIView *stowRoot=self.window.rootViewController.view;
         stowRoot.hidden=YES;
+        self.movieUpperCloseButton.hidden=YES;
         stowRoot.userInteractionEnabled=NO;
         self.desktopActionButton.hidden=YES;
         self.window.hidden=NO;
@@ -2474,6 +2510,7 @@ static NSString *NFBFrontmostAppID(void) {
     [self layoutFavorites:favoritesFrame diameter:diameter active:active duration:childDuration];
     [self layoutDesktopAction:desktopActionFrame target:actionTarget split:splitNow
                   toggleFrame:toggleFrame duration:childDuration];
+    [self layoutMovieUpperClose];
     self.rail.contentSize = CGSizeMake(railFrameWidth, contentHeight);
     CGFloat maxOffset = MAX(0, self.rail.contentSize.height - height);
     if (!self.rail.dragging && !self.rail.decelerating) {

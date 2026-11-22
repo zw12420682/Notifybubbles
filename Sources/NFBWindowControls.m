@@ -503,6 +503,25 @@ static NSHashTable<UIView *> *movieLastLandscape;
 static BOOL movieHadLandscape;
 static CGRect movieLowerScreen;
 
+BOOL NFBCloseMovieUpperWindow(UIView *target) {
+    if (!NSThread.isMainThread || !movieIsActive || !target.window) return NO;
+    NFBOpenWindowObservation *observation=NFBCaptureOpenWindows();
+    if (observation.landscapeWindows.count!=1 || observation.landscapeWindows.firstObject!=target ||
+        target==observation.portrait) return NO;
+    SEL close=NSSelectorFromString(@"closeWindowWithoutTerminatingProcessWithoutAnimation");
+    NSMethodSignature *sig=NFBSignature(target,close);
+    if (!sig || sig.numberOfArguments!=2 || strcmp(sig.methodReturnType,@encode(void))) return NO;
+    @try {
+        [NFBSplitCoordinator.shared beginUserWindowOperation];
+        ((void (*)(id,SEL))objc_msgSend)(target,close);
+        NFBInvalidateWindowState();
+        movieReadAt=0;
+        return YES;
+    } @catch (NSException *error) {
+        NFBDebugLog(@"movie: exact upper close failed %@",error);
+        return NO;
+    }
+}
 BOOL NFBReplaceObservedSplitWithDesktop(UIView *window) {
     if (!movieIsActive) return NFBReplaceSplitWithDesktop(window);
     NFBOpenWindowObservation *observation=NFBCaptureOpenWindows();
