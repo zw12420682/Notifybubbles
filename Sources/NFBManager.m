@@ -198,6 +198,8 @@ static double NFBNumber(NSString *key, double fallback) {
 
 @property(nonatomic, strong) NFBBubble *desktopActionButton;
 @property(nonatomic,strong) UIButton *movieUpperCloseButton;
+@property(nonatomic) CGFloat movieUpperCloseSymbolSide;
+@property(nonatomic,copy) NSString *lastViewportTrace;
 @property(nonatomic,weak) UIView *movieUpperCloseTarget, *movieUpperClosePressed;
 @property(nonatomic, strong) UITapGestureRecognizer *desktopActionTap;
 @property(nonatomic, strong) UILongPressGestureRecognizer *desktopActionHold;
@@ -1082,9 +1084,9 @@ static NSString *NFBFrontmostAppID(void) {
         [self showOpenNotice:@"暂时无法确认要关闭的上方横屏窗口"];
     [self refresh];
 }
-- (void)layoutMovieUpperClose {
+- (void)layoutMovieUpperClose:(NFBSplitSnapshot *)snapshot {
     UIView *target=(NFBSplitCoordinator.shared.movieActive && !self.desktopActionButton.hidden && self.desktopActionButton.superview && ![self isLocked])
-        ? [NFBSplitCoordinator.shared upperRotationTarget] : nil;
+        && snapshot.upperWindows.count==1 ? snapshot.upperWindows.firstObject : nil;
     self.movieUpperCloseTarget=target;
     if (!target) { self.movieUpperCloseButton.hidden=YES; return; }
     UIView *root=self.window.rootViewController.view;
@@ -1105,10 +1107,13 @@ static NSString *NFBFrontmostAppID(void) {
         self.movieUpperCloseButton=button;
         [root addSubview:button];
     }
-    self.movieUpperCloseButton.frame=box;
-    [self.movieUpperCloseButton setPreferredSymbolConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:side*0.48 weight:UIImageSymbolWeightSemibold] forImageInState:UIControlStateNormal];
+    if (!CGRectEqualToRect(self.movieUpperCloseButton.frame,box)) self.movieUpperCloseButton.frame=box;
+    if (self.movieUpperCloseSymbolSide!=side) {
+        self.movieUpperCloseSymbolSide=side;
+        [self.movieUpperCloseButton setPreferredSymbolConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:side*0.48 weight:UIImageSymbolWeightSemibold] forImageInState:UIControlStateNormal];
+    }
     self.movieUpperCloseButton.hidden=NO;
-    [root bringSubviewToFront:self.movieUpperCloseButton];
+    if (root.subviews.lastObject!=self.movieUpperCloseButton) [root bringSubviewToFront:self.movieUpperCloseButton];
 }
 - (void)layoutDesktopAction:(CGRect)frame target:(UIView *)target split:(BOOL)splitNow toggleFrame:(CGRect)toggleFrame duration:(NSTimeInterval)duration {
     // This slot does double duty: in a split it is the desktop button, outside one
@@ -2459,9 +2464,14 @@ static NSString *NFBFrontmostAppID(void) {
     // Size and position of every row are committed in the blocks below; logging a
     // viewport change with the diameter it resolves to names the pass that moved
     // an icon, instead of guessing from a screenshot.
-    if (viewportResized) NFBDebugLog(@"layout: viewport %.0fx%.0f -> %.0fx%.0f diameter=%.1f split=%d",
-        self.rail.bounds.size.width, self.rail.bounds.size.height,
-        railFrame.size.width, railFrame.size.height, plan.diameter, split);
+    if (NFBDebugLoggingEnabled()) {
+        NSString *viewport=[NSString stringWithFormat:@"%.1fx%.1f diameter=%.1f split=%d expanded=%d",
+            railFrame.size.width,railFrame.size.height,plan.diameter,split,self.edgeExpanded];
+        if (![viewport isEqualToString:self.lastViewportTrace]) {
+            self.lastViewportTrace=viewport;
+            NFBDebugLog(@"layout: viewport %@",viewport);
+        }
+    }
     CGFloat childDuration = layoutDuration;
     BOOL hideEdgeIcons = NO;
     self.rail.hidden = rowCount == 0;
@@ -2512,7 +2522,7 @@ static NSString *NFBFrontmostAppID(void) {
     [self layoutFavorites:favoritesFrame diameter:diameter active:active duration:childDuration];
     [self layoutDesktopAction:desktopActionFrame target:actionTarget split:splitNow
                   toggleFrame:toggleFrame duration:childDuration];
-    [self layoutMovieUpperClose];
+    [self layoutMovieUpperClose:layoutSnapshot];
     self.rail.contentSize = CGSizeMake(railFrameWidth, contentHeight);
     CGFloat maxOffset = MAX(0, self.rail.contentSize.height - height);
     if (!self.rail.dragging && !self.rail.decelerating) {

@@ -520,6 +520,21 @@ BOOL NFBCloseMovieUpperWindow(UIView *target) {
         ((void (*)(id,SEL))objc_msgSend)(target,close);
         NFBInvalidateWindowState();
         movieReadAt=0;
+        if (NFBDebugLoggingEnabled()) {
+            NSUInteger epoch=NFBSplitCoordinator.shared.operationEpoch;
+            __weak UIView *upper=target;
+            __weak UIView *lower=observation.portrait;
+            BOOL hadLower=lower!=nil;
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.35*NSEC_PER_SEC)),dispatch_get_main_queue(),^{
+                if (!NFBDebugLoggingEnabled() || NFBSplitCoordinator.shared.operationEpoch!=epoch) return;
+                NFBOpenWindowObservation *after=NFBCaptureOpenWindows();
+                if (!after.classAvailable || !after.sceneAvailable) return;
+                UIView *previousUpper=upper, *previousLower=lower;
+                NFBDebugLog(@"movie: upper-close result upperGone=%d hadLower=%d sameLowerVisible=%d",
+                    !previousUpper || ![after.windows containsObject:previousUpper], hadLower,
+                    previousLower && [after.windows containsObject:previousLower]);
+            });
+        }
         return YES;
     } @catch (NSException *error) {
         NFBDebugLog(@"movie: exact upper close failed %@",error);

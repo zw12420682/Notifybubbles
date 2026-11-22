@@ -33,6 +33,10 @@ int main(void) {
     assert(NFBHomeSwipeCanCapture(10.333,-6,95.44,-55.417,22,55.4));
     assert(NFBHomeSwipeCanCapture(-5.6667,-1,-226.72,-40.01,17,40));
     assert(NFBHomeSwipeCanCapture(-8,-1,-120.04,-15,19.7,15));
+    assert(NFBHomeSwipeCanCapture(9.3333,-1,159.908,-17.133,19.3,17.1));
+    assert(!NFBHomeSwipeCanCapture(9.3333,0,159.908,0,19.3,0));
+    assert(!NFBHomeSwipeCanCapture(11,-1,159.908,-17.133,19.3,17.1));
+    assert(!NFBHomeSwipeCanFinish(9.3333,-1,159.908,-17.133));
     assert(NFBHomeSwipeCanCapture(-6,-1,-60.04,-10.006,18.7,10));
     assert(NFBHomeSwipeCanCapture(5.3333,-1.3333,64.017,-16.004,18.3,16));
     assert(!NFBHomeSwipeCanCapture(5.6667,0,48.517,0,19.3,0));
