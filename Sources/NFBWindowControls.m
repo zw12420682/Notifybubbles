@@ -35,6 +35,11 @@ static id currentWindow(void) {
     return NFBCurrentWindowState().floatingWindow;
 }
 static UIView *attachmentWindow(void);
+static CGRect NFBMovieStandardPane(CGRect area) {
+    CGFloat height=NFBMoviePaneHeight(area.size.width,area.size.height);
+    return CGRectMake(CGRectGetMinX(area),CGRectGetMaxY(area)-height,
+        area.size.width*NFBMoviePortraitScale,height);
+}
 CGRect NFBSplitFrameInView(UIView *root) {
     if (!NSThread.isMainThread || !root.window) return CGRectNull;
     @try {
@@ -59,7 +64,7 @@ CGRect NFBSplitFrameInView(UIView *root) {
             // No real portrait measured in this session: use the normal Open
             // 0.86 portrait footprint, NOT the movie proxy's reduced footprint.
             CGSize size = root.bounds.size;
-            return CGRectMake(0, size.height * 0.14, size.width * 0.86, size.height * 0.86);
+            return NFBMovieStandardPane((CGRect){CGPointZero,size});
         }
         return CGRectNull;
     } @catch (__unused NSException *exception) { return CGRectNull; }
@@ -496,12 +501,26 @@ static NFBSplitObservationTracker movieObservation;
 static NSHashTable<UIView *> *movieLastLandscape;
 static BOOL movieHadLandscape;
 static CGRect movieLowerScreen;
+
 BOOL NFBReplaceObservedSplitWithDesktop(UIView *window) {
     if (!movieIsActive) return NFBReplaceSplitWithDesktop(window);
     NFBOpenWindowObservation *observation=NFBCaptureOpenWindows();
     if (!window || window!=observation.portrait || !observation.landscapeWindows.count) return NO;
     NSUInteger retained=NFBMovieOwnsDesktopSession() ? movieDesktopSession : 0;
-    if (!NFBReplaceMoviePaneWithDesktop(window, retained)) return NO;
+    UIView *anchor=nil;
+    if (!retained) {
+        UIView *parent=window.superview;
+        if (!parent.window) return NO;
+        CGRect area=[parent convertRect:parent.window.bounds fromView:parent.window];
+        CGRect pane=NFBMovieStandardPane(area);
+        if (!NFBMovieValidLower(pane,area)) return NO;
+        anchor=[[UIView alloc] initWithFrame:pane];
+        anchor.userInteractionEnabled=NO;
+        [parent addSubview:anchor];
+    }
+    BOOL replaced=NFBReplaceMoviePaneWithAnchor(window, retained, anchor);
+    [anchor removeFromSuperview];
+    if (!replaced) return NO;
     movieDesktopSession=NFBDesktopSessionIdentifier();
     movieOwnsDesktop=movieDesktopSession!=0;
     movieDesktopAttempted=movieOwnsDesktop;
@@ -693,24 +712,16 @@ BOOL NFBApplyMovieObservation(BOOL enabled, NFBOpenWindowObservation *observatio
         }
         // Leave all window and content corner styles owned by Open.
         if ([observation.landscapeWindows containsObject:view]) {
-            // The lower app remains fixed. Top alignment may use the status-bar
-            // band; shrink uniformly only if the existing video cannot fit.
-            CGRect lower = moviePortrait ? [moviePortrait convertRect:moviePortrait.bounds toView:parent] : CGRectZero;
+            // Match the standard Open 0.86 portrait's bottom alignment, not a
+            // transient portrait sample or an unrelated cached rail footprint.
+            // Keep Open in charge of the actual app window (including keyboard).
+            CGRect lower=NFBMovieStandardPane(area);
             UIView *manualDesktop = NFBDesktopIndependentAnchor();
-            if (CGRectIsEmpty(lower) && manualDesktop.window) lower = [manualDesktop convertRect:manualDesktop.bounds toView:parent];
-            BOOL needsMovieAnchor=CGRectIsEmpty(lower);
-            if (CGRectIsEmpty(lower)) {
-                // Desktop occupies exactly the normal portrait footprint. Only
-                // the video fits the remaining space; never shrink this pane
-                // to reserve a video band (that widened the black gap).
-                lower = CGRectMake(CGRectGetMinX(area), CGRectGetMinY(area) + area.size.height * 0.14,
-                    area.size.width * 0.86, area.size.height * 0.86);
-                if (portraitRailRoot.window && !CGRectIsEmpty(portraitRailReference) &&
-                    CGSizeEqualToSize(portraitRailScreen, area.size)) {
-                    CGRect reference = [portraitRailRoot convertRect:portraitRailReference toView:parent];
-                    if (NFBMovieValidLower(reference, area)) lower = reference;
-                }
+            if (manualDesktop.window) {
+                CGRect reference=[manualDesktop convertRect:manualDesktop.bounds toView:parent];
+                if (NFBMovieValidLower(reference,area)) lower=reference;
             }
+            BOOL needsMovieAnchor=!manualDesktop.window;
             if (!NFBMovieValidLower(lower, area)) {
                 NFBDebugLog(@"movie: defer invalid lower=%@ area=%@", NSStringFromCGRect(lower), NSStringFromCGRect(area));
                 continue;

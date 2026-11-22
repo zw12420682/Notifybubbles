@@ -1454,6 +1454,9 @@ BOOL NFBReplaceSplitWithDesktop(UIView *window) {
     return NFBReplaceMoviePaneWithDesktop(window, 0);
 }
 BOOL NFBReplaceMoviePaneWithDesktop(UIView *window, NSUInteger retainedSession) {
+    return NFBReplaceMoviePaneWithAnchor(window,retainedSession,nil);
+}
+BOOL NFBReplaceMoviePaneWithAnchor(UIView *window, NSUInteger retainedSession, UIView *anchor) {
     if (!NSThread.isMainThread || !window.window) return NO;
     if (retainedSession ? (NFBDesktopSessionIdentifier()!=retainedSession || !NFBMovieDesktopParked())
                         : NFBDesktopSplitActive()) return NO;
@@ -1466,7 +1469,7 @@ BOOL NFBReplaceMoviePaneWithDesktop(UIView *window, NSUInteger retainedSession) 
         return NO;
     }
     if (!retainedSession) {
-        if (!NFBShowDesktopInSplit(window)) return NO;
+        if (!NFBShowDesktopInSplit(anchor ?: window)) return NO;
         NFBDesktopSession *active=session;
         UIView *proxy=[[UIView alloc] initWithFrame:active.panelFrame];
         proxy.userInteractionEnabled=NO;

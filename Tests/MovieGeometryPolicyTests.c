@@ -2,6 +2,7 @@
 #include <assert.h>
 #include <stdio.h>
 int main(void) {
+    if (fabs(NFBMoviePaneHeight(390,844)-596.2666666667)>0.001) return 1;
  assert(NFBMovieLowerGeometryValid(0,248.02,335.4,595.98,0,0,390,844));
  assert(NFBMovieLowerGeometryValid(0,118.16,335.4,725.84,0,0,390,844));
  assert(!NFBMovieLowerGeometryValid(181.584,-23.8392,26.832,47.6784,0,0,390,844));

@@ -6,16 +6,17 @@ launch=m.split('- (void)tapped:(NFBBubble *)button {',1)[1].split('- (void)showO
 keep=launch.split('if (NFBMovieOwnsDesktopSession()) {',1)[1].split('} else [NFBSplitCoordinator.shared closeDesktop];',1)[0]
 assert 'beginUserWindowOperation' in keep and 'closeDesktop' not in keep and 'Parked(' not in keep
 house=w.split('BOOL NFBReplaceObservedSplitWithDesktop',1)[1].split('static BOOL movieLandscape',1)[0]
-assert house.index('window!=observation.portrait') < house.index('NFBReplaceMoviePaneWithDesktop')
-assert house.index('NFBReplaceMoviePaneWithDesktop') < house.index('movieDesktopSession=NFBDesktopSessionIdentifier()')
+assert house.index('window!=observation.portrait') < house.index('NFBReplaceMoviePaneWithAnchor')
+assert house.index('NFBReplaceMoviePaneWithAnchor') < house.index('movieDesktopSession=NFBDesktopSessionIdentifier()')
 assert 'if (!movieIsActive) return NFBReplaceSplitWithDesktop(window);' in house
 b=(r/'Sources/NFBOpenSplitBackend.m').read_text()
 assert 'return NFBReplaceObservedSplitWithDesktop(window);' in b
 assert 'movieDesktopSession==NFBDesktopSessionIdentifier()' in w
 cache=w.split('CGRect NFBSplitFrameInView',1)[1].split('BOOL NFBSplitFrameClassUnavailable',1)[0]
 assert cache.index('NFBMovieValidLower(frame, root.bounds)') < cache.index('portraitRailReference = frame')
-layout=w.split('CGRect lower = moviePortrait',1)[1].split('movieLowerScreen =',1)[0]
-assert 'NFBMovieValidLower(reference, area)' in layout
+layout=w.split('CGRect lower=NFBMovieStandardPane(area);',1)[1].split('movieLowerScreen =',1)[0]
+assert 'CGRectGetMaxY(area)-height' in w
+assert 'portraitRailReference' not in layout and 'moviePortrait' not in layout
 assert layout.index('if (!NFBMovieValidLower(lower, area))') < layout.index('movieDesktopAnchor.frame = lower')
 attempt=w.split('if (movieIsActive && !moviePortrait && movieDesktopAnchor.window',1)[1].split('movieDesktopSession=',1)[0]
 assert attempt.index('NFBMovieValidLower') < attempt.index('movieDesktopAttempted = YES')

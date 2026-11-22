@@ -4,7 +4,7 @@ h=(r/'Sources/NFBDesktopHost.m').read_text();m=(r/'Sources/NFBManager.m').read_t
 f=h[h.index('BOOL NFBReplaceSplitWithDesktop('):]
 assert 'closeWindowWithoutTerminatingProcessWithoutAnimation' in f
 assert 'NFBTerminate' not in f and 'kill(' not in f
-assert f.index('NFBShowDesktopInSplit(window)') < f.index('active.independentAnchor=proxy') < f.index('invokeWithTarget:window')
+assert f.index('NFBShowDesktopInSplit(anchor ?: window)') < f.index('active.independentAnchor=proxy') < f.index('invokeWithTarget:window')
 assert 'active.anchor=proxy' in f
 assert '[NFBSplitCoordinator.shared replaceWindowWithDesktop:target]' in m
 assert '[self.independentAnchor removeFromSuperview]' in h

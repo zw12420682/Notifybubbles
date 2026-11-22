@@ -12,7 +12,7 @@ assert 'movieSquare' not in w
 movie=w[w.index('// Movie layout is opt-in'):]
 assert 'cornerRadius =' not in movie
 assert 'basis.a /= sx' in movie and 'basis.c /= sy' in movie
-assert 'area.size.width * 0.86, area.size.height * 0.86' in movie
-assert 'portraitRailReference toView:parent' in movie
+assert 'CGRect lower=NFBMovieStandardPane(area);' in movie
+assert 'portraitRailReference toView:parent' not in movie
 assert 'width = height *' not in movie
 print('PASS: double tap excludes single tap, persisted mode color, two rails, no corner mutation, absolute scale and desktop aspect')
