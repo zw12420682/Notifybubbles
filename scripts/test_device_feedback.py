@@ -14,7 +14,7 @@ assert 'return NFBReplaceObservedSplitWithDesktop(window);' in b
 assert 'movieDesktopSession==NFBDesktopSessionIdentifier()' in w
 cache=w.split('CGRect NFBSplitFrameInView',1)[1].split('BOOL NFBSplitFrameClassUnavailable',1)[0]
 assert cache.index('NFBMovieValidLower(frame, root.bounds)') < cache.index('portraitRailReference = frame')
-layout=w.split('CGRect lower=NFBMovieStandardPane(area);',1)[1].split('movieLowerScreen =',1)[0]
+layout=w.split('CGRect lower=NFBMovieStandardPane(area);',1)[1].split('// Keep the desktop anchor stable.',1)[0]
 assert 'CGRectGetMaxY(area)-height' in w
 assert 'portraitRailReference' not in layout and 'moviePortrait' not in layout
 assert layout.index('if (!NFBMovieValidLower(lower, area))') < layout.index('movieDesktopAnchor.frame = lower')

@@ -735,6 +735,12 @@ BOOL NFBApplyMovieObservation(BOOL enabled, NFBOpenWindowObservation *observatio
                 if (movieDesktopAnchor.superview != parent) [parent addSubview:movieDesktopAnchor];
                 movieDesktopAnchor.frame = lower;
             }
+            // Keep the desktop anchor stable. Only video fitting follows the
+            // live lower app while Open is adapting it for the keyboard.
+            if (NFBKeyboardVisible() && moviePortrait.window) {
+                CGRect keyboardLower=[moviePortrait convertRect:moviePortrait.bounds toView:parent];
+                if (NFBMovieValidLower(keyboardLower,area)) lower=keyboardLower;
+            }
             movieLowerScreen = [parent convertRect:lower toView:parent.window];
             // Open may rewrite bounds while preserving our transform. Never
             // multiply another fit onto that scale: derive an absolute fit from
