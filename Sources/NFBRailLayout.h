@@ -197,11 +197,9 @@ static inline NFBRailPlan NFBPlanRail(double screenWidth, double screenHeight,
     // eat the height budget: doing so crushed the main rail to a hairline.
     bool hideFavorites = !split && collapsed;
     unsigned long favoriteRows = hideFavorites ? 0 : favorites;
-    // Split shows up to four background rows; expanded and collapsed retain
-    // their independent viewport rules.
-    NFBContainerHeights fit = split
-        ? NFBFitContainersCapped(room, side, step, favoriteRows, rows, 4)
-        : NFBFitContainers(room, side, step, favoriteRows, rows);
+    // Expanded and split share the four-row cap; the collapsed sections
+    // still compute independent notification and background viewports.
+    NFBContainerHeights fit = NFBFitContainersCapped(room, side, step, favoriteRows, rows, 4);
     // Only the edge column needs whole rows; a split keeps the window-derived fit.
     if (!split) fit = NFBSnapToRows(fit, side, step);
     double favoriteHeight = hideFavorites ? 0 : fit.favorites;
@@ -209,7 +207,7 @@ static inline NFBRailPlan NFBPlanRail(double screenWidth, double screenHeight,
     height = fit.regular;
     // Reference for the collapsed cap: the same anchor with the favorites rail
     // present, i.e. the expanded column's own budget.
-    NFBContainerHeights expandedFit = NFBFitContainers(room, side, step, favorites, rows);
+    NFBContainerHeights expandedFit = NFBFitContainersCapped(room, side, step, favorites, rows, 4);
     // Same rule as NFBRowCenter: n rows need (n-1)*step + side. Clamp at zero
     // so a zero-height budget cannot underflow into a huge count.
     unsigned long capRows = 0;

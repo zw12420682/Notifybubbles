@@ -1806,6 +1806,7 @@ static NSString *NFBFrontmostAppID(void) {
         self.columnParked = offscreen;
         return;
     }
+    BOOL reversing = self.columnSliding;
     self.columnSliding = YES;
     // Interruption-safe: a completion from an earlier slide must never hide or
     // reveal the column the current slide is moving.
@@ -1844,7 +1845,7 @@ static NSString *NFBFrontmostAppID(void) {
         if (NFBColumnRevealStartAway(self.columnTouchesKnown, self.columnParked, identity))
             root.transform = away;
         self.columnParked = NO;
-        [UIView animateWithDuration:0.28 delay:0.04
+        [UIView animateWithDuration:0.28 delay:(reversing ? 0 : 0.04)
             options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseOut
             animations:^{ root.transform = CGAffineTransformIdentity; }
             completion:^(__unused BOOL finished) {
@@ -2575,9 +2576,9 @@ static NSString *NFBFrontmostAppID(void) {
             // animation that the compositor still has to commit.
             apply();
         } else if (changed) {
-            [UIView animateWithDuration:layoutDuration
-                delay:0 usingSpringWithDamping:1.0 initialSpringVelocity:0
-                options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction
+            // Match the rail and its material when both move in this pass.
+            [UIView animateWithDuration:layoutDuration delay:0
+                options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseInOut
                 animations:apply completion:nil];
         }
         // Geometry first: the badge is derived from imageView.frame, so laying it

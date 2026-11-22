@@ -15,7 +15,7 @@ name: Build DEB (rootless + roothide)
 on:
   workflow_dispatch:
   push:
-    branches: [main, master, refactor/unified-split-core, fix/movie-mini-4920, feat/rail-stow, feat/home-swipe-close, fix/home-swipe-movie-persist, fix/device-feedback-4935, fix/movie-desktop-handoff, fix/remove-close-add-background, fix/split-four-background, fix/movie-touch-park, fix/movie-stable-pane, fix/movie-keyboard-pane, fix/movie-swipe-start, fix/movie-desktop-visible]
+    branches: [main, master, refactor/unified-split-core, fix/movie-mini-4920, feat/rail-stow, feat/home-swipe-close, fix/home-swipe-movie-persist, fix/device-feedback-4935, fix/movie-desktop-handoff, fix/remove-close-add-background, fix/split-four-background, fix/movie-touch-park, fix/movie-stable-pane, fix/movie-keyboard-pane, fix/movie-swipe-start, fix/movie-desktop-visible, fix/edge-four]
     paths-ignore: ['**.md']
 
 permissions:

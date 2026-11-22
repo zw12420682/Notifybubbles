@@ -102,7 +102,7 @@ if "if (!NFBTrollVisibleApp().length) self.edgeExpanded = NO;" in manager:
 if 'NFBClearAllID' in manager or 'bottomControlSpace' in read('Sources/NFBRailLayout.h'):
     problems.append('removed close key must not reserve a slot')
 if 'NFBFitContainersCapped(room, side, step, favoriteRows, rows, 4)' not in read('Sources/NFBRailLayout.h'):
-    problems.append('split background viewport should allow four visible rows')
+    problems.append('expanded and split background viewport should allow four visible rows')
 if '#define NFBBackgroundVisibleRows 4' not in read('Sources/NFBEdgeSections.h'):
     problems.append('non-split background viewport should retain four visible rows')
 
