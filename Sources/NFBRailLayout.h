@@ -20,7 +20,6 @@ typedef struct {
     CGRect favorites;
     CGRect toggle;
     double toggleTop;
-    double clearCenterY;
     double diameter;
     bool edgeRail;      // collapsed before a fullscreen app: column moved once to its half-hidden x
     double railViewportWidth; // icon column width inside the rail frame (always one bubble wide)
@@ -140,7 +139,6 @@ static inline NFBRailPlan NFBPlanRail(double screenWidth, double screenHeight,
         double x = NFBContainedRailX(CGRectGetMaxX(splitFrame) + splitGap, screenWidth, railWidth, screenMargin);
         if (isfinite(x)) rail = CGRectMake(x, y, railWidth, height);
     }
-    plan.clearCenterY = rail.origin.y - 8 - side / 2;
 
     double ceiling = fmax(safe.top, 12);
     double floorY = screenHeight - fmax(safe.bottom, 12);
@@ -194,16 +192,13 @@ static inline NFBRailPlan NFBPlanRail(double screenWidth, double screenHeight,
     // One full step below the slot: a single step put the first icon only 9pt
     // under the button, so their circular images nearly touched/overlapped.
     y += side + 9;
-    // Only a split reserves its final row for X. The edge column has no bottom
-    // control in either expanded or collapsed state, and must not reserve one.
-    double bottomControlSpace = split ? side + 9 : 0;
-    double room = fmax(0, floorY - y - bottomControlSpace);
+    double room = fmax(0, floorY - y);
     // A hidden fullscreen column shows no favorites rail, so favorites must not
     // eat the height budget: doing so crushed the main rail to a hairline.
     bool hideFavorites = !split && collapsed;
     unsigned long favoriteRows = hideFavorites ? 0 : favorites;
     // A split or expanded column lists the whole switcher but only shows three
-    // rows; the collapsed column keeps its own four-row viewport.
+    // rows; the collapsed column keeps its own five-row viewport.
     NFBContainerHeights fit = split
         ? NFBFitContainersCapped(room, side, step, favoriteRows, rows, 3)
         : NFBFitContainers(room, side, step, favoriteRows, rows);
@@ -229,7 +224,6 @@ static inline NFBRailPlan NFBPlanRail(double screenWidth, double screenHeight,
     }
     plan.rail = CGRectMake(rail.origin.x, y + favoriteHeight + gap, frameWidth, height);
     plan.favorites = CGRectMake(rail.origin.x, y, railWidth, favoriteHeight);
-    plan.clearCenterY = CGRectGetMaxY(plan.rail) + 9 + side / 2;
     plan.diameter = diameter;
     plan.edgeRail = edge;
     // First content row (favorites block start) - one row below the slot. It is

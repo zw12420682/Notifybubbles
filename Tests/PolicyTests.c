@@ -348,7 +348,7 @@ static void testFixedBackgroundSections(void) {
             if (unread) check(fabs(p.unreadHeight - NFBEdgeViewportHeight(unread, NFBUnreadVisibleRows, side, step)) < 0.01,
                               "unread viewport shows one row per app up to three");
             check(fabs(p.backgroundHeight - NFBEdgeViewportHeight(6, NFBBackgroundVisibleRows, side, step)) < 0.01,
-                  "background viewport shows one row per app up to four");
+                  "background viewport shows one row per app up to five");
             if (unread) {
                 check(p.backgroundOffset >= p.unreadHeight + 9 - 0.01,
                       "with unread present the two viewports keep their 9pt gap");
@@ -367,7 +367,7 @@ static void testFixedBackgroundSections(void) {
               "without unread the background viewport starts at the top");
         NFBEdgeSections noBg = NFBEdgeSectionLayout(4000, side, step, 5, 0);
         check(noBg.backgroundHeight == 0, "an empty background group reserves no space");
-        double tight = NFBEdgeRowsHeight(5, side, step);
+        double tight = NFBEdgeRowsHeight(5, side, step) + 9;
         NFBEdgeSections squeezed = NFBEdgeSectionLayout(tight, side, step, 5, 6);
         check(fabs(squeezed.backgroundHeight - NFBEdgeViewportHeight(6, NFBBackgroundVisibleRows, side, step)) < 0.01,
               "backgrounds keep their capped viewport when the budget is tight");

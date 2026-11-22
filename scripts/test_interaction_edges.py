@@ -9,7 +9,6 @@ assert 'self.nfbUpSwipeStartedOnStowArrow=[self railStowEligible] &&' in m
 assert 'if (self.desktopActionToggle!=toggleMode)' in m
 assert 'if (!self.railFullyStowed) [self.pendingBurstApps addObject:appID];' in m
 assert 'self.railFullyStowed=YES;\n    [self.pendingBurstApps removeAllObjects];' in m
-x=method('- (void)clearAllTapped:(UITapGestureRecognizer *)gesture {','- (NFBActionMode)desktopActionMode')
-assert '[self.store clear]' not in x
-assert x.index('showOpenNotice:') < x.index('return;\n    }') < x.index('closeDesktop') < x.index('closeCurrentWindow')
-print('PASS: upward swipe intent, hidden visual reminders, and no notification clearing from split X')
+assert 'clearAllTapped:' not in m and 'NFBClearAllID' not in m
+assert '[self clearBackground];' in m
+print('PASS: upward swipe intent, hidden reminders, no split X, existing background cleanup retained')

@@ -58,7 +58,6 @@ static const CGFloat NFBFloatingPosition = 0.80;
 // Synthetic bubble id that rides at the top of the row while an app is in the
 // split view. Tapping it clears every background app at once. It never enters
 // the store or the switcher ordering.
-static NSString * const NFBClearAllID = @"__notifybubbles.clearall__";
 #import <QuartzCore/QuartzCore.h>
 
 static CFStringRef const NFBDomain = CFSTR("local.notifybubbles");
@@ -250,7 +249,6 @@ static double NFBNumber(NSString *key, double fallback) {
 - (void)schedulePreferenceFlush;
 @property(nonatomic, copy) NSString *lastRailActive;
 @property(nonatomic, copy) NSString *lastFavoritesActive;
-- (void)clearAllHeld:(UILongPressGestureRecognizer *)gesture;
 - (void)layoutFavorites:(CGRect)frame diameter:(CGFloat)diameter active:(NSString *)active duration:(NSTimeInterval)duration;
 
 @property(nonatomic) BOOL edgeMode;
@@ -435,8 +433,6 @@ static double NFBNumber(NSString *key, double fallback) {
 - (BOOL)isLocked;
 - (void)clearBackground;
 - (void)sweepAwayBubbles:(NSArray<NSString *> *)apps exitVersions:(NSDictionary *)exitVersions;
-- (void)clearAllTapped:(UITapGestureRecognizer *)gesture;
-- (void)styleClearAllButton:(NFBBubble *)button;
 - (void)shakeBubble:(NFBBubble *)button;
 - (void)appHeld:(UILongPressGestureRecognizer *)gesture;
 @end
@@ -641,7 +637,6 @@ static const CFTimeInterval kTickReconcileInterval = 2.0;
 - (NSArray<NSString *> *)orderedAppsForRemoval {
     NSMutableOrderedSet *apps = [NSMutableOrderedSet orderedSetWithArray:self.lastLayoutApps ?: @[]];
     [apps addObjectsFromArray:self.store.appIDs];
-    [apps removeObject:NFBClearAllID];
     [apps removeObject:NFBSystemDesktopBundleID];
     return apps.array;
 }
@@ -974,27 +969,6 @@ static NSString *NFBFrontmostAppID(void) {
     [self.window bringSubviewToFront:self.railStowHandle];
     NFBSetCaptureHidden(self.railStowHandle,self.hideInScreenshots);
 }
-- (void)clearAllTapped:(UITapGestureRecognizer *)gesture {
-    if (gesture.state != UIGestureRecognizerStateEnded || [self isLocked] || ![self acceptGestureForKey:@"clearAll"]) return;
-    if (!NFBTrollVisibleApp().length) {
-        // X belongs to split layout. An unavailable Open target is not a clear request.
-        [self showOpenNotice:@"暂时无法确认要关闭的分屏窗口，请稍后再试"];
-        return;
-    }
-    [self resetAutoCollapseTimer];
-    // Movie exit still tears down its desktop in reconcile; lower-pane close
-    // must keep the parked session so it can resume without re-transplant.
-    if (!NFBMovieOwnsDesktopSession()) [NFBSplitCoordinator.shared closeDesktop];
-    // Fold to the collapsed state first so the column slides to the edge with the
-    // split's own dismissal animation instead of snapping after it.
-    if (self.edgeExpanded) {
-        self.edgeExpanded = NO;
-        [self refresh];
-    }
-    if (![NFBSplitCoordinator.shared closeCurrentWindow]) [self showOpenNotice:@"未能读取 TrollOpen 右侧区域的单击接口"];
-    else NFBOpenEdgeAfterClose();
-    [self refresh];
-}
 - (NFBActionMode)desktopActionMode {
     return NFBActionModeFor(self.splitLayout && self.desktopActionTarget != nil, self.edgeExpanded);
 }
@@ -1224,22 +1198,6 @@ static NSString *NFBFrontmostAppID(void) {
     [UIView animateWithDuration:UIAccessibilityIsReduceMotionEnabled() ? 0 : MAX(0.16, duration)
         delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseInOut animations:applyAction
     completion:nil];
-}
-- (void)clearAllHeld:(UILongPressGestureRecognizer *)gesture {
-    if (gesture.state != UIGestureRecognizerStateBegan || [self isLocked] || ![self acceptGestureForKey:@"clearAllHold"]) return;
-    [self clearBackground];
-}
-// Combined close/clear action: a blue close glyph, no badge,
-// and an accessibility label so VoiceOver reads it as an action, not an app.
-- (void)styleClearAllButton:(NFBBubble *)button {
-    button.badge.hidden = YES;
-    button.imageView.contentMode = UIViewContentModeCenter;
-    button.imageView.image = [UIImage systemImageNamed:@"xmark"];
-    button.imageView.tintColor = UIColor.systemBlueColor;
-    button.imageView.backgroundColor = UIColor.secondarySystemBackgroundColor;
-    button.accessibilityTraits = UIAccessibilityTraitButton;
-    button.accessibilityLabel = @"关闭分屏 / 清理后台";
-    button.accessibilityHint = @"单击执行 TrollOpen 右侧区域关闭，长按清理后台";
 }
 // Restart the native split-container pulse when a new notification arrives.
 - (void)shakeBubble:(NFBBubble *)button {
@@ -1737,7 +1695,7 @@ static NSString *NFBFrontmostAppID(void) {
             !self.window.hidden,
             button != nil && owner != nil,
             inSplit,
-            [appID isEqualToString:NFBClearAllID],
+            false,
             UIAccessibilityIsReduceMotionEnabled(),
             owner ? CGRectIntersectsRect(owner.bounds, row) : false
         };
@@ -1991,7 +1949,6 @@ static NSString *NFBFrontmostAppID(void) {
     if (self.holdsClearedColumn) {
         [apps removeAllObjects];
         [apps addObjectsFromArray:self.lastLayoutApps ?: @[]];
-        [apps removeObject:NFBClearAllID];
     }
     if (NFBIsSystemDesktop(active)) active = nil;
     // Recency decides membership, never a forced jump of an existing icon.
@@ -2040,7 +1997,7 @@ static NSString *NFBFrontmostAppID(void) {
         }
     }
     // Every column now lists the real app switcher; the split/expanded column only
-    // *shows* three rows and scrolls the rest, the collapsed one shows four.
+    // *shows* three rows and scrolls the rest, the collapsed background shows up to five.
     NSMutableArray<NSString *> *liveSwitcher = [NSMutableArray array];
     if (!collapse) for (NSString *app in self.lastSwitcher ?: @[])
         if (![self.dismissedSwitcher containsObject:app] && ![self.closingApps containsObject:app]) [liveSwitcher addObject:app];
@@ -2063,10 +2020,6 @@ static NSString *NFBFrontmostAppID(void) {
     if (separateEdgeSections) [scrollingApps removeObjectsInArray:fixedApps];
     NSArray<NSString *> *unreadScrollApps = separateEdgeSections ? scrollingApps : railApps;
     NSMutableArray<NSString *> *displayApps = [railApps mutableCopy];
-    // The bottom close control belongs to split mode only. Outside a split,
-    // clearing unread is the top control's hold gesture, regardless of count.
-    BOOL showClearAll = NFBBottomCloseVisible(split);
-    if (showClearAll) [displayApps addObject:NFBClearAllID];
     if (self.closingApps.count) {
         CFTimeInterval traceNow = CACurrentMediaTime();
         if (traceNow - self.lastSweepLogAt > 1.0) {
@@ -2086,14 +2039,6 @@ static NSString *NFBFrontmostAppID(void) {
         if (NFBDebugLoggingEnabled()) [self traceClearView:[NSString stringWithFormat:@"remove %@ view=%p", appID, button]];
         [self.buttons removeObjectForKey:appID];
         button.userInteractionEnabled = NO;
-        if (!split && [appID isEqualToString:NFBClearAllID]) {
-            // Do not leave a fading close key or its hit area behind outside a
-            // split. Its previous animation must not re-expose it afterwards.
-            [button.layer removeAllAnimations];
-            button.hidden = YES;
-            [button removeFromSuperview];
-            continue;
-        }
         unsigned long long removalToken = button.badgeContentVersion + 1;
         button.badgeContentVersion = removalToken;
         if (![self.favoriteApps containsObject:appID]) [self.icons removeObjectForKey:appID];
@@ -2324,7 +2269,6 @@ static NSString *NFBFrontmostAppID(void) {
     CGFloat height = CGRectGetHeight(plan.rail);
     CGRect railFrame = plan.rail;
     CGRect favoritesFrame = plan.favoritesVisible ? plan.favorites : CGRectZero;
-    CGFloat clearCenterY = plan.clearCenterY;
     CGFloat railWidth = side;
     // One column width: the rail never widens, every row stays at side/2 in it.
     CGFloat railFrameWidth = CGRectGetWidth(railFrame);
@@ -2332,7 +2276,7 @@ static NSString *NFBFrontmostAppID(void) {
     if (separateEdgeSections) {
         // Use the column's anchored screen span; only the upper notification
         // viewport scrolls. The fixed background group is never a scroll child.
-        // Fixed viewports: unread shows three rows, backgrounds four. Do not
+        // Fixed viewports: unread shows three rows, backgrounds five. Do not
         // anchor to the screen bottom; the span is the column budget only.
         double span = MAX(0, CGRectGetHeight(bounds) - MAX(safe.bottom, 12) - plan.rowsTop);
         NFBEdgeSections sections = NFBEdgeSectionLayout(span, side, step,
@@ -2547,42 +2491,31 @@ static NSString *NFBFrontmostAppID(void) {
             animations:^{ self.rail.contentOffset = CGPointMake(0, offset); } completion:nil];
     }
     [displayApps enumerateObjectsUsingBlock:^(NSString *appID, __unused NSUInteger index, __unused BOOL *stop) {
-        BOOL isClearAll = [appID isEqualToString:NFBClearAllID];
         NSUInteger rowIndex = [unreadScrollApps indexOfObject:appID];
         BOOL fixedRow = separateEdgeSections && [fixedApps containsObject:appID];
         self.suppressBadgeForFixedRow = fixedRow;
         if (fixedRow) rowIndex = [fixedApps indexOfObject:appID];
-        UIView *parent = isClearAll ? root : (fixedRow ? self.fixedBackgroundHost : self.rail);
+        UIView *parent = fixedRow ? self.fixedBackgroundHost : self.rail;
         NFBBubble *button = self.buttons[appID];
         BOOL fresh = !button;
         if (fresh) {
             button = [[NFBBubble alloc] initWithFrame:CGRectZero];
             button.appID = appID;
-            if (isClearAll) {
-                UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(clearAllTapped:)];
-                tap.numberOfTapsRequired = 1;
-                UILongPressGestureRecognizer *hold = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(clearAllHeld:)];
-                hold.minimumPressDuration = 0.5;
-                [tap requireGestureRecognizerToFail:hold];
-                [button addGestureRecognizer:hold];
-                [button addGestureRecognizer:tap];
-            } else {
-                UITapGestureRecognizer *singleTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(singleTapped:)];
-                singleTap.delegate = self;
-                __weak NFBBubble *weakBubble = button;
-                __weak typeof(self) weakManager = self;
-                button.tapHandler = ^{
-                    NFBBubble *strongBubble = weakBubble;
-                    if (strongBubble) [weakManager tapped:strongBubble];
-                };
-                UILongPressGestureRecognizer *hold = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(appHeld:)];
-                hold.minimumPressDuration = 0.45;
-                hold.cancelsTouchesInView = YES;
-                hold.delegate = self;
-                [singleTap requireGestureRecognizerToFail:hold];
-                [button addGestureRecognizer:singleTap];
-                [button addGestureRecognizer:hold];
-            }
+            UITapGestureRecognizer *singleTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(singleTapped:)];
+            singleTap.delegate = self;
+            __weak NFBBubble *weakBubble = button;
+            __weak typeof(self) weakManager = self;
+            button.tapHandler = ^{
+                NFBBubble *strongBubble = weakBubble;
+                if (strongBubble) [weakManager tapped:strongBubble];
+            };
+            UILongPressGestureRecognizer *hold = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(appHeld:)];
+            hold.minimumPressDuration = 0.45;
+            hold.cancelsTouchesInView = YES;
+            hold.delegate = self;
+            [singleTap requireGestureRecognizerToFail:hold];
+            [button addGestureRecognizer:singleTap];
+            [button addGestureRecognizer:hold];
             self.buttons[appID] = button;
             [parent addSubview:button];
             if (NFBDebugLoggingEnabled()) [self traceClearView:[NSString stringWithFormat:@"create %@ view=%p parent=%p", appID, button, parent]];
@@ -2595,29 +2528,24 @@ static NSString *NFBFrontmostAppID(void) {
             [parent addSubview:button];
             button.center = position;
         }
-        if (isClearAll) {
-            [self styleClearAllButton:button];
-
-        }
-        else [self updateBubble:button record:[self.store latestForApp:appID]];
+        [self updateBubble:button record:[self.store latestForApp:appID]];
         // A bubble we already started retracting must not be re-expanded by the
         // stale "window still visible" reading taken mid-transition.
         // edgeMode hides the rail and every bubble; animating them is pure cost and
         // leaves the model values jumping when they come back.
-        [button updateActiveMark:(!isClearAll && [active isEqualToString:appID])
+        [button updateActiveMark:[active isEqualToString:appID]
             diameter:diameter duration:(hideEdgeIcons ? 0 : layoutDuration)];
         CGAffineTransform target = CGAffineTransformIdentity;
         CGRect targetBounds = CGRectMake(0, 0, side, side);
         // Keep the same bottom-first app ordering on desktop and in split view.
-        // The clear action is appended last and therefore stays above all apps.
         NSUInteger parentRows = fixedRow ? fixedApps.count : rowCount;
-        CGFloat rowY = isClearAll ? side / 2 : NFBRowCenter(parentRows, rowIndex, step, side);
-        CGFloat corner = !isClearAll ? diameter * 0.23 : diameter / 2;
+        CGFloat rowY = NFBRowCenter(parentRows, rowIndex, step, side);
+        CGFloat corner = diameter * 0.23;
         // Rows are always placed at side/2 inside the column. The half-hidden
         // state moves the rail frame (and the control) once; adding a per-row
         // offset on top of that is what put rows at screenWidth + shift.
         CGFloat rowX = side / 2;
-        CGPoint targetCenter = isClearAll ? CGPointMake(CGRectGetMidX(railFrame), clearCenterY) : CGPointMake(rowX, rowY);
+        CGPoint targetCenter = CGPointMake(rowX, rowY);
         if (fresh) {
             button.bounds = targetBounds;
             button.center = targetCenter;
@@ -2627,16 +2555,7 @@ static NSString *NFBFrontmostAppID(void) {
             button.transform = CGAffineTransformMakeTranslation(side + 10, 0);
             button.alpha = 0;
         }
-        // The clear-all bubble is an action, not an app: keep it fully opaque so
-        // it stays discoverable, unlike the dimmed background bubbles around it.
-        // Every row keeps its own opacity; the half-hidden state dims the whole
-        // column (self.rail.alpha) instead, so no unread icon stays fully visible.
         CGFloat alpha = 1.0;
-        if (isClearAll) {
-            alpha = 1.0;
-        } else if ([active isEqualToString:appID]) {
-            alpha = 1.0;
-        }
         BOOL changed = fresh || fabs(button.imageView.layer.cornerRadius - corner) > 0.01 || !CGRectEqualToRect(button.bounds, targetBounds) ||
             !CGPointEqualToPoint(button.center, targetCenter) ||
             !CGAffineTransformEqualToTransform(button.transform, target) ||
@@ -2655,13 +2574,6 @@ static NSString *NFBFrontmostAppID(void) {
             // Nothing is visible; commit the model values without submitting an
             // animation that the compositor still has to commit.
             apply();
-        } else if (changed && isClearAll) {
-            // The clear-all bubble lives on the root view while its position is
-            // derived from the rail's target frame. Matching the rail's curve and
-            // duration keeps the two from visibly separating mid-transition.
-            [UIView animateWithDuration:layoutDuration delay:0
-                options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseInOut
-                animations:apply completion:nil];
         } else if (changed) {
             [UIView animateWithDuration:layoutDuration
                 delay:0 usingSpringWithDamping:1.0 initialSpringVelocity:0
@@ -2670,8 +2582,8 @@ static NSString *NFBFrontmostAppID(void) {
         }
         // Geometry first: the badge is derived from imageView.frame, so laying it
         // out before the icon size is committed put it outside the icon.
-        if (!isClearAll) [self layoutBadge:button diameter:diameter];
-        if (!isClearAll) {
+        [self layoutBadge:button diameter:diameter];
+        {
             unsigned long long version = button.badgeContentVersion;
             NSNumber *lastVersion = self.lastBadgeVersion[appID];
             if ((!lastVersion || lastVersion.unsignedLongLongValue != version) && button.badge.text.length) {

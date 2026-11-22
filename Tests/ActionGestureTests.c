@@ -21,11 +21,9 @@ static void check(bool condition, const char *message) {
 }
 
 int main(void) {
-    check(NFBBottomCloseVisible(true), "split keeps the bottom close control");
     for (int expanded = 0; expanded < 2; ++expanded)
         for (int unread = 0; unread < 3; ++unread) {
             (void)expanded; (void)unread;
-            check(!NFBBottomCloseVisible(false), "edge column has no bottom control at any count or expansion state");
         }
 
     // --- outside a split the control is the collapse control

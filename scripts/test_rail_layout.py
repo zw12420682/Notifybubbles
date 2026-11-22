@@ -98,11 +98,11 @@ if "isTracking" not in manager or "isDragging" not in manager:
 if "if (!NFBTrollVisibleApp().length) self.edgeExpanded = NO;" in manager:
     problems.append("tapping an app must not fold the expanded column")
 
-# 7. Only a split has a bottom close key; edge states never do.
-if "BOOL showClearAll = NFBBottomCloseVisible(split);" not in manager:
-    problems.append("bottom close button must be split-only")
-if "double bottomControlSpace = split ? side + 9 : 0;" not in read("Sources/NFBRailLayout.h"):
-    problems.append("edge columns must not reserve a bottom close-key row")
+# 7. No bottom close key or reserved slot; collapsed background shows five rows.
+if 'NFBClearAllID' in manager or 'bottomControlSpace' in read('Sources/NFBRailLayout.h'):
+    problems.append('removed close key must not reserve a slot')
+if '#define NFBBackgroundVisibleRows 5' not in read('Sources/NFBEdgeSections.h'):
+    problems.append('background viewport should allow five visible rows')
 
 # 8. No new independent edge control: only the one desktop-action button.
 if manager.count("desktopActionButton = button;") != 1:
@@ -224,7 +224,7 @@ if "beginFromCurrentState" in manager and "BeginFromCurrentState" not in manager
     problems.append("animations must use UIViewAnimationOptionBeginFromCurrentState")
 if "badgeContentVersion" not in manager:
     problems.append("the badge may only animate when its content changed")
-if "if (!isClearAll) [self layoutBadge:button diameter:diameter];" not in manager:
+if "[self layoutBadge:button diameter:diameter];" not in manager:
     problems.append("the badge must be laid out after the icon geometry")
 if "NFBBadgeFrame(" not in manager:
     problems.append("the badge rect must come from the shared inside-the-icon helper")

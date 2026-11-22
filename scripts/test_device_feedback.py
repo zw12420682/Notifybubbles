@@ -2,9 +2,6 @@ from pathlib import Path
 import shutil,subprocess,tempfile
 r=Path(__file__).resolve().parents[1]
 w=(r/'Sources/NFBWindowControls.m').read_text();m=(r/'Sources/NFBManager.m').read_text()
-x=m.split('- (void)clearAllTapped:',1)[1].split('- (NFBActionMode)desktopActionMode',1)[0]
-assert 'if (!NFBMovieOwnsDesktopSession()) [NFBSplitCoordinator.shared closeDesktop];' in x
-assert x.index('NFBMovieOwnsDesktopSession') < x.index('closeCurrentWindow')
 launch=m.split('- (void)tapped:(NFBBubble *)button {',1)[1].split('- (void)showOpenNotice:',1)[0]
 keep=launch.split('if (NFBMovieOwnsDesktopSession()) {',1)[1].split('} else [NFBSplitCoordinator.shared closeDesktop];',1)[0]
 assert 'beginUserWindowOperation' in keep and 'closeDesktop' not in keep and 'Parked(' not in keep
@@ -26,4 +23,4 @@ with tempfile.TemporaryDirectory() as tmp:
  out=str(Path(tmp)/'geometry')
  subprocess.run([shutil.which('clang') or 'cc','-std=c11','-Wall','-Wextra','-Werror','-I',str(r/'Sources'),str(r/'Tests/MovieGeometryPolicyTests.c'),'-lm','-o',out],check=True)
  subprocess.run([out],check=True)
-print('PASS: split X keeps owned movie session; close geometry never enters reference/anchor/attempt state')
+print('PASS: bubble launch keeps owned movie session; close geometry never enters reference/anchor/attempt state')
