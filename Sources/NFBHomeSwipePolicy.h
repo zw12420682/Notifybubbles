@@ -18,6 +18,8 @@ static inline bool NFBHomeSwipeCanCapture(double x, double y, double vx, double 
     if (fabs(x)<=1 && fabs(y)<=1)
         return (vy < -20 && -vy > fabs(vx)) ||
             (fabs(vx)<20 && vy<=0 && distance>0 && velocity>0);
+    if (y <= -1 && vy <= -10 && distance > 0 && velocity >= 10 &&
+        fabs(x) <= 8 && fabs(x) <= 8*(-y)) return true;
     return y < -1 && vy < -20 && distance>0 && velocity>0 &&
         fabs(x)<=24 && fabs(x)<=8*(-y);
 }

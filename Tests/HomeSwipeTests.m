@@ -175,7 +175,8 @@ static void NFBRunHomeSwipeTests(UIWindow *host) {
     [manager grabberTongueEndedPulling:tongue withDistance:50 andVelocity:100 andGesture:pan];
     NFBCheck(closeCalls==2 && originalCalls==native+2,@"zero translation began and gentle 50pt swipe close immediately");
     double samples[][6]={{15,-5,449.88,-149.96,20,150},
-        {-6,-5.6667,-60.1178,-56.778,20.7,56.8},{5,-5,85.853,-85.853,20,85.9}};
+        {-6,-5.6667,-60.1178,-56.778,20.7,56.8},{5,-5,85.853,-85.853,20,85.9},
+        {-8,-1,-120.04,-15,19.7,15},{5.3333,-1.3333,64.017,-16.004,18.3,16}};
     for (NSUInteger i=0;i<3;++i) {
         pan.fixtureState=UIGestureRecognizerStateBegan;
         pan.fixtureTranslation=CGPointMake(samples[i][0],samples[i][1]);
