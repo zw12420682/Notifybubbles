@@ -372,9 +372,13 @@ UIView *NFBHomeSwipeCloseWindow(void) {
     if (!NSThread.isMainThread) return nil;
     @try {
         NFBOpenWindowObservation *observation = NFBCaptureOpenWindows();
-        UIView *window = currentWindow();
-        if (![observation.windows containsObject:window])
-            window = observation.windows.count == 1 ? observation.windows.firstObject : nil;
+        // A bottom swipe is only for portrait panes; the movie X owns the
+        // upper close action. Never fall back to a lone landscape window.
+        UIView *window = observation.portrait;
+        if (![observation.windows containsObject:window] || [observation.landscapeWindows containsObject:window] ||
+            NFBExpandedWindowKind(boolStateOf(window,@"miniWindowModeEnabled"),
+                boolStateOf(window,@"isTransitioningFromMiniMode"),
+                orientationOf(window,@"sceneOrientation"),orientationOf(window,@"containerOrientation"))!=1) return nil;
         if (!window || !visibleView(window) ||
             boolStateOf(window, @"miniWindowModeEnabled") != 0 ||
             boolStateOf(window, @"isTransitioningFromMiniMode") != 0 ||

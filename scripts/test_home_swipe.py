@@ -19,6 +19,10 @@ for guard in ('deckGrabberTongue','homeGestureBottomEdgeRecognizer','edgePullGes
     assert guard in s,guard
 strict=w.split('BOOL NFBCloseHomeSwipeWindow(UIView *window) {',1)[1].split('BOOL NFBCloseCurrentSplit(void) {',1)[0]
 assert 'NFBHomeSwipeCloseWindow() != window' in strict
+controls=w
+select=controls.split('UIView *NFBHomeSwipeCloseWindow(void)',1)[1].split('BOOL NFBCloseHomeSwipeWindow',1)[0]
+assert 'window = observation.portrait' in select and 'observation.landscapeWindows containsObject:window' in select
+assert 'NFBExpandedWindowKind(' in select and 'observation.windows.firstObject' not in select
 assert 'NFBDispatchRightEdgeTap(window, tap)' in strict
 assert 'beginUserWindowOperation' in strict
 for forbidden in ('closeCurrentFloatingWindow','closeWindowWithoutTerminating','NFBCloseCurrentSplit(',
