@@ -1097,8 +1097,8 @@ static NSString *NFBFrontmostAppID(void) {
         UIButton *button=[UIButton buttonWithType:UIButtonTypeSystem];
         [button setImage:[UIImage systemImageNamed:@"xmark"] forState:UIControlStateNormal];
         button.imageView.contentMode=UIViewContentModeScaleAspectFit;
-        button.tintColor=UIColor.systemRedColor;
-        button.backgroundColor=UIColor.secondarySystemBackgroundColor;
+        button.tintColor=UIColor.whiteColor;
+        button.backgroundColor=UIColor.clearColor;
         button.accessibilityLabel=@"关闭上方横屏";
         [button addTarget:self action:@selector(movieUpperCloseTapped) forControlEvents:UIControlEventTouchUpInside];
         [button addTarget:self action:@selector(movieUpperCloseDown) forControlEvents:UIControlEventTouchDown];
@@ -1106,7 +1106,6 @@ static NSString *NFBFrontmostAppID(void) {
         [root addSubview:button];
     }
     self.movieUpperCloseButton.frame=box;
-    self.movieUpperCloseButton.layer.cornerRadius=self.desktopActionButton.imageView.layer.cornerRadius;
     [self.movieUpperCloseButton setPreferredSymbolConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:side*0.48 weight:UIImageSymbolWeightSemibold] forImageInState:UIControlStateNormal];
     self.movieUpperCloseButton.hidden=NO;
     [root bringSubviewToFront:self.movieUpperCloseButton];
