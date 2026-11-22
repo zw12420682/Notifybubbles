@@ -49,7 +49,8 @@ typedef NS_ENUM(NSUInteger, NFBDesktopMutationPhase) {
 @property(nonatomic) CFTimeInterval lastInteractionScan;
 @property(nonatomic,strong) NSHashTable<UIView *> *knownInteractiveViews;
 @property(nonatomic,weak) UIWindow *previousKeyWindow;
-@property(nonatomic) CGFloat originalWindowLevel, originalWindowAlpha;
+@property(nonatomic) CGFloat originalWindowLevel, originalWindowAlpha, hostedWindowLevel;
+@property(nonatomic) BOOL loweredForMoviePark;
 @property(nonatomic) BOOL originalWindowHidden, originalWindowInteraction, windowMutated;
 @property(nonatomic,strong) UIColor *originalWindowColor;
 @property(nonatomic) BOOL originalWindowOpaque;
@@ -114,9 +115,17 @@ void NFBSetMovieDesktopParked(NSUInteger identifier, BOOL parked) {
         // desktop subtree attached. The existing hit hook returns nil below.
         [active.panel.layer removeAllAnimations];
         active.panel.hidden=YES; active.panel.userInteractionEnabled=NO;
+        active.backgroundFrost.hidden=YES;
+        // The home host must not remain above the now-unleased Open windows.
+        active.loweredForMoviePark=active.window.windowLevel==active.hostedWindowLevel;
+        if (active.loweredForMoviePark) active.window.windowLevel=active.originalWindowLevel;
         if (active.window.isKeyWindow && active.previousKeyWindow && !active.previousKeyWindow.hidden)
             [active.previousKeyWindow makeKeyWindow];
     } else {
+        if (active.loweredForMoviePark && active.window.windowLevel==active.originalWindowLevel)
+            active.window.windowLevel=active.hostedWindowLevel;
+        active.loweredForMoviePark=NO;
+        active.backgroundFrost.hidden=NO;
         // No re-transplant, refresh, focus acquisition or opening animation.
         [UIView performWithoutAnimation:^{
             active.panel.transform=CGAffineTransformIdentity; active.panel.alpha=1;
@@ -124,6 +133,8 @@ void NFBSetMovieDesktopParked(NSUInteger identifier, BOOL parked) {
         }];
     }
     NFBDebugLog(@"movie-desktop: session=%lu parked=%d",(unsigned long)identifier,parked);
+    NFBDebugLog(@"movie-desktop: host level=%.1f original=%.1f hosted=%.1f key=%d",
+        active.window.windowLevel,active.originalWindowLevel,active.hostedWindowLevel,active.window.isKeyWindow);
 }
 static UIScrollView *NFBDesktopPager(UIView *desktop);
 static void NFBLogWidgetHosts(UIView *view, NSUInteger depth, NSUInteger *budget);
@@ -1362,7 +1373,8 @@ BOOL NFBShowDesktopInSplit(UIView *anchor) {
             sibling.hidden=YES;
         }
         window.backgroundColor=UIColor.clearColor; window.opaque=NO;
-        window.windowLevel = MAX(anchor.window.windowLevel + 2, UIWindowLevelStatusBar + 1);
+        next.hostedWindowLevel = MAX(anchor.window.windowLevel + 2, UIWindowLevelStatusBar + 1);
+        window.windowLevel = next.hostedWindowLevel;
         window.alpha = 1; window.userInteractionEnabled = YES; window.hidden = NO;
         [window bringSubviewToFront:panel];
         [next activateDesktop];

@@ -292,9 +292,11 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
         Check(desktop.window.isKeyWindow,@"touch activation gives native desktop focus");
         NSUInteger retainedSession=NFBDesktopSessionIdentifier();
         UIView *retainedParent=desktop.superview;
+        CGFloat hostedLevel=nativeWindow.windowLevel;
         for (NSUInteger cycle=0;cycle<3;++cycle) {
             NFBSetMovieDesktopParked(retainedSession,YES);
             Check(NFBMovieDesktopParked() && NFBDesktopSplitActive(),@"park keeps movie desktop session alive");
+            Check(nativeWindow.windowLevel==nativeLevel,@"park returns home to native stacking level");
             Check(panel.hidden && !panel.userInteractionEnabled,@"park hides only desktop panel");
             Check([nativeWindow hitTest:point withEvent:nil]==nil,@"parked desktop cannot eat lower app touches");
             Check(!nativeWindow.isKeyWindow,@"parked desktop releases native focus");
@@ -304,6 +306,7 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
             NFBSetMovieDesktopParked(retainedSession+1,NO);
             Check(NFBMovieDesktopParked(),@"stale session cannot resume parked desktop");
             NFBSetMovieDesktopParked(retainedSession,NO);
+            Check(nativeWindow.windowLevel==hostedLevel,@"resume restores the hosted stacking level");
             Check(!NFBMovieDesktopParked() && !panel.hidden && panel.userInteractionEnabled,
                 @"resume restores same desktop without opening animation");
             Check(NFBDesktopSessionIdentifier()==retainedSession && desktop.superview==retainedParent,
