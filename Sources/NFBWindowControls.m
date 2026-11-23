@@ -368,14 +368,18 @@ void NFBRecheckSplitPlacement(void) {
 
 // Unlike the existing button path, the home swipe never uses a global bridge
 // or a direct-close fallback: capability must be proven BEFORE owning the pull.
+static BOOL NFBMovieProtectsSwipeTarget(UIView *window);
 UIView *NFBHomeSwipeCloseWindow(void) {
     if (!NSThread.isMainThread) return nil;
     @try {
         NFBOpenWindowObservation *observation = NFBCaptureOpenWindows();
-        // A bottom swipe is only for portrait panes; the movie X owns the
-        // upper close action. Never fall back to a lone landscape window.
-        UIView *window = observation.portrait;
-        if (!window || ![observation.windows containsObject:window] || [observation.landscapeWindows containsObject:window] ||
+        // Require agreement between Open's current instance and the layout.
+        // attachmentWindow may fall back to a different visible portrait when
+        // the current pane is opening or changing orientation. Never close it.
+        UIView *window = currentWindow();
+        if (!window || !observation.classAvailable || !observation.sceneAvailable || window!=observation.portrait ||
+            ![observation.windows containsObject:window] || [observation.landscapeWindows containsObject:window] ||
+            NFBMovieProtectsSwipeTarget(window) ||
             NFBExpandedWindowKind(boolStateOf(window,@"miniWindowModeEnabled"),
                 boolStateOf(window,@"isTransitioningFromMiniMode"),
                 orientationOf(window,@"sceneOrientation"),orientationOf(window,@"containerOrientation"))!=1) return nil;
@@ -505,6 +509,11 @@ BOOL NFBMovieOwnsDesktopSession(void) {
 static NFBSplitObservationTracker movieObservation;
 static NSHashTable<UIView *> *movieLastLandscape;
 static BOOL movieHadLandscape;
+static BOOL NFBMovieProtectsSwipeTarget(UIView *window) {
+    // A briefly portrait-looking sample during a movie handoff does not
+    // turn the last confirmed upper window into a bottom swipe target.
+    return movieHadLandscape && [movieLastLandscape containsObject:window];
+}
 static CGRect movieLowerScreen;
 
 BOOL NFBCloseMovieUpperWindow(UIView *target) {
