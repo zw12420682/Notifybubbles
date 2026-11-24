@@ -6,7 +6,11 @@ assert 'NFBStowCanBegin' in f and 'NFBStowMustRestore' not in m
 assert 'self.railWasExpandedBeforeStow=self.edgeExpanded' in f
 assert 'self.railFullyStowed=YES' in f and 'self.railFullyStowed=NO' in f
 assert 'self.edgeExpanded=self.railWasExpandedBeforeStow' in f
-assert 'chevron.left' in m and 'CGPointMake(w,MAX(32' in m
+assert 'chevron.left' in f and 'visibleWidth=CGRectGetWidth(tile)*0.25' in f
+assert 'centerX=w+CGRectGetMidX(self.railStowHandle.bounds)-tileLeft-visibleWidth' in f
+assert 'swipe.direction=UISwipeGestureRecognizerDirectionLeft' in f
+assert '[tap requireGestureRecognizerToFail:swipe]' in f
+assert 'gesture.view==self.railStowHandle' in f
 assert 'installStowSwipeOnView' not in m and 'stowSwipes' not in m
 assert 'railStowSwipeRecognized' not in m
 h=m[m.index('- (void)desktopActionHeld:(UILongPressGestureRecognizer *)gesture {'):m.index('- (void)backgroundUnfoldSwiped:(UISwipeGestureRecognizer *)gesture {')]

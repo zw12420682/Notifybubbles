@@ -10,7 +10,7 @@ assert 'if (self.movieActive && [self.backend desktopActive]) return YES;' in c
 assert 'NFBStowMustRestore' not in m
 # Only the explicit restore action clears stow; scene changes cannot clear it.
 assert m.count('self.railFullyStowed=NO')==1
-assert 'CGPointMake(w,MAX(32' in m
+assert 'CGPointMake(centerX,MAX(32' in m
 assert m.index('[splitCore reconcile]') < m.index('if (self.railFullyStowed && ![self isLocked])')
 assert 'stowSwipes' not in m and 'installStowSwipe' not in m
 print('PASS: automatic landscape, no independent switch or double tap, stow retained across scenes, half-visible restore handle')

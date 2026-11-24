@@ -933,6 +933,10 @@ static NSString *NFBFrontmostAppID(void) {
 - (void)railStowHandleTapped:(UITapGestureRecognizer *)gesture {
     if (gesture.state==UIGestureRecognizerStateEnded) [self restoreStowedRail];
 }
+- (void)railStowHandleSwiped:(UISwipeGestureRecognizer *)gesture {
+    if (gesture.state==UIGestureRecognizerStateRecognized && gesture.view==self.railStowHandle)
+        [self restoreStowedRail];
+}
 - (void)restoreStowedRail {
     if (!self.railFullyStowed || !self.enabled || [self isLocked]) return;
     self.railFullyStowed=NO;
@@ -952,14 +956,22 @@ static NSString *NFBFrontmostAppID(void) {
         handle.layer.shadowPath=[UIBezierPath bezierPathWithRoundedRect:handle.imageView.frame cornerRadius:8].CGPath;
         __weak NFBManager *weakSelf=self;
         handle.tapHandler=^{ [weakSelf restoreStowedRail]; };
-        handle.imageView.image=[UIImage systemImageNamed:@"chevron.left"];
-        handle.imageView.contentMode=UIViewContentModeCenter;
+        UIImageView *arrow=[[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"chevron.left"]];
+        arrow.frame=CGRectMake(2,12,5,10);
+        arrow.contentMode=UIViewContentModeScaleAspectFit;
+        arrow.tintColor=UIColor.systemBlueColor;
+        arrow.userInteractionEnabled=NO;
+        [handle.imageView addSubview:arrow];
         handle.imageView.tintColor=UIColor.systemBlueColor;
         handle.imageView.backgroundColor=UIColor.secondarySystemBackgroundColor;
         handle.accessibilityTraits=UIAccessibilityTraitButton;
         handle.accessibilityLabel=@"展开收纳的图标栏";
-        handle.accessibilityHint=@"点按恢复收纳前的图标栏状态";
+        handle.accessibilityHint=@"点按或向左滑，恢复收纳前的图标栏状态";
         UITapGestureRecognizer *tap=[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(railStowHandleTapped:)];
+        UISwipeGestureRecognizer *swipe=[[UISwipeGestureRecognizer alloc] initWithTarget:self action:@selector(railStowHandleSwiped:)];
+        swipe.direction=UISwipeGestureRecognizerDirectionLeft;
+        [tap requireGestureRecognizerToFail:swipe];
+        [handle addGestureRecognizer:swipe];
         [handle addGestureRecognizer:tap];
         self.railStowHandle=handle;
         [self.window addSubview:handle];
@@ -967,7 +979,11 @@ static NSString *NFBFrontmostAppID(void) {
     CGFloat w=self.window.bounds.size.width;
     CGFloat y=isfinite(self.railStowCenterY)?self.railStowCenterY:CGRectGetMidY(self.window.bounds);
     self.railStowHandle.bounds=CGRectMake(0,0,48,48);
-    self.railStowHandle.center=CGPointMake(w,MAX(32,MIN(self.window.bounds.size.height-32,y)));
+    // Show a quarter of the visible tile, excluding its transparent padding.
+    CGRect tile=self.railStowHandle.imageView.frame;
+    CGFloat tileLeft=CGRectGetMinX(tile), visibleWidth=CGRectGetWidth(tile)*0.25;
+    CGFloat centerX=w+CGRectGetMidX(self.railStowHandle.bounds)-tileLeft-visibleWidth;
+    self.railStowHandle.center=CGPointMake(centerX,MAX(32,MIN(self.window.bounds.size.height-32,y)));
     self.railStowHandle.hidden=NO;
     self.railStowHandle.alpha=1;
     [self.window bringSubviewToFront:self.railStowHandle];
