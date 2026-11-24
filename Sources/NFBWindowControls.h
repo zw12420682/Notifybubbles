@@ -29,6 +29,7 @@ CGRect NFBWindowFrameInView(UIView *window, UIView *root);
 BOOL NFBUpdateMovieMode(BOOL enabled);
 BOOL NFBMovieOwnsDesktopSession(void);
 void NFBObserveNativePiP(void);
+void NFBUpdateNativePiPPlacement(BOOL allowed);
 BOOL NFBCloseMovieUpperWindow(UIView *target);
 BOOL NFBReplaceObservedSplitWithDesktop(UIView *window);
 

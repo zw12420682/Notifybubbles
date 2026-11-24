@@ -586,6 +586,7 @@ static const CFTimeInterval kTickReconcileInterval = 2.0;
     [favoriteOrder addObjectsFromArray:selected.array];
     self.favoriteApps = favoriteOrder.array;
     if (!self.enabled) {
+        NFBUpdateNativePiPPlacement(NO);
         [NFBSplitCoordinator.shared closeDesktop];
         NFBSetCaptureHidden(self.window.rootViewController.view, NO);
         [self.timer invalidate]; self.timer = nil; [self clear];
@@ -1402,7 +1403,7 @@ static NSString *NFBFrontmostAppID(void) {
     if (!self.enabled) return;
     // Same reasoning as floatingWatchFired: private SpringBoard calls here must
     // never propagate out into the runloop.
-    @try { [self tickBody]; NFBObserveNativePiP(); }
+    @try { [self tickBody]; NFBUpdateNativePiPPlacement(![self isLocked]); NFBObserveNativePiP(); }
     @catch (NSException *error) { NFBErrorLog(@"tick failed: %@", error); }
 }
 - (void)tickBody {
@@ -1703,6 +1704,7 @@ static NSString *NFBFrontmostAppID(void) {
     if (button.imageView.image != resolved) button.imageView.image = resolved;
 }
 - (void)updatePrivacy {
+    if (!self.enabled || [self isLocked]) NFBUpdateNativePiPPlacement(NO);
     NFBUpdateDesktopReturnTransition(self.enabled && ![self isLocked] &&
         NFBCurrentWindowState().home && !NFBDesktopSplitActive());
     NFBObserveHomeWidgetLockDiagnostics([self isLocked], self.enabled);

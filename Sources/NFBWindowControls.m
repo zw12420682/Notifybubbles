@@ -669,6 +669,93 @@ NFBOpenWindowObservation *NFBCaptureOpenWindows(void) {
     if ([windows containsObject:portrait] && !movieLandscape(portrait)) observation.portrait=portrait;
     return observation;
 }
+// The system host is fullscreen. Move only the device-verified PiP container
+// using one view transform so UIKit moves the content and its hit region together.
+static __weak UIView *nfbPiPTarget, *nfbPiPParent, *nfbPiPYielded;
+static __weak UIWindow *nfbPiPWindow;
+static CGAffineTransform nfbPiPApplied;
+static CGPoint nfbPiPBaseCenter;
+static CGSize nfbPiPBaseSize;
+static void NFBReleasePiPPlacement(void) {
+    UIView *view=nfbPiPTarget;
+    if (view && CGAffineTransformEqualToTransform(view.transform,nfbPiPApplied))
+        [UIView performWithoutAnimation:^{ view.transform=CGAffineTransformIdentity; }];
+    nfbPiPTarget=nil; nfbPiPParent=nil; nfbPiPWindow=nil;
+}
+static UIView *NFBFindNativePiP(UIWindowScene *scene) {
+    UIView *found=nil;
+    for (UIWindow *window in scene.windows) {
+        if (window.hidden || window.alpha<0.01 || !window.userInteractionEnabled ||
+            ![NSStringFromClass(window.class) isEqualToString:@"SBPictureInPictureWindow"] ||
+            ![NSStringFromClass(window.rootViewController.class) isEqualToString:@"SBPIPContainerViewController"]) continue;
+        NSMutableArray<UIView *> *queue=[NSMutableArray arrayWithObject:window];
+        for (NSUInteger i=0;i<queue.count;i++) {
+            UIView *view=queue[i];
+            if (view.hidden || view.alpha<0.01) continue;
+            if ([NSStringFromClass(view.class) isEqualToString:@"_PGPictureInPictureContainerView"] &&
+                [NSStringFromClass(view.superview.class) isEqualToString:@"PGHitTestExtendableView"]) {
+                if (found) return nil;
+                found=view;
+                continue;
+            }
+            for (UIView *child in view.subviews) { if (queue.count>=64) break; [queue addObject:child]; }
+        }
+    }
+    return found;
+}
+void NFBUpdateNativePiPPlacement(BOOL allowed) {
+    if (!NSThread.isMainThread) return;
+    if (!allowed || movieIsActive) { NFBReleasePiPPlacement(); nfbPiPYielded=nil; return; }
+    // Cheap screen/host gate before scanning Open, including hosts not in the
+    // same scene as our status overlay. Ambiguous hosts are left alone.
+    UIView *view=nil;
+    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+        if (![scene isKindOfClass:UIWindowScene.class] || scene.activationState!=UISceneActivationStateForegroundActive) continue;
+        UIView *candidate=NFBFindNativePiP((UIWindowScene *)scene);
+        if (candidate && view) { view=nil; break; }
+        if (candidate) view=candidate;
+    }
+    if (!view) { NFBReleasePiPPlacement(); nfbPiPYielded=nil; return; }
+    NFBOpenWindowObservation *observation=NFBCaptureOpenWindows();
+    UIView *lower=observation.portrait;
+    UIWindow *host=view.window;
+    if (!observation.classAvailable || !observation.sceneAvailable || observation.windows.count!=1 ||
+        observation.landscapeWindows.count || !lower.window || lower!=currentWindow() ||
+        NFBExpandedWindowKind(boolStateOf(lower,@"miniWindowModeEnabled"),boolStateOf(lower,@"isTransitioningFromMiniMode"),
+            orientationOf(lower,@"sceneOrientation"),orientationOf(lower,@"containerOrientation"))!=1 ||
+        !host || host.windowScene.screen!=lower.window.windowScene.screen) {
+        NFBReleasePiPPlacement(); nfbPiPYielded=nil; return;
+    }
+    if (view==nfbPiPYielded) return;
+    UIView *parent=view.superview;
+    if (nfbPiPTarget && (view!=nfbPiPTarget || parent!=nfbPiPParent || host!=nfbPiPWindow ||
+        !CGPointEqualToPoint(view.center,nfbPiPBaseCenter) || !CGSizeEqualToSize(view.bounds.size,nfbPiPBaseSize) ||
+        !CGAffineTransformEqualToTransform(view.transform,nfbPiPApplied))) {
+        // System drag, resize, morph or reparent supersedes our placement.
+        nfbPiPYielded=view; NFBReleasePiPPlacement(); return;
+    }
+    if (!nfbPiPTarget && !CGAffineTransformIsIdentity(view.transform)) return;
+    if (!CGPointEqualToPoint(view.layer.anchorPoint,CGPointMake(0.5,0.5))) { NFBReleasePiPPlacement(); return; }
+    CGRect area=host.bounds;
+    CGRect lowerFrame=[lower convertRect:lower.bounds toView:host];
+    if (area.size.width>=area.size.height || !NFBMovieValidLower(lowerFrame,area)) { NFBReleasePiPPlacement(); return; }
+    // Use the actual lower top (including keyboard adjustments). System safe
+    // insets protect controls while the horizontal axis stays screen-centered.
+    CGFloat top=CGRectGetMinY(area)+host.safeAreaInsets.top;
+    CGRect band=CGRectMake(CGRectGetMinX(area)+4,top,area.size.width-8,CGRectGetMinY(lowerFrame)-4-top);
+    if (band.size.height<64) { NFBReleasePiPPlacement(); return; }
+    CGRect local=[parent convertRect:band fromView:host];
+    CGSize size=view.bounds.size;
+    CGFloat scale=NFBPiPFitScale(size.width,size.height,local.size.width,local.size.height);
+    if (scale<0.35) { NFBReleasePiPPlacement(); return; }
+    CGAffineTransform fitted=CGAffineTransformMake(scale,0,0,scale,
+        CGRectGetMidX(local)-view.center.x,CGRectGetMidY(local)-view.center.y);
+    if (CGAffineTransformEqualToTransform(view.transform,fitted)) return;
+    [UIView performWithoutAnimation:^{ view.transform=fitted; }];
+    nfbPiPTarget=view; nfbPiPParent=parent; nfbPiPWindow=host;
+    nfbPiPApplied=fitted; nfbPiPBaseCenter=view.center; nfbPiPBaseSize=size;
+    NFBDebugLog(@"native-pip: upper fit scale=%.3f band=%@",scale,NSStringFromCGRect(band));
+}
 static void movieRestore(UIView *view) {
     NFBMovieRecord *record = [movieRecords objectForKey:view];
     if (!record) return;

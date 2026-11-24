@@ -7,6 +7,11 @@ static inline double NFBMoviePaneHeight(double aw,double ah) {
     return NFBMoviePortraitScale*fmin(ah,aw*16.0/9.0);
 }
 
+static inline double NFBPiPFitScale(double width,double height,double roomWidth,double roomHeight) {
+    if (!isfinite(width)||!isfinite(height)||!isfinite(roomWidth)||!isfinite(roomHeight)||
+        width<=0||height<=0||roomWidth<=0||roomHeight<=0) return 0;
+    return fmin(1,fmin(roomWidth/width,roomHeight/height));
+}
 static inline bool NFBMovieLowerGeometryValid(double x,double y,double w,double h,
     double ax,double ay,double aw,double ah) {
     return isfinite(x)&&isfinite(y)&&isfinite(w)&&isfinite(h)&&
