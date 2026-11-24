@@ -1,0 +1,29 @@
+name: SpringBoard folder probe
+on:
+  push:
+    branches: [fix/transfer-folder-probe]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and validate signed arm64e dylib
+        run: |
+          set -euo pipefail
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          mkdir out
+          xcrun --sdk iphoneos clang -target arm64e-apple-ios16.0 -isysroot "$SDK" -dynamiclib -O2 -Wall -Wextra -Werror -install_name '@rpath/NFBTransferFolderProbe.dylib' NFBTransferFolderProbe.c -o out/NFBTransferFolderProbe.dylib
+          xcrun lipo -verify_arch arm64e out/NFBTransferFolderProbe.dylib
+          codesign --force --sign - --timestamp=none out/NFBTransferFolderProbe.dylib
+          codesign --verify --strict out/NFBTransferFolderProbe.dylib
+          otool -hv out/NFBTransferFolderProbe.dylib
+          otool -L out/NFBTransferFolderProbe.dylib
+      - uses: actions/upload-artifact@v4
+        with:
+          name: folder-probe-dylib
+          path: out/NFBTransferFolderProbe.dylib
+          if-no-files-found: error
+          retention-days: 7
