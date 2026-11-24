@@ -7,6 +7,12 @@ static inline double NFBMoviePaneHeight(double aw,double ah) {
     return NFBMoviePortraitScale*fmin(ah,aw*16.0/9.0);
 }
 
+static inline bool NFBPiPStableEnough(double age) {
+    return isfinite(age) && age>=0.45;
+}
+static inline bool NFBPiPCanRetryReset(bool retried,double age) {
+    return !retried && isfinite(age) && age>=0 && age<=2.0;
+}
 static inline double NFBPiPFitScale(double width,double height,double roomWidth,double roomHeight) {
     if (!isfinite(width)||!isfinite(height)||!isfinite(roomWidth)||!isfinite(roomHeight)||
         width<=0||height<=0||roomWidth<=0||roomHeight<=0) return 0;

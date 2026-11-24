@@ -2,6 +2,9 @@
 #include <assert.h>
 #include <stdio.h>
 int main(void) {
+    if (NFBPiPStableEnough(0.1) || !NFBPiPStableEnough(0.5) ||
+        !NFBPiPCanRetryReset(false,1.5) || NFBPiPCanRetryReset(true,1.5) ||
+        NFBPiPCanRetryReset(false,2.1)) return 1;
     if (fabs(NFBPiPFitScale(368,276,382,244)-244.0/276)>0.00001 ||
         NFBPiPFitScale(160,90,382,244)!=1 || NFBPiPFitScale(368,276,382,-1)!=0) return 1;
     if (fabs(NFBMoviePaneHeight(390,844)-596.2666666667)>0.001) return 1;
