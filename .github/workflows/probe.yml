@@ -1,0 +1,29 @@
+name: SpringBoard drag probe
+on:
+  push:
+    branches: [fix/transfer-drag-probe]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and validate signed arm64e dylib
+        run: |
+          set -euo pipefail
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          mkdir out
+          xcrun --sdk iphoneos clang -target arm64e-apple-ios16.0 -isysroot "$SDK" -dynamiclib -fobjc-arc -framework UIKit -framework Foundation -framework QuartzCore -O2 -Wall -Wextra -Werror -install_name '@rpath/NFBTransferDragProbe.dylib' NFBTransferDragProbe.m -o out/NFBTransferDragProbe.dylib
+          test "$(xcrun lipo -archs out/NFBTransferDragProbe.dylib)" = arm64e
+          codesign --force --sign - --timestamp=none out/NFBTransferDragProbe.dylib
+          codesign --verify --strict out/NFBTransferDragProbe.dylib
+          otool -hv out/NFBTransferDragProbe.dylib
+          otool -L out/NFBTransferDragProbe.dylib
+      - uses: actions/upload-artifact@v4
+        with:
+          name: drag-probe-dylib
+          path: out/NFBTransferDragProbe.dylib
+          if-no-files-found: error
+          retention-days: 7
