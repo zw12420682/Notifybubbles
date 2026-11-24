@@ -16,7 +16,7 @@ jobs:
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
           mkdir out
           xcrun --sdk iphoneos clang -target arm64e-apple-ios16.0 -isysroot "$SDK" -dynamiclib -O2 -Wall -Wextra -Werror -install_name '@rpath/NFBTransferFolderProbe.dylib' NFBTransferFolderProbe.c -o out/NFBTransferFolderProbe.dylib
-          xcrun lipo -verify_arch arm64e out/NFBTransferFolderProbe.dylib
+          test "$(xcrun lipo -archs out/NFBTransferFolderProbe.dylib)" = arm64e
           codesign --force --sign - --timestamp=none out/NFBTransferFolderProbe.dylib
           codesign --verify --strict out/NFBTransferFolderProbe.dylib
           otool -hv out/NFBTransferFolderProbe.dylib
