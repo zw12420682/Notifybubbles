@@ -31,6 +31,53 @@ static BOOL movieIsActive;
 static CGRect portraitRailReference;
 static CGSize portraitRailScreen;
 static __weak UIView *portraitRailRoot;
+static BOOL NFBPiPClassHint(id object) {
+    if (!object) return NO;
+    NSString *name=NSStringFromClass([object class]);
+    return [name rangeOfString:@"PictureInPicture" options:NSCaseInsensitiveSearch].location!=NSNotFound ||
+        [name hasPrefix:@"PGPiP"] || [name hasPrefix:@"PGPicture"] || [name hasPrefix:@"AVPiP"] ||
+        [name hasPrefix:@"SBPiP"] || [name hasPrefix:@"AVPicture"] || [name hasPrefix:@"PGHostedWindow"];
+}
+void NFBObserveNativePiP(void) {
+    if (!NSThread.isMainThread || !NFBDebugLoggingEnabled()) return;
+    static CFTimeInterval lastSample;
+    static NSArray<NSString *> *last;
+    CFTimeInterval now=CACurrentMediaTime();
+    if (now-lastSample<1) return;
+    lastSample=now;
+    NSMutableOrderedSet<UIWindow *> *windows=[NSMutableOrderedSet orderedSet];
+    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes)
+        if ([scene isKindOfClass:UIWindowScene.class] && scene.activationState!=UISceneActivationStateUnattached)
+            [windows addObjectsFromArray:((UIWindowScene *)scene).windows];
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    [windows addObjectsFromArray:UIApplication.sharedApplication.windows];
+#pragma clang diagnostic pop
+    NSMutableArray<NSString *> *rows=[NSMutableArray array];
+    NSUInteger total=0;
+    for (UIWindow *window in windows) {
+        if (++total>48 || rows.count>=12) break;
+        if (window.hidden || window.alpha<0.01) continue;
+        BOOL hint=NFBPiPClassHint(window) || NFBPiPClassHint(window.rootViewController);
+        NSMutableArray<UIView *> *queue=[NSMutableArray arrayWithObject:window];
+        for (NSUInteger i=0;i<queue.count && rows.count<12;i++) {
+            UIView *view=queue[i];
+            if (view.hidden || view.alpha<0.01) continue;
+            if ((i==0 && hint) || (i>0 && NFBPiPClassHint(view))) {
+                [rows addObject:[NSString stringWithFormat:@"host=%@ root=%@ level=%.1f hit=%d view=%@ parent=%@ rect=%@",
+                    NSStringFromClass(window.class),NSStringFromClass(window.rootViewController.class),window.windowLevel,
+                    window.userInteractionEnabled,NSStringFromClass(view.class),NSStringFromClass(view.superview.class),
+                    NSStringFromCGRect([view convertRect:view.bounds toView:nil])]];
+            }
+            for (UIView *child in view.subviews) { if (queue.count>=64) break; [queue addObject:child]; }
+        }
+    }
+    NSArray *sorted=[rows sortedArrayUsingSelector:@selector(compare:)];
+    if ([last isEqualToArray:sorted]) return;
+    last=sorted;
+    NFBDebugLog(@"native-pip: candidates=%lu movie=%d scannedWindows=%lu",(unsigned long)rows.count,movieIsActive,(unsigned long)MIN(total,(NSUInteger)48));
+    for (NSString *row in sorted) NFBDebugLog(@"native-pip: %@",row);
+}
 static id currentWindow(void) {
     return NFBCurrentWindowState().floatingWindow;
 }
