@@ -1,4 +1,9 @@
 #import <UIKit/UIKit.h>
+#import <notify.h>
+#import <stdatomic.h>
+
+// Main invalidates this generation before queued work may touch the clipboard.
+static _Atomic unsigned long NFBClipboardGeneration;
 
 @interface NFBClipboardProbeWindow : UIWindow
 @end
@@ -10,13 +15,16 @@
 @end
 
 @interface NFBClipboardProbeController : UIViewController
-@property(nonatomic,strong) NSMutableArray<NSDictionary *> *history;
+@property(nonatomic,strong) NSMutableArray<NSString *> *history;
 @property(nonatomic,strong) UIStackView *records;
 @property(nonatomic,strong) UIStackView *panel;
 @property(nonatomic,strong) UILabel *status;
-@property(nonatomic,strong) NSTimer *timer;
-@property(nonatomic) NSInteger seen;
-@property(nonatomic) NSTimeInterval deadline;
+@property(nonatomic,strong) dispatch_queue_t clipboardQueue;
+@property(nonatomic) int notifyToken;
+@property(nonatomic) BOOL listening;
+@property(nonatomic) BOOL writing;
+- (void)nfbRender;
+- (void)nfbStopListening;
 @end
 
 @implementation NFBClipboardProbeController
@@ -30,12 +38,13 @@
     [super viewDidLoad];
     self.view.backgroundColor = UIColor.clearColor;
     self.history = [NSMutableArray new];
+    self.clipboardQueue = dispatch_queue_create("local.notifybubbles.clipboard.text-probe", DISPATCH_QUEUE_SERIAL);
     UIButton *toggle = [self nfbButton:@"剪贴板测试" action:@selector(nfbToggle)];
     toggle.backgroundColor = UIColor.systemIndigoColor;
     [toggle setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
     toggle.layer.cornerRadius = 10;
     self.status = [UILabel new];
-    self.status.text = @"只复制测试内容，不保存到文件";
+    self.status.text = @"只收录「Minis测试」开头的文字";
     self.status.font = [UIFont systemFontOfSize:11];
     self.status.numberOfLines = 2;
     self.status.textAlignment = NSTextAlignmentCenter;
@@ -63,89 +72,94 @@
     ]];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(nfbClearOnLock:) name:UIApplicationProtectedDataWillBecomeUnavailable object:nil];
 }
+- (void)nfbStopListening {
+    atomic_fetch_add(&NFBClipboardGeneration, 1);
+    if (self.listening) (void)notify_cancel(self.notifyToken);
+    self.listening = NO;
+    self.writing = NO;
+}
 - (void)nfbClearOnLock:(NSNotification *)note {
     (void)note;
-    [self.timer invalidate]; self.timer = nil;
+    [self nfbStopListening];
     [self.history removeAllObjects]; [self nfbRender];
     self.panel.hidden = YES;
     self.status.text = @"测试已结束";
 }
 - (void)nfbToggle { self.panel.hidden = !self.panel.hidden; }
 - (void)nfbStart {
-    [self.timer invalidate];
+    if (self.listening || self.writing || !UIApplication.sharedApplication.protectedDataAvailable) return;
     [self.history removeAllObjects]; [self nfbRender];
-    self.seen = UIPasteboard.generalPasteboard.changeCount;
-    self.deadline = NSProcessInfo.processInfo.systemUptime + 60;
-    self.status.text = @"测试中：到其他 App 复制";
+    const unsigned long generation = atomic_fetch_add(&NFBClipboardGeneration, 1) + 1;
+    const NSTimeInterval deadline = NSProcessInfo.processInfo.systemUptime + 60;
+    __block NSInteger seen = -1; // Confined to the serial clipboard queue.
     __weak typeof(self) weakSelf = self;
-    self.timer = [NSTimer timerWithTimeInterval:0.8 repeats:YES block:^(NSTimer *timer) {
+    int token = 0;
+    uint32_t result = notify_register_dispatch("com.apple.pasteboard.notify.changed", &token, self.clipboardQueue, ^(int delivered) {
+        (void)delivered;
+        @autoreleasepool {
+            if (atomic_load(&NFBClipboardGeneration) != generation || NSProcessInfo.processInfo.systemUptime >= deadline) return;
+            UIPasteboard *pb = UIPasteboard.generalPasteboard;
+            NSInteger count = pb.changeCount;
+            if (count == seen) return;
+            seen = count;
+            if (!pb.hasStrings || atomic_load(&NFBClipboardGeneration) != generation) return;
+            NSString *text = pb.string;
+            if (text.length > 128 || ![text hasPrefix:@"Minis测试"] || pb.changeCount != count) return;
+            NSString *snapshot = [text copy];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                NFBClipboardProbeController *vc = weakSelf;
+                if (!vc || !vc.listening || atomic_load(&NFBClipboardGeneration) != generation ||
+                    !UIApplication.sharedApplication.protectedDataAvailable || [vc.history containsObject:snapshot]) return;
+                [vc.history insertObject:snapshot atIndex:0];
+                if (vc.history.count > 3) [vc.history removeLastObject];
+                vc.status.text = @"已记录测试文字";
+                [vc nfbRender];
+            });
+        }
+    });
+    if (result != NOTIFY_STATUS_OK) { self.status.text = @"未能注册剪贴板通知"; return; }
+    self.notifyToken = token;
+    self.listening = YES;
+    self.status.text = @"测试中：到其他 App 复制文字";
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 60 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         NFBClipboardProbeController *vc = weakSelf;
-        if (vc) [vc nfbCheck]; else [timer invalidate];
-    }];
-    [NSRunLoop.mainRunLoop addTimer:self.timer forMode:NSRunLoopCommonModes];
-}
-- (void)nfbCheck {
-    if (!UIApplication.sharedApplication.protectedDataAvailable) {
-        [self nfbClearOnLock:nil]; return;
-    }
-    if (NSProcessInfo.processInfo.systemUptime >= self.deadline) {
-        [self.timer invalidate]; self.timer = nil;
-        self.status.text = @"已停止采集，仍可点下方复制";
-        return;
-    }
-    UIPasteboard *pb = UIPasteboard.generalPasteboard;
-    NSInteger change = pb.changeCount;
-    if (change == self.seen) return;
-    self.seen = change;
-    NSDictionary *entry = nil;
-    if (pb.hasURLs) {
-        NSURL *url = pb.URL;
-        if (url.absoluteString.length && url.absoluteString.length < 8192 &&
-            [@[@"http", @"https"] containsObject:url.scheme.lowercaseString ?: @""])
-            entry = @{@"kind":@"链接", @"value":url};
-    }
-    if (!entry && pb.hasStrings) {
-        NSString *text = pb.string;
-        // Only specially marked test strings, never other copied text, are retained.
-        if (text.length < 4096 && [text hasPrefix:@"Minis测试"])
-            entry = @{@"kind":@"文字", @"value":text};
-    }
-    if (!entry && pb.hasImages) {
-        UIImage *image = pb.image;
-        if (image && image.size.width * image.scale <= 2048 && image.size.height * image.scale <= 2048)
-            entry = @{@"kind":@"图片", @"value":image};
-    }
-    if (pb.changeCount != change) return;
-    if (!entry) { self.status.text = @"检测到变化，但没有可记录的测试项"; return; }
-    [self.history insertObject:entry atIndex:0];
-    if (self.history.count > 3) [self.history removeLastObject];
-    self.status.text = [NSString stringWithFormat:@"已记录：%@",entry[@"kind"]];
-    [self nfbRender];
+        if (!vc || atomic_load(&NFBClipboardGeneration) != generation) return;
+        [vc nfbStopListening];
+        vc.status.text = @"采集结束，仍可点记录复制";
+    });
 }
 - (void)nfbRender {
     for (UIView *v in [self.records.arrangedSubviews copy]) {
         [self.records removeArrangedSubview:v]; [v removeFromSuperview];
     }
-    [self.history enumerateObjectsUsingBlock:^(NSDictionary *entry, NSUInteger i, BOOL *stop) {
+    [self.history enumerateObjectsUsingBlock:^(NSString *entry, NSUInteger i, BOOL *stop) {
         (void)stop;
-        UIButton *b = [self nfbButton:[NSString stringWithFormat:@"%lu. 复制%@",(unsigned long)(i+1),entry[@"kind"]] action:@selector(nfbCopy:)];
+        UIButton *b = [self nfbButton:[NSString stringWithFormat:@"%lu. %@",(unsigned long)(i+1),entry] action:@selector(nfbCopy:)];
         b.tag = (NSInteger)i;
         [self.records addArrangedSubview:b];
     }];
 }
 - (void)nfbCopy:(UIButton *)button {
-    if (button.tag < 0 || (NSUInteger)button.tag >= self.history.count) return;
-    NSDictionary *entry = self.history[(NSUInteger)button.tag];
-    id value = entry[@"value"];
-    UIPasteboard *pb = UIPasteboard.generalPasteboard;
-    NSString *uti = [value isKindOfClass:NSString.class] ? @"public.utf8-plain-text" :
-        [value isKindOfClass:NSURL.class] ? @"public.url" : @"public.png";
-    NSData *png = [value isKindOfClass:UIImage.class] ? UIImagePNGRepresentation(value) : nil;
-    if ([uti isEqualToString:@"public.png"] && !png) { self.status.text = @"图片编码失败"; return; }
-    [pb setItems:@[@{uti:png ?: value}] options:@{UIPasteboardOptionLocalOnly:@YES}];
-    self.seen = pb.changeCount;
-    self.status.text = @"已重新复制，到目标 App 粘贴";
+    if (self.writing || !UIApplication.sharedApplication.protectedDataAvailable ||
+        button.tag < 0 || (NSUInteger)button.tag >= self.history.count) return;
+    NSString *text = self.history[(NSUInteger)button.tag];
+    unsigned long generation = atomic_load(&NFBClipboardGeneration);
+    self.writing = YES;
+    self.status.text = @"正在复制…";
+    __weak typeof(self) weakSelf = self;
+    dispatch_async(self.clipboardQueue, ^{
+        if (atomic_load(&NFBClipboardGeneration) != generation) return;
+        [UIPasteboard.generalPasteboard setItems:@[@{@"public.utf8-plain-text":text}]
+            options:@{UIPasteboardOptionLocalOnly:@YES}];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            NFBClipboardProbeController *vc = weakSelf;
+            if (!vc || atomic_load(&NFBClipboardGeneration) != generation) return;
+            vc.writing = NO;
+            vc.status.text = @"已请求复制，请到目标 App 粘贴";
+        });
+    });
 }
+
 @end
 
 static NFBClipboardProbeWindow *NFBClipboardProbeOverlay;
