@@ -679,10 +679,13 @@ static CGSize nfbPiPBaseSize;
 static __weak UIView *nfbPiPSample, *nfbPiPSampleParent, *nfbPiPSampleLower;
 static CGRect nfbPiPSampleFrame, nfbPiPSampleBand;
 static CFTimeInterval nfbPiPStableAt, nfbPiPFirstFitAt;
-static BOOL nfbPiPRetried;
+static BOOL nfbPiPRetried, nfbPiPStopped;
+static __weak UIView *nfbPiPEligibleLower;
+static __weak UIWindow *nfbPiPEligibleHost;
 static void NFBResetPiPPlacementSample(void) {
     nfbPiPSample=nil; nfbPiPSampleParent=nil; nfbPiPSampleLower=nil;
-    nfbPiPStableAt=0; nfbPiPFirstFitAt=0; nfbPiPRetried=NO;
+    nfbPiPStableAt=0; nfbPiPFirstFitAt=0; nfbPiPRetried=NO; nfbPiPStopped=NO;
+    nfbPiPEligibleLower=nil; nfbPiPEligibleHost=nil;
 }
 static BOOL NFBPiPSystemGestureActive(UIView *view) {
     for (UIView *node=view;node;node=node.superview) {
@@ -733,7 +736,14 @@ void NFBUpdateNativePiPPlacement(BOOL allowed) {
         if (candidate && view) { view=nil; break; }
         if (candidate) view=candidate;
     }
-    if (!view) { NFBReleasePiPPlacement(); NFBResetPiPPlacementSample(); return; }
+    if (!view) {
+        NFBReleasePiPPlacement(); nfbPiPSample=nil;
+        // Do not reset the budget just because the native morph temporarily
+        // removes the verified container from the hierarchy.
+        if (!nfbPiPEligibleHost || nfbPiPEligibleHost.hidden || nfbPiPEligibleHost.alpha<0.01)
+            NFBResetPiPPlacementSample();
+        return;
+    }
     NFBOpenWindowObservation *observation=NFBCaptureOpenWindows();
     UIView *lower=observation.portrait;
     UIWindow *host=view.window;
@@ -744,6 +754,15 @@ void NFBUpdateNativePiPPlacement(BOOL allowed) {
         !host || host.windowScene.screen!=lower.window.windowScene.screen) {
         NFBReleasePiPPlacement(); NFBResetPiPPlacementSample(); nfbPiPYielded=nil; return;
     }
+    if (nfbPiPEligibleLower!=lower || nfbPiPEligibleHost!=host) {
+        if (nfbPiPEligibleLower==lower && nfbPiPEligibleHost && nfbPiPFirstFitAt) {
+            NFBReleasePiPPlacement(); nfbPiPStopped=YES;
+            NFBDebugLog(@"native-pip: yield after host window change");
+            return;
+        }
+        NFBReleasePiPPlacement(); NFBResetPiPPlacementSample();
+        nfbPiPEligibleLower=lower; nfbPiPEligibleHost=host;
+    }
     if (view==nfbPiPYielded) {
         if (nfbPiPTarget && !NFBPiPSystemGestureActive(view)) NFBReleasePiPPlacement();
         return;
@@ -751,26 +770,25 @@ void NFBUpdateNativePiPPlacement(BOOL allowed) {
     UIView *parent=view.superview;
     CFTimeInterval now=CACurrentMediaTime();
     if (NFBPiPSystemGestureActive(view)) {
-        nfbPiPYielded=view;
+        nfbPiPYielded=view; nfbPiPStopped=YES;
         // Do not shift the touch target under an active system gesture.
         NFBDebugLog(@"native-pip: yield to system gesture");
         return;
     }
+    if (nfbPiPStopped) return;
     if (nfbPiPTarget && (view!=nfbPiPTarget || parent!=nfbPiPParent || host!=nfbPiPWindow ||
         !CGPointEqualToPoint(view.center,nfbPiPBaseCenter) || !CGSizeEqualToSize(view.bounds.size,nfbPiPBaseSize) ||
         !CGAffineTransformEqualToTransform(view.transform,nfbPiPApplied))) {
-        BOOL resetOnly=view==nfbPiPTarget && parent==nfbPiPParent && host==nfbPiPWindow &&
-            CGPointEqualToPoint(view.center,nfbPiPBaseCenter) && CGSizeEqualToSize(view.bounds.size,nfbPiPBaseSize) &&
-            CGAffineTransformIsIdentity(view.transform);
-        if (resetOnly && NFBPiPCanRetryReset(nfbPiPRetried,now-nfbPiPFirstFitAt)) {
-            nfbPiPRetried=YES;
-            nfbPiPSample=nil;
-            NFBDebugLog(@"native-pip: early transform reset, wait for one stable retry");
-        } else {
-            nfbPiPYielded=view;
-            NFBDebugLog(@"native-pip: yield after native geometry change");
-        }
-        NFBReleasePiPPlacement(); return;
+        NFBDebugLog(@"native-pip: native change container=%d parent=%d host=%d center=%d size=%d transform=%d identity=%d",
+            view!=nfbPiPTarget,parent!=nfbPiPParent,host!=nfbPiPWindow,
+            !CGPointEqualToPoint(view.center,nfbPiPBaseCenter),!CGSizeEqualToSize(view.bounds.size,nfbPiPBaseSize),
+            !CGAffineTransformEqualToTransform(view.transform,nfbPiPApplied),CGAffineTransformIsIdentity(view.transform));
+        NFBReleasePiPPlacement(); nfbPiPSample=nil;
+    }
+    if (!nfbPiPTarget && nfbPiPFirstFitAt && !NFBPiPCanRetryReset(nfbPiPRetried,now-nfbPiPFirstFitAt)) {
+        nfbPiPStopped=YES;
+        NFBDebugLog(@"native-pip: yield after retry budget or settling window ended");
+        return;
     }
     if (!nfbPiPTarget && !CGAffineTransformIsIdentity(view.transform)) return;
     if (!CGPointEqualToPoint(view.layer.anchorPoint,CGPointMake(0.5,0.5))) { NFBReleasePiPPlacement(); return; }
@@ -799,12 +817,13 @@ void NFBUpdateNativePiPPlacement(BOOL allowed) {
     CGAffineTransform fitted=CGAffineTransformMake(scale,0,0,scale,
         CGRectGetMidX(local)-view.center.x,CGRectGetMidY(local)-view.center.y);
     if (CGAffineTransformEqualToTransform(view.transform,fitted)) return;
+    if (!nfbPiPTarget && nfbPiPFirstFitAt) nfbPiPRetried=YES;
     [UIView performWithoutAnimation:^{ view.transform=fitted; }];
     nfbPiPTarget=view; nfbPiPParent=parent; nfbPiPWindow=host;
     nfbPiPApplied=fitted; nfbPiPBaseCenter=view.center; nfbPiPBaseSize=size;
     CGRect actual=[view convertRect:view.bounds toView:host];
     if (!CGRectContainsRect(CGRectInset(band,-0.5,-0.5),actual)) {
-        NFBReleasePiPPlacement(); nfbPiPYielded=view;
+        NFBReleasePiPPlacement(); nfbPiPYielded=view; nfbPiPStopped=YES;
         NFBDebugLog(@"native-pip: out-of-band fit rejected actual=%@ band=%@",NSStringFromCGRect(actual),NSStringFromCGRect(band));
         return;
     }
