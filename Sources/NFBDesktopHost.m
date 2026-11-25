@@ -308,6 +308,23 @@ static UIScrollView *NFBDesktopPager(UIView *desktop) {
             return (UIScrollView *)view;
     return nil;
 }
+// On iOS 16 the launcher receives SBIconView for both apps and widgets.
+// Check only this icon's subtree for the device-observed native widget hosts.
+static BOOL NFBIsDesktopWidgetIconView(UIView *iconView) {
+    Class container=NSClassFromString(@"SBHWidgetContainerView");
+    Class host=NSClassFromString(@"CHUISWidgetHostViewControllerView");
+    if (!container && !host) return NO;
+    NSMutableArray<UIView *> *views=[NSMutableArray arrayWithObject:iconView];
+    for (NSUInteger i=0;i<views.count;i++) {
+        UIView *view=views[i];
+        if ((container && [view isKindOfClass:container]) || (host && [view isKindOfClass:host])) return YES;
+        for (UIView *child in view.subviews) {
+            if (views.count>=64) break;
+            [views addObject:child];
+        }
+    }
+    return NO;
+}
 // An open request is not success: close only once Open reports the target pane.
 BOOL NFBLaunchAppFromDesktopIcon(id iconView) {
     NFBDesktopSession *active=session;
@@ -319,6 +336,10 @@ BOOL NFBLaunchAppFromDesktopIcon(id iconView) {
         (folderClass && [icon isKindOfClass:folderClass])) {
         NFBDebugLog(@"desktop folder icon: native folder handling");
         return NO; // The hook calls the original folder handler; no app launch.
+    }
+    if (NFBIsDesktopWidgetIconView(iconView)) {
+        NFBDebugLog(@"desktop widget icon: native launch handling");
+        return NO; // Retain the original icon and actions, including widget URLs.
     }
     if (active.pendingApp.length) return YES;
     id bundle=NFBCheckedObject(iconView,@"applicationBundleIdentifier");

@@ -22,6 +22,10 @@ extern BOOL NFBDesktopSuppressFolderTracking(CALayer *, NSString *);
 - (void)viewDidAppear:(BOOL)animated { [super viewDidAppear:animated]; self.appearances++; }
 - (void)viewDidDisappear:(BOOL)animated { [super viewDidDisappear:animated]; self.disappearances++; }
 @end
+@interface SBHWidgetContainerView : UIView @end
+@implementation SBHWidgetContainerView @end
+@interface CHUISWidgetHostViewControllerView : UIView @end
+@implementation CHUISWidgetHostViewControllerView @end
 @interface DesktopAppIconFixture : UIView
 @property(nonatomic,copy) NSString *applicationBundleIdentifier;
 @end
@@ -420,6 +424,15 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
         openAccepted=YES;
         Check(NFBLaunchAppFromDesktopIcon(appIcon) && [submittedBundle isEqualToString:appIcon.applicationBundleIdentifier],@"desktop icon uses Open split adapter");
         Check(!NFBLaunchAppFromDesktopIcon(folderView) && NFBDesktopSplitActive(),@"pending app launch does not swallow folder actions");
+        UIView *widgetIcon=[UIView new]; [desktop addSubview:widgetIcon];
+        UIView *widgetWrapper=[UIView new]; [widgetIcon addSubview:widgetWrapper];
+        [widgetWrapper addSubview:[CHUISWidgetHostViewControllerView new]];
+        Check(!NFBLaunchAppFromDesktopIcon(widgetIcon) && NFBDesktopSplitActive(),@"nested widget host keeps native action even with pending app");
+        [widgetIcon removeFromSuperview];
+        UIView *widgetContainerIcon=[UIView new]; [desktop addSubview:widgetContainerIcon];
+        [widgetContainerIcon addSubview:[SBHWidgetContainerView new]];
+        Check(!NFBLaunchAppFromDesktopIcon(widgetContainerIcon),@"widget container passes through without an app identifier");
+        [widgetContainerIcon removeFromSuperview];
         NFBUpdateDesktopSplit(YES);
         Check(NFBDesktopSplitActive(),@"submitted launch alone does not close desktop");
         state.floatingApp=appIcon.applicationBundleIdentifier; state.floatingWindow=anchor; state.mini=YES;
