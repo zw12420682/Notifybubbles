@@ -506,6 +506,16 @@ BOOL NFBMovieOwnsDesktopSession(void) {
     return NSThread.isMainThread && movieIsActive && movieOwnsDesktop &&
         movieDesktopSession!=0 && movieDesktopSession==NFBDesktopSessionIdentifier();
 }
+void NFBMovieDesktopWillReturnForWidget(NSUInteger identifier) {
+    if (!identifier || identifier!=movieDesktopSession || !NFBMovieOwnsDesktopSession()) return;
+    // An intentional return is not loss of the hosted desktop. Leave the
+    // system to complete the native launch; do not auto-transplant it again.
+    movieOwnsDesktop=NO;
+    movieDesktopSession=0;
+    movieDesktopAttempted=YES;
+    movieDesktopRecoveryUsed=YES;
+    NFBDebugLog(@"movie-desktop: release for native widget action session=%lu",(unsigned long)identifier);
+}
 static NFBSplitObservationTracker movieObservation;
 static NSHashTable<UIView *> *movieLastLandscape;
 static BOOL movieHadLandscape;

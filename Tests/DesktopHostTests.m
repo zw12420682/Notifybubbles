@@ -427,12 +427,8 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
         UIView *widgetIcon=[UIView new]; [desktop addSubview:widgetIcon];
         UIView *widgetWrapper=[UIView new]; [widgetIcon addSubview:widgetWrapper];
         [widgetWrapper addSubview:[CHUISWidgetHostViewControllerView new]];
-        Check(!NFBLaunchAppFromDesktopIcon(widgetIcon) && NFBDesktopSplitActive(),@"nested widget host keeps native action even with pending app");
+        Check(NFBLaunchAppFromDesktopIcon(widgetIcon) && NFBDesktopSplitActive(),@"pending app launch defers native widget action");
         [widgetIcon removeFromSuperview];
-        UIView *widgetContainerIcon=[UIView new]; [desktop addSubview:widgetContainerIcon];
-        [widgetContainerIcon addSubview:[SBHWidgetContainerView new]];
-        Check(!NFBLaunchAppFromDesktopIcon(widgetContainerIcon),@"widget container passes through without an app identifier");
-        [widgetContainerIcon removeFromSuperview];
         NFBUpdateDesktopSplit(YES);
         Check(NFBDesktopSplitActive(),@"submitted launch alone does not close desktop");
         state.floatingApp=appIcon.applicationBundleIdentifier; state.floatingWindow=anchor; state.mini=YES;
@@ -440,6 +436,14 @@ extern UIView *NFBDesktopSplitHitTest(UIWindow *, CGPoint, UIEvent *, BOOL *);
         state.mini=NO; NFBUpdateDesktopSplit(YES);
         Check(!NFBDesktopSplitActive(),@"visible target split automatically closes desktop");
         state.floatingApp=nil; [appIcon removeFromSuperview]; [folderView removeFromSuperview]; [modelView removeFromSuperview];
+        CheckOpen(NFBShowDesktopInSplit(anchor),@"open before widget action",desktop,root.view);
+        UIView *widgetContainerIcon=[UIView new]; [desktop addSubview:widgetContainerIcon];
+        [widgetContainerIcon addSubview:[SBHWidgetContainerView new]];
+        Check(!NFBLaunchAppFromDesktopIcon(widgetContainerIcon) && !NFBDesktopSplitActive(),
+            @"widget only passes through after releasing the split desktop");
+        Check(desktop.superview==root.view && widgetContainerIcon.window==nativeWindow && nativeWindow.windowLevel==nativeLevel,
+            @"desktop and widget are back in their native window before launch");
+        [widgetContainerIcon removeFromSuperview];
         CheckOpen(NFBShowDesktopInSplit(anchor),@"open before restore exception",desktop,root.view);
         ((DesktopRootFixture *)root.view).throwNextLayout=YES;
         [root.view setNeedsLayout]; NFBCloseDesktopSplit();

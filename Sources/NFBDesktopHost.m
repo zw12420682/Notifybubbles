@@ -1,6 +1,7 @@
 #import "NFBDesktopHost.h"
 #ifndef NFB_DESKTOP_SIM_TEST
 #import "NFBWidgetDetachTrace.h"
+#import "NFBWindowControls.h"
 #endif
 #import "NFBWindowLease.h"
 #import "NFBSplitCoordinator.h"
@@ -338,8 +339,25 @@ BOOL NFBLaunchAppFromDesktopIcon(id iconView) {
         return NO; // The hook calls the original folder handler; no app launch.
     }
     if (NFBIsDesktopWidgetIconView(iconView)) {
-        NFBDebugLog(@"desktop widget icon: native launch handling");
-        return NO; // Retain the original icon and actions, including widget URLs.
+        // The native widget launch can detach widget hosts. Do not start it
+        // while their desktop is still owned by our split container.
+        if (!NSThread.isMainThread || active.movieParked || active.pendingApp.length) return YES;
+        UIView *desktop=active.desktop;
+        UIView *originalParent=active.originalParent;
+        UIWindow *originalWindow=active.window;
+        [NFBSplitCoordinator.shared beginUserWindowOperation];
+#ifndef NFB_DESKTOP_SIM_TEST
+        NFBMovieDesktopWillReturnForWidget(active.identifier);
+#endif
+        NFBCloseDesktopSplit();
+        if (NFBDesktopSplitActive() || !originalParent || !originalWindow ||
+            desktop.superview!=originalParent || desktop.window!=originalWindow ||
+            ![(UIView *)iconView isDescendantOfView:desktop] || [(UIView *)iconView window]!=originalWindow) {
+            NFBDebugLog(@"desktop widget icon: native launch skipped, desktop return not verified");
+            return YES;
+        }
+        NFBDebugLog(@"desktop widget icon: desktop returned before native launch");
+        return NO; // Preserve the original icon and actions, including widget URLs.
     }
     if (active.pendingApp.length) return YES;
     id bundle=NFBCheckedObject(iconView,@"applicationBundleIdentifier");
