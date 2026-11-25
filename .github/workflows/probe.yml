@@ -15,7 +15,7 @@ jobs:
           set -euo pipefail
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
           mkdir out
-          xcrun --sdk iphoneos clang -target arm64e-apple-ios16.0 -isysroot "$SDK" -dynamiclib -fobjc-arc -framework UIKit -framework Foundation -framework QuartzCore -O2 -Wall -Wextra -Werror -install_name '@rpath/NFBTransferClipboardProbe.dylib' NFBTransferClipboardProbe.m -o out/NFBTransferClipboardProbe.dylib
+          xcrun --sdk iphoneos clang -target arm64e-apple-ios16.0 -isysroot "$SDK" -dynamiclib -fobjc-arc -framework UIKit -framework Foundation -framework QuartzCore -O2 -Wall -Wextra -Werror -install_name '@rpath/NFBTransferClipboardProbe.dylib' NFBTransferClipboardProbe.m NFBDirectPaste.m -o out/NFBTransferClipboardProbe.dylib
           test "$(xcrun lipo -archs out/NFBTransferClipboardProbe.dylib)" = arm64e
           codesign --force --sign - --timestamp=none out/NFBTransferClipboardProbe.dylib
           codesign --verify --strict out/NFBTransferClipboardProbe.dylib

@@ -1,5 +1,7 @@
 #import <UIKit/UIKit.h>
 #import <notify.h>
+#import <time.h>
+#import "NFBDirectPaste.h"
 #import <stdatomic.h>
 
 // Main invalidates this generation before queued work may touch the clipboard.
@@ -144,18 +146,38 @@ static _Atomic unsigned long NFBClipboardGeneration;
         button.tag < 0 || (NSUInteger)button.tag >= self.history.count) return;
     NSString *text = self.history[(NSUInteger)button.tag];
     unsigned long generation = atomic_load(&NFBClipboardGeneration);
+    NSDictionary *initialTarget = NFBPasteFrontTarget();
     self.writing = YES;
     self.status.text = @"正在复制…";
     __weak typeof(self) weakSelf = self;
     dispatch_async(self.clipboardQueue, ^{
         if (atomic_load(&NFBClipboardGeneration) != generation) return;
-        [UIPasteboard.generalPasteboard setItems:@[@{@"public.utf8-plain-text":text}]
-            options:@{UIPasteboardOptionLocalOnly:@YES}];
+        UIPasteboard *pb = UIPasteboard.generalPasteboard;
+        [pb setItems:@[@{@"public.utf8-plain-text":text}] options:@{UIPasteboardOptionLocalOnly:@YES}];
+        const NSInteger count = initialTarget ? pb.changeCount : 0;
+        const BOOL verified = initialTarget && [pb.string isEqualToString:text] && pb.changeCount == count;
         dispatch_async(dispatch_get_main_queue(), ^{
             NFBClipboardProbeController *vc = weakSelf;
             if (!vc || atomic_load(&NFBClipboardGeneration) != generation) return;
-            vc.writing = NO;
-            vc.status.text = @"已请求复制，请到目标 App 粘贴";
+            NSDictionary *target = verified ? NFBPasteFrontTarget() : nil;
+            if (!target || ![target isEqualToDictionary:initialTarget]) {
+                vc.writing = NO;
+                vc.status.text = @"已复制，请手动粘贴";
+                return;
+            }
+            NSMutableDictionary *packet = [target mutableCopy];
+            packet[@"deadline"] = @(clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW) + 400000000ULL);
+            packet[@"changeCount"] = @(count);
+            dispatch_async(vc.clipboardQueue, ^{
+                BOOL sent = atomic_load(&NFBClipboardGeneration) == generation && NFBPasteRequest(packet);
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    NFBClipboardProbeController *controller = weakSelf;
+                    if (!controller || atomic_load(&NFBClipboardGeneration) != generation) return;
+                    controller.writing = NO;
+                    controller.status.text = sent ? @"已请求系统粘贴，请查看输入框" : @"已复制，请手动粘贴";
+                    if (sent) controller.panel.hidden = YES;
+                });
+            });
         });
     });
 }
@@ -182,7 +204,10 @@ static void NFBClipboardProbeShow(void) {
 
 __attribute__((constructor)) static void NFBClipboardProbeStart(void) {
     @autoreleasepool {
-        if (![NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.apple.springboard"]) return;
+        if (![NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.apple.springboard"]) {
+            dispatch_async(dispatch_get_main_queue(), ^{ NFBPasteInstallAppHelper(); });
+            return;
+        }
         dispatch_async(dispatch_get_main_queue(), ^{
             for (NSNotificationName name in @[UISceneDidActivateNotification, UIApplicationDidBecomeActiveNotification]) {
                 [NSNotificationCenter.defaultCenter addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) { (void)note; NFBClipboardProbeShow(); }];
