@@ -502,14 +502,29 @@ static BOOL movieOwnsDesktop;
 static NSUInteger movieDesktopSession;
 static BOOL movieDesktopAttempted;
 static BOOL movieDesktopRecoveryUsed;
+static __weak UIView *movieWidgetUpper;
+static NSString *movieWidgetBaselineApp, *movieWidgetForegroundApp;
+static NSUInteger movieWidgetEpoch;
+static CFTimeInterval movieWidgetDeadline;
+static void NFBClearWidgetHandoff(void) {
+    movieWidgetUpper=nil; movieWidgetBaselineApp=nil; movieWidgetForegroundApp=nil;
+    movieWidgetEpoch=0; movieWidgetDeadline=0;
+}
 BOOL NFBMovieOwnsDesktopSession(void) {
     return NSThread.isMainThread && movieIsActive && movieOwnsDesktop &&
         movieDesktopSession!=0 && movieDesktopSession==NFBDesktopSessionIdentifier();
 }
 void NFBMovieDesktopWillReturnForWidget(NSUInteger identifier) {
     if (!identifier || identifier!=movieDesktopSession || !NFBMovieOwnsDesktopSession()) return;
-    // An intentional return is not loss of the hosted desktop. Leave the
-    // system to complete the native launch; do not auto-transplant it again.
+    // Keep the movie geometry but let the native launch settle before choosing
+    // between a visible system app and restoring the bottom desktop.
+    NFBClearWidgetHandoff();
+    NFBOpenWindowObservation *now=NFBCaptureOpenWindows();
+    if (now.landscapeWindows.count==1) movieWidgetUpper=now.landscapeWindows.firstObject;
+    NFBInvalidateWindowState();
+    movieWidgetBaselineApp=NFBCurrentWindowState().frontApp;
+    movieWidgetEpoch=NFBSplitCoordinator.shared.operationEpoch;
+    movieWidgetDeadline=CACurrentMediaTime()+1.2;
     movieOwnsDesktop=NO;
     movieDesktopSession=0;
     movieDesktopAttempted=YES;
@@ -739,8 +754,39 @@ BOOL NFBApplyMovieObservation(BOOL enabled, NFBOpenWindowObservation *observatio
             else NFBCloseDesktopSplit();
         }
         movieOwnsDesktop = NO; movieDesktopAttempted = NO; movieDesktopRecoveryUsed = NO;
+        NFBClearWidgetHandoff();
         [movieDesktopAnchor removeFromSuperview]; movieDesktopAnchor = nil;
         movieLowerScreen = CGRectZero;
+    }
+    BOOL widgetNativeForeground=NO;
+    if (movieIsActive && movieWidgetDeadline && classAvailable && sceneAvailable) {
+        if (!movieWidgetUpper || observation.landscapeWindows.count!=1 ||
+            observation.landscapeWindows.firstObject!=movieWidgetUpper) {
+            NFBClearWidgetHandoff();
+        } else if (moviePortrait) {
+            // A real Open pane won. Allow normal desktop fallback after it closes.
+            NFBClearWidgetHandoff();
+            movieDesktopAttempted=NO;
+        } else {
+            NFBWindowState *state=NFBCurrentWindowState();
+            NSString *front=state.frontApp;
+            if (!movieWidgetForegroundApp && movieWidgetEpoch==NFBSplitCoordinator.shared.operationEpoch &&
+                !state.home && front.length && ![front isEqualToString:movieWidgetBaselineApp] &&
+                ![front isEqualToString:appOfWindow(movieWidgetUpper)] && !NFBIsSystemDesktop(front)) {
+                movieWidgetForegroundApp=front;
+                NFBDebugLog(@"movie-desktop: widget native foreground confirmed; clear backdrop");
+            }
+            widgetNativeForeground=!state.home && movieWidgetForegroundApp.length &&
+                [front isEqualToString:movieWidgetForegroundApp];
+            if (state.home && (movieWidgetForegroundApp || now>=movieWidgetDeadline)) {
+                BOOL sameOperation=movieWidgetEpoch==NFBSplitCoordinator.shared.operationEpoch;
+                NFBClearWidgetHandoff();
+                if (sameOperation) {
+                    movieDesktopAttempted=NO;
+                    NFBDebugLog(@"movie-desktop: widget handoff returned to home; allow one desktop fallback");
+                }
+            }
+        }
     }
     NSHashTable *active = [NSHashTable weakObjectsHashTable];
     NSHashTable *parents = [NSHashTable weakObjectsHashTable];
@@ -845,6 +891,11 @@ BOOL NFBApplyMovieObservation(BOOL enabled, NFBOpenWindowObservation *observatio
                 record.appliedTransform = destination;
                 record.appliedCenter = target;
             }
+        }
+        if (widgetNativeForeground) {
+            [[movieBackdrops objectForKey:parent] removeFromSuperview];
+            [movieBackdrops removeObjectForKey:parent];
+            continue;
         }
         UIView *black = [movieBackdrops objectForKey:parent];
         if (!black) {
