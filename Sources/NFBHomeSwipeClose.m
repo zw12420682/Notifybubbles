@@ -77,23 +77,23 @@ static void NFBStartRejectTrace(id tongue,UIPanGestureRecognizer *pan) {
     nfbRejectFront=[state.frontApp copy]; nfbRejectSplit=[NFBString(NFBGet(window,@"bundleID")) copy];
     nfbRejectHome=state.home; nfbRejectHadWindow=window!=nil;
     nfbRejectConfiguration=NFBHomeSwipeConfiguration;
-    nfbRejectSequence++; nfbRejectPeakUp=0; nfbRejectAt=CACurrentMediaTime(); nfbRejectEnded=NO;
+    nfbRejectSequence++; nfbRejectPeakUp=0; nfbRejectAt=NSProcessInfo.processInfo.systemUptime; nfbRejectEnded=NO;
     NFBDebugLog(@"swipe-pass: began id=%lu front=%@ home=%d portrait=%@",(unsigned long)nfbRejectSequence,nfbRejectFront,nfbRejectHome,nfbRejectSplit);
 }
 static void NFBObserveRejectPhase(id tongue,NSUInteger phase) {
     if (!nfbRejectAt || nfbRejectEnded || tongue!=nfbRejectTongue || !phase) return;
-    if (!NFBDebugLoggingEnabled() || CACurrentMediaTime()-nfbRejectAt>8 || nfbRejectConfiguration!=NFBHomeSwipeConfiguration) { NFBResetRejectTrace(); return; }
+    if (!NFBDebugLoggingEnabled() || NSProcessInfo.processInfo.systemUptime-nfbRejectAt>8 || nfbRejectConfiguration!=NFBHomeSwipeConfiguration) { NFBResetRejectTrace(); return; }
     UIPanGestureRecognizer *pan=nfbRejectPan;
     if (!pan || !pan.view || NFBGet(tongue,@"edgePullGestureRecognizer")!=pan) return;
     CGPoint p=[pan translationInView:pan.view]; nfbRejectPeakUp=MAX(nfbRejectPeakUp,-p.y);
     if (phase<2) return;
-    nfbRejectEnded=YES; nfbRejectEndAt=CACurrentMediaTime();
+    nfbRejectEnded=YES; nfbRejectEndAt=NSProcessInfo.processInfo.systemUptime;
     NFBDebugLog(@"swipe-pass: end id=%lu cancelled=%d translation=%@ peakUp=%.1f",(unsigned long)nfbRejectSequence,phase==3,NSStringFromCGPoint(p),nfbRejectPeakUp);
 }
 void NFBObserveRejectedSwipeResult(void) {
     if (!nfbRejectAt) return;
     @try {
-        CFTimeInterval now=CACurrentMediaTime();
+        CFTimeInterval now=NSProcessInfo.processInfo.systemUptime;
         if (!NFBDebugLoggingEnabled() || !NFBHomeSwipeEnabled || !NFBHomeSwipeUnlocked() || nfbRejectConfiguration!=NFBHomeSwipeConfiguration || now-nfbRejectAt>8) { NFBResetRejectTrace(); return; }
         if (!nfbRejectEnded || now-nfbRejectEndAt<0.25) return;
         NFBWindowState *state=NFBCurrentWindowState(); UIView *current=NFBHomeSwipeCloseWindow();
