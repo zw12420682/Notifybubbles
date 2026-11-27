@@ -1402,7 +1402,7 @@ static NSString *NFBFrontmostAppID(void) {
     if (!self.enabled) return;
     // Same reasoning as floatingWatchFired: private SpringBoard calls here must
     // never propagate out into the runloop.
-    @try { [self tickBody]; }
+    @try { [self tickBody]; NFBObserveRejectedSwipeResult(); }
     @catch (NSException *error) { NFBErrorLog(@"tick failed: %@", error); }
 }
 - (void)tickBody {

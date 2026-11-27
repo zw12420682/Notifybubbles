@@ -56,6 +56,51 @@ static BOOL NFBHomeSwipeSessionValid(NFBHomeSwipeSession *session) {
         !NFBCheckedBool(target, @"isTransitioningFromMiniMode", YES) &&
         !NFBCheckedBool(target, @"isClosingWithKeepAliveAnimation", YES);
 }
+// Diagnostic only. This record is never an owned gesture session.
+static __weak id nfbRejectTongue;
+static __weak UIPanGestureRecognizer *nfbRejectPan;
+static __weak UIView *nfbRejectWindow;
+static NSString *nfbRejectFront, *nfbRejectSplit;
+static BOOL nfbRejectHome, nfbRejectHadWindow, nfbRejectEnded;
+static NSUInteger nfbRejectSequence, nfbRejectConfiguration;
+static CFTimeInterval nfbRejectAt, nfbRejectEndAt;
+static CGFloat nfbRejectPeakUp;
+static void NFBResetRejectTrace(void) {
+    nfbRejectAt=0; nfbRejectEnded=NO; nfbRejectTongue=nil; nfbRejectPan=nil;
+    nfbRejectWindow=nil; nfbRejectSplit=nil; nfbRejectFront=nil;
+}
+static void NFBStartRejectTrace(id tongue,UIPanGestureRecognizer *pan) {
+    if (!NFBDebugLoggingEnabled()) return;
+    NFBWindowState *state=NFBCurrentWindowState();
+    UIView *window=NFBHomeSwipeCloseWindow();
+    nfbRejectTongue=tongue; nfbRejectPan=pan; nfbRejectWindow=window;
+    nfbRejectFront=[state.frontApp copy]; nfbRejectSplit=[NFBString(NFBGet(window,@"bundleID")) copy];
+    nfbRejectHome=state.home; nfbRejectHadWindow=window!=nil;
+    nfbRejectConfiguration=NFBHomeSwipeConfiguration;
+    nfbRejectSequence++; nfbRejectPeakUp=0; nfbRejectAt=CACurrentMediaTime(); nfbRejectEnded=NO;
+    NFBDebugLog(@"swipe-pass: began id=%lu front=%@ home=%d portrait=%@",(unsigned long)nfbRejectSequence,nfbRejectFront,nfbRejectHome,nfbRejectSplit);
+}
+static void NFBObserveRejectPhase(id tongue,NSUInteger phase) {
+    if (!nfbRejectAt || nfbRejectEnded || tongue!=nfbRejectTongue || !phase) return;
+    if (!NFBDebugLoggingEnabled() || CACurrentMediaTime()-nfbRejectAt>8 || nfbRejectConfiguration!=NFBHomeSwipeConfiguration) { NFBResetRejectTrace(); return; }
+    UIPanGestureRecognizer *pan=nfbRejectPan;
+    if (!pan || !pan.view || NFBGet(tongue,@"edgePullGestureRecognizer")!=pan) return;
+    CGPoint p=[pan translationInView:pan.view]; nfbRejectPeakUp=MAX(nfbRejectPeakUp,-p.y);
+    if (phase<2) return;
+    nfbRejectEnded=YES; nfbRejectEndAt=CACurrentMediaTime();
+    NFBDebugLog(@"swipe-pass: end id=%lu cancelled=%d translation=%@ peakUp=%.1f",(unsigned long)nfbRejectSequence,phase==3,NSStringFromCGPoint(p),nfbRejectPeakUp);
+}
+void NFBObserveRejectedSwipeResult(void) {
+    if (!nfbRejectAt) return;
+    @try {
+        CFTimeInterval now=CACurrentMediaTime();
+        if (!NFBDebugLoggingEnabled() || !NFBHomeSwipeEnabled || !NFBHomeSwipeUnlocked() || nfbRejectConfiguration!=NFBHomeSwipeConfiguration || now-nfbRejectAt>8) { NFBResetRejectTrace(); return; }
+        if (!nfbRejectEnded || now-nfbRejectEndAt<0.25) return;
+        NFBWindowState *state=NFBCurrentWindowState(); UIView *current=NFBHomeSwipeCloseWindow();
+        NFBDebugLog(@"swipe-pass: settled id=%lu frontBefore=%@ frontAfter=%@ home=%d->%d portraitBefore=%@ portraitAfter=%@ sameWindow=%d lag=%.2f",(unsigned long)nfbRejectSequence,nfbRejectFront,state.frontApp,nfbRejectHome,state.home,nfbRejectSplit,NFBString(NFBGet(current,@"bundleID")),nfbRejectHadWindow && current && current==nfbRejectWindow,now-nfbRejectEndAt);
+    } @catch (__unused NSException *error) {}
+    NFBResetRejectTrace();
+}
 static NFBHomeSwipeSession *NFBHomeSwipeBegin(id manager, id tongue, double distance, double velocity) {
     if (!NFBHomeSwipeEnabled || !NFBHomeSwipeUnlocked() ||
         NFBGet(manager, @"deckGrabberTongue") != tongue) return nil;
@@ -67,6 +112,7 @@ static NFBHomeSwipeSession *NFBHomeSwipeBegin(id manager, id tongue, double dist
     CGPoint translation = [recognizer translationInView:recognizer.view];
     CGPoint speed = [recognizer velocityInView:recognizer.view];
     if (!NFBHomeSwipeCanCapture(translation.x, translation.y, speed.x, speed.y, distance, velocity)) {
+        NFBStartRejectTrace(tongue,recognizer);
         NFBDebugLog(@"home-swipe: begin rejected translation=%@ velocity=%@ native=%.1f/%.1f",
             NSStringFromCGPoint(translation), NSStringFromCGPoint(speed), distance, velocity);
         return nil;
@@ -100,12 +146,14 @@ static void NFBHomeSwipePull(id manager, SEL command, id tongue, double distance
         }
         // A new began is the only point where ownership can change. Retain the
         // finished tombstone through duplicate terminal callbacks of one stream.
+        NFBResetRejectTrace();
         session = nil;
         @try { session = NFBHomeSwipeBegin(manager, tongue, distance, velocity); }
         @catch (NSException *error) { NFBErrorLog(@"home-swipe: begin %@", error); }
         objc_setAssociatedObject(manager, &NFBHomeSwipeSessionKey, session, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     if (!session || session.tongue != tongue) {
+        @try { NFBObserveRejectPhase(tongue,phase); } @catch (__unused NSException *error) { NFBResetRejectTrace(); }
         NFBOriginalPull[phase](manager, command, tongue, distance, velocity, gesture); return;
     }
     // Suppress the whole owned stream, including invalid/cancelled tails. Never
